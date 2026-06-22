@@ -1,0 +1,1067 @@
+================================================================================
+ SPACE_SOUP_ENGINE — CODEBASE REFERENCE
+================================================================================
+
+WHAT THIS CRATE IS
+-------------------
+space_soup_engine is a small VR game-runtime layer built on top of a renderer
+called "space_soup". It does NOT do rendering itself — it owns game data
+(scenes, objects, animations), simulates a frame of game logic (physics
+overlap checks, scripting, attachments, locomotion), and hands back a list of
+renderable cuboids/meshes for the host app to draw. The host app (referred to
+in comments as "quest_app") is the actual VR application that:
+  - reads controller/hand-tracking state from the headset (OpenXR via
+    space_soup),
+  - builds an InputFrame and a PlayerRig each frame,
+  - calls GameRuntime::update(),
+  - converts the returned RenderCuboid/RenderMesh lists into actual GPU draw
+    calls using space_soup's renderer.
+
+A "game" on disk is a folder:
+
+    my_game/
+    ├── manifest.json
+    └── scenes/
+        ├── lobby.json
+        ├── level1.json
+        └── level2.json
+
+manifest.json names the entry scene and lists all scenes. Each scene .json
+is a list of GameObjects (cuboids + optional mesh + optional Rhai script +
+animations).
+
+Games can be authored by hand-editing JSON, or by an editor tool that calls
+Scene::save() / Manifest::save().
+
+Scripts are written in Rhai (an embeddable scripting language for Rust) and
+can call back into the engine through a fixed set of global functions, and
+the engine calls a fixed set of "convention" functions on the script when
+relevant gameplay events occur (grab, collision, per-frame update, etc).
+
+--------------------------------------------------------------------------------
+ HIGH-LEVEL DATA FLOW PER FRAME
+--------------------------------------------------------------------------------
+1. Host app reads headset/controller state -> builds PlayerRig + InputFrame +
+   LocomotionInput (+ optional TeleportTarget from a raycast).
+2. Host app calls GameRuntime::update(dt, input, rig, locomotion_input,
+   teleport_target).
+3. Inside update():
+     a. Locomotion is advanced (teleport / smooth movement / snap turn).
+     b. Keyframe animations are advanced and applied to object transforms.
+     c. Object positions and rig joint positions are cached so scripts can
+        query them (get_object_x/y/z, get_rig_x/y/z).
+     d. Attachments are resolved (objects bound to rig joints, e.g. hand
+        rig cuboids, held tools) and their transforms applied.
+     e. AABB collision detection runs; enter/exit events call
+        on_collision_enter / on_collision_exit on the relevant scripts.
+     f. Input (point/grab/release/button) is dispatched to on_point/on_grab/
+        on_release/on_press.
+     g. on_update(dt) is called on every object that has a script.
+     h. Commands queued by scripts during all of the above (move_object,
+        play_animation, change_scene, destroy_object, attach_to_joint, ...)
+        are drained and applied to the live Scene/Locomotion/Attachments.
+4. update() returns (Vec<RenderCuboid>, Vec<RenderMesh>, Option<scene_change>).
+   The host renders the cuboids/meshes and, if a scene change was requested,
+   calls GameRuntime::load_scene() before the next frame.
+5. Optionally, the host serializes a DebugPacket each frame and streams it
+   over TCP to a separate debug_viewer process for live introspection.
+
+================================================================================
+ FILE: lib.rs  — crate root / module map
+================================================================================
+Declares all the submodules (manifest, scene, animation, physics, events,
+script, rig, attach, locomotion, hands, runtime, debug_protocol) and
+re-exports the public types so callers can do e.g.
+`use space_soup_engine::{GameRuntime, Scene, Hand};` instead of reaching into
+submodule paths. This is purely organizational — no logic lives here.
+
+Doc comment also restates the on-disk game-folder layout and the basic usage
+pattern: GameRuntime::load() once, GameRuntime::update() once per frame.
+
+================================================================================
+ FILE: manifest.rs  — manifest.json (top-level game description)
+================================================================================
+struct Manifest {
+    name:        String,        // display name of the game
+    version:     String,        // semver-ish version string
+    entry_scene: String,        // name (no extension) of the first scene to load
+    scenes:      Vec<String>,   // names of all scenes belonging to this game
+}
+
+Functions:
+  Manifest::load(game_dir)            — reads & parses manifest.json from a
+                                         game folder root.
+  Manifest::save(game_dir)            — pretty-prints and writes it back out
+                                         (used by editor tooling).
+  Manifest::scene_path(game_dir, name)— builds "<game_dir>/scenes/<name>.json".
+  Manifest::entry_scene_path(game_dir)— convenience: scene_path() for
+                                         self.entry_scene.
+  Default impl                        — "Untitled Game" / "0.1.0" / entry
+                                         scene "lobby" / scenes ["lobby"], used
+                                         when scaffolding a brand-new game.
+
+This is the only file that knows about the manifest.json schema; everything
+else just asks Manifest for paths.
+
+================================================================================
+ FILE: scene.rs  — scene.json schema (objects, cuboids, meshes, animations)
+================================================================================
+This is the core data model for a single scene file. Nothing in here runs
+simulation logic — it's pure data + (de)serialization + a couple of small
+pure-function helpers (Easing::apply, Animation::duration).
+
+Color3(u8,u8,u8,u8)
+  RGBA color. Default is a reddish (220,60,60,255) so newly created objects
+  are visibly noticeable rather than invisible/black.
+
+CuboidStyle  { Solid, Wireframe, SolidAndWire }
+  How a cuboid should be drawn. Default = Solid.
+
+CuboidDef
+  position, half_size, rotation, color, wire_color, style — everything
+  needed to render AND physically represent a box. half_size also doubles
+  as the collision/grab AABB even when a mesh is shown instead of the box
+  (see MeshRef below). Defaults: half_size = (0.5,0.5,0.5), rotation =
+  identity, wire_color = pale blue-white, style = Solid.
+
+MeshRef
+  Optional GLTF/GLB visual override for an object.
+    path             — relative to the game folder root, e.g. "models/duck.glb"
+    scale            — extra scale applied on top of the cuboid's transform
+    rotation_offset  — extra rotation composed on top of the cuboid's rotation
+  Important: the cuboid is NOT replaced for physics — its half_size is still
+  used for collision/grab AABB computation. Only the *visual* changes from a
+  box to a loaded mesh. The host app is responsible for actually loading and
+  caching GLTF GPU resources; this struct only carries placement data.
+
+Easing { Linear, EaseIn, EaseOut, EaseInOut }
+  Easing::apply(t) maps a 0..1 progress value through the curve:
+    Linear     -> t
+    EaseIn     -> t²
+    EaseOut    -> 1-(1-t)²
+    EaseInOut  -> piecewise quadratic blend at t=0.5
+  Default = Linear.
+
+Keyframe
+  t                — time in seconds
+  position/rotation/scale/color — all Option<T>; any channel left as None
+                     is simply not animated by this keyframe (the sampler
+                     in animation.rs falls back to the neighboring keyframe's
+                     value for that channel).
+
+Animation
+  name, keyframes: Vec<Keyframe>, easing, looping
+  Animation::duration() — returns the max `t` across all keyframes (i.e. the
+                           total length of the clip).
+
+GameObject
+  id            — unique string identifier within the scene; this is the
+                  handle scripts and engine commands use to refer to objects.
+  cuboid        — CuboidDef (always present; default if omitted in JSON).
+  mesh          — Option<MeshRef>; if set, render the mesh instead of the box.
+  is_trigger    — if true, this object doesn't render solid collision
+                  response, it only fires on_collision_enter/exit on overlap
+                  (a "trigger zone").
+  hidden        — if true, the object is invisible at render time (useful for
+                  logic-only nodes, e.g. an object that exists purely to run
+                  a script or act as an attachment anchor).
+  script        — Option<String> of Rhai source code; may define any of the
+                  convention functions listed in script.rs's doc comment.
+  animations    — Vec<Animation>; named clips this object can play.
+  find_animation(name) — looks up one of its own animations by name.
+
+Scene
+  name, objects: Vec<GameObject>
+  Scene::load(path) / Scene::save(path) — JSON (de)serialization, with
+       Scene::save creating parent directories as needed.
+  find_object(id) / find_object_mut(id) — linear search by id. (Scenes are
+       expected to be small enough that this is fine; no id->index map.)
+
+================================================================================
+ FILE: animation.rs  — keyframe playback & sampling
+================================================================================
+Pure animation math, independent of the scene-graph/runtime; runtime.rs
+drives it.
+
+AnimationPlayer
+  anim_name, elapsed (seconds into the clip), looping, finished
+  AnimationPlayer::new(anim)        — starts a player for a given Animation
+                                       at elapsed = 0.
+  AnimationPlayer::tick(dt,duration)— advances elapsed by dt. If it passes
+                                       duration: loops (elapsed %= duration)
+                                       if looping, else clamps to duration
+                                       and sets finished = true (a finished,
+                                       non-looping player is later removed by
+                                       the runtime).
+
+Sample
+  Option<position/rotation/scale/color> — the *interpolated* values for one
+  point in time; any channel that had no relevant keyframes stays None so
+  the runtime knows not to touch that channel on the GameObject.
+
+sample(anim, t) -> Sample
+  Core interpolator:
+    - 0 keyframes  -> empty Sample.
+    - 1 keyframe   -> that keyframe's values verbatim (no interpolation
+                       possible/needed).
+    - 2+ keyframes -> finds the bracketing pair (prev, next) such that
+                       prev.t <= t <= next.t (falls back to first/last if t
+                       is outside the clip's range), computes raw_alpha =
+                       (t-prev.t)/(next.t-prev.t) clamped to 0..1, then runs
+                       that through anim.easing.apply() to get the final
+                       blend factor `alpha`.
+    - Each channel (position/rotation/scale/color) is interpolated
+      independently via lerp_opt_vec3 / lerp_opt_quat (slerp for rotation,
+      correctly handling rotation) / lerp_opt_color (per-channel u8 lerp).
+      If only one side of a channel has a value, that value is used as-is
+      (no interpolation needed); if neither side has it, the channel stays
+      None.
+
+This module has no knowledge of GameObject/Scene — runtime.rs is the glue
+that takes a Sample and writes it into a GameObject's CuboidDef fields.
+
+================================================================================
+ FILE: physics.rs  — AABB overlap / collision events
+================================================================================
+Intentionally minimal: there is no physics simulation (no gravity, no
+forces, no resolution/pushback). It's purely event-driven trigger detection
+via axis-aligned bounding boxes.
+
+Aabb { min: Vec3, max: Vec3 }
+  Aabb::from_center_half(center, half) — builds an AABB from a center point
+                                          and per-axis half-extents (this is
+                                          exactly what CuboidDef.position /
+                                          .half_size already store).
+  Aabb::overlaps(other)                — standard 6-comparison AABB overlap
+                                          test.
+
+CollisionEvent { Enter(id_a, id_b), Exit(id_a, id_b) }
+
+CollisionTracker
+  active_pairs: HashSet<(String,String)> — the set of object-id pairs that
+                                            were overlapping last frame
+                                            (pairs are stored in a canonical
+                                            order via ordered_pair so (a,b)
+                                            and (b,a) are never both stored).
+  CollisionTracker::update(bodies) -> Vec<CollisionEvent>
+    1. Brute-force O(n²) pairwise overlap test across all (id, Aabb) pairs
+       given this frame (every unique unordered pair is checked once).
+    2. Diffs the new "current_pairs" set against the stored "active_pairs":
+         - pairs newly overlapping -> Enter event
+         - pairs no longer overlapping -> Exit event
+    3. Stores current_pairs as the new active_pairs for next frame's diff.
+
+  Note: this only flags overlap transitions; nothing here distinguishes
+  solid collisions from is_trigger zones — that distinction (if used to
+  filter rendering/response) is interpreted by the caller. The runtime
+  currently fires events for ALL overlapping object pairs uniformly.
+
+================================================================================
+ FILE: events.rs  — input event types passed into the runtime each frame
+================================================================================
+Hand { Left, Right }       — Default = Right. as_str() -> "left"/"right",
+                              used both for script callback args and for
+                              the rig's joint-name prefixes ("left_grip"
+                              etc).
+
+InputFrame  — built by the host app each frame from raw controller state +
+              raycasts against object AABBs:
+  pointed:  Vec<(object_id, Hand)>  — objects currently being pointed at
+  grabbed:  Vec<(object_id, Hand)>  — objects grabbed *this frame* (squeeze/
+                                       trigger transitioned to pressed)
+  released: Vec<(object_id, Hand)> — objects released *this frame*
+  button_presses: Vec<ButtonPress> — presses not tied to pointing (e.g. a
+                                       physical button object you bumped, or
+                                       a generic UI button)
+
+ButtonPress { button: String, object_id: Option<String> }
+
+This is deliberately separate from PlayerRig (which is about body pose, not
+interaction) and from LocomotionInput (which is about movement, not object
+interaction) — three distinct "what happened this frame" structs that the
+host assembles and the runtime consumes.
+
+================================================================================
+ FILE: rig.rs  — flattened player joint table (head, hands, all 26 fingers)
+================================================================================
+Purpose stated directly in the doc comment: unify space_soup's separate
+Controllers + HandTrackers APIs into ONE addressable joint table, so the
+rest of the engine (attachments, scripts) can say "right_index_tip" without
+caring whether that data came from a physical controller or from optical
+hand tracking.
+
+FingerJoint — enum of all 26 OpenXR hand joints (Palm, Wrist, and 4 segments
+  x 5 fingers: {Meta,Prox,[Inter,]Dist,Tip} per finger — thumb has no
+  "Inter" segment, matching real OpenXR joint counts).
+    ALL: [FingerJoint; 26]     — fixed ordering array (mirrors
+                                  space_soup::xr::hands::HandJoint order, so
+                                  raw joint arrays from the XR layer can be
+                                  mapped 1:1 by index via from_index()).
+    from_index(i)               — ALL.get(i) — used when bulk-loading a
+                                   flat per-frame joint array from the XR
+                                   runtime.
+    name() / from_name(s)       — string <-> enum round-trip, e.g.
+                                   "index_tip" <-> FingerJoint::IndexTip.
+                                   Used so scripts and the debug protocol can
+                                   refer to joints by readable string name.
+
+JointId — every addressable point on the player's body:
+    Head
+    HandGrip(Hand)   — the "grip" pose (where you'd put a held object's
+                        origin, roughly the palm grip point on a controller)
+    HandAim(Hand)    — the "aim" pose (pointing direction, used for ray
+                        casts / UI pointing / teleport aiming)
+    Finger(Hand, FingerJoint) — one specific hand-tracking joint
+
+  JointId::from_name(s) -> Option<JointId>
+    Parses strings used from scripts/attach commands:
+      "head"                      -> Head
+      "right_grip" / "left_grip"  -> HandGrip(Right/Left)
+      "right_aim"  / "left_aim"   -> HandAim(Right/Left)
+      "right_<finger_joint_name>" / "left_<finger_joint_name>"
+                                   -> Finger(hand, that joint)
+                                      (delegates to FingerJoint::from_name on
+                                      the stripped suffix)
+    Returns None for anything unrecognized — callers (attach_to_joint
+    command handling in runtime.rs) log a warning and no-op rather than
+    panicking.
+
+Transform { position: Vec3, rotation: Quat }
+  Default = origin / identity rotation.
+  Transform::new(pos, rot)
+  Transform::apply_offset(offset_pos, offset_rot) — composes a *local* child
+    offset into this transform's world space: new_position = self.position +
+    self.rotation * offset_pos; new_rotation = self.rotation * offset_rot.
+    This is the standard parent-child transform composition used by
+    Attachment::resolve (attach.rs) to place an offset object relative to a
+    rig joint.
+
+PlayerRig — built fresh each frame by the host app from the headset's
+  Controllers + HandTrackers, then handed into GameRuntime::update:
+    joints: HashMap<JointId, Transform>
+    hand_tracking_active: HashMap<Hand, bool>
+  Accessors all return Transform::default() (origin/identity) rather than
+  Option when a joint isn't present, so callers never have to null-check:
+    get(id), head(), hand_grip(hand), hand_aim(hand), finger(hand, joint)
+  Builders, called by the host each frame to populate the rig:
+    set_head(pos, rot)
+    set_hand_grip(hand, pos, rot)
+    set_hand_aim(hand, pos, rot)
+    set_hand_joints(hand, &[(Vec3,Quat,bool)]) — bulk-loads all 26 finger
+        joints from a flat array (index order = FingerJoint::ALL order);
+        any entry with valid=false is skipped (keeps last-known value rather
+        than zeroing it out); also marks hand_tracking_active[hand] = true.
+    clear_hand_tracking(hand) — marks a hand's tracking inactive (e.g. when
+        hand tracking drops out and the host falls back to controller-only
+        poses for grip/aim).
+
+================================================================================
+ FILE: attach.rs  — bind a GameObject to a rig joint
+================================================================================
+Used for: avatars, held tools/weapons, wrist-anchored UI panels, and
+(crucially) the auto-generated hand-rig cuboids from hands.rs.
+
+Attachment
+  joint: JointId
+  offset_pos: Vec3, offset_rot: Quat  — local offset from the joint
+  rigid: bool                          — true if constructed via
+                                          Attachment::rigid() (no offset);
+                                          used as a fast-path flag.
+  Attachment::rigid(joint)             — snaps exactly onto a joint, no
+                                          offset (e.g. a finger-joint cuboid
+                                          that *is* that joint).
+  Attachment::with_offset(joint, pos, rot) — offset attachment (e.g. a
+                                          flashlight held slightly forward
+                                          and rotated relative to the grip).
+  Attachment::resolve(rig) -> Option<Transform>
+    Looks up the joint's current Transform in the rig (None if that joint
+    isn't tracked this frame, e.g. hand tracking lost). If rigid AND the
+    offset is exactly zero/identity, returns the joint transform directly
+    (cheap path, avoids a no-op compose). Otherwise composes the offset via
+    Transform::apply_offset.
+
+AttachmentTable
+  attachments: HashMap<object_id, Attachment>
+  attach(object_id, attachment) / detach(object_id) / is_attached(object_id)
+  resolve_all(rig) -> Vec<(object_id, Transform)>
+    Resolves every stored attachment against the current rig in one pass;
+    entries whose joint isn't currently tracked are silently skipped (no
+    entry in the output for that frame) rather than erroring.
+
+The runtime applies the resolved transforms by writing them straight into
+each affected GameObject's cuboid.position / cuboid.rotation every frame
+(see GameRuntime::apply_attachments), which is what makes attached cuboids
+"follow" the hand/head.
+
+================================================================================
+ FILE: locomotion.rs  — player movement (teleport / smooth / disabled)
+================================================================================
+Doc comment notes the design: both movement modes write into one
+`player_offset` (+ `player_yaw`), which the host app composes with the
+*tracked* head pose before rendering — same pattern already used for
+streaming head pose over the debug TCP mirror connection. This means the
+"player" never actually moves any GameObjects; instead the camera/head
+transform itself gets shifted, which is the standard approach for VR
+locomotion (real-world tracked space is small; you fake moving through a
+much bigger virtual world by offsetting where the tracked pose is
+interpreted to be).
+
+LocomotionMode { Teleport, Smooth, Disabled }  — Default = Smooth.
+
+LocomotionInput — per-frame movement input, deliberately separate from
+  InputFrame (object interaction) since locomotion semantics are quite
+  different:
+    move_stick: (f32,f32)     — left thumbstick, smooth-move only
+    turn_stick_x: f32         — right thumbstick X, snap-turn in BOTH modes
+    teleport_pressed: bool    — true the frame teleport button goes down
+    teleport_released: bool   — true the frame it's released (confirms move)
+    teleport_hand: Hand       — which hand's aim pose drives the teleport ray
+
+TeleportTarget { position: Vec3, valid: bool }
+  Result of a host-side raycast (against floor cuboids / teleportable
+  objects) using the teleport hand's aim pose; fed back into update().
+
+Locomotion
+  mode, player_offset, player_yaw (radians)
+  move_speed (m/s, default 1.6), snap_turn_deg (default 30°),
+  teleport_range (default 5.0 m — currently unused as a hard clamp inside
+    this file; presumably enforced by the host's raycast/validity check
+    feeding TeleportTarget.valid)
+  is_teleport_aiming (private), last_turn_stick (private, edge-detect state)
+
+  new(mode) / set_mode(mode) — set_mode also resets is_teleport_aiming so
+    switching modes mid-aim doesn't leave a stale teleport-in-progress state.
+  is_teleport_aiming() — read-only accessor (e.g. for the host to draw a
+    teleport arc/reticle while true).
+
+  update(dt, input, rig, teleport_target)
+    1. update_snap_turn(input) — runs regardless of mode (snap-turn works in
+       both Smooth and Teleport): edge-detects the turn stick crossing a
+       0.6 deadzone threshold (so holding the stick over doesn't keep
+       turning every frame — only the down-up edge each push counts), and
+       adds ±snap_turn_deg to player_yaw. Direction is inverted (pushing +x
+       turns the view right, achieved by rotating the *world* the opposite
+       way) — a comment explicitly notes this inversion is intentional,
+       matching how player_offset/yaw is later applied as an inverse
+       transform on the fixed-camera renderer.
+    2. Then dispatches by mode:
+         Smooth   -> update_smooth(dt, input, rig)
+         Teleport -> update_teleport(input, teleport_target)
+         Disabled -> no movement at all
+
+  update_smooth(dt, input, rig)
+    Ignores tiny stick deflection (<0.08 on both axes) as deadzone.
+    Takes the head's current yaw (extracted via Euler YXZ decomposition),
+    adds player_yaw to get total facing, builds forward/right vectors from
+    that facing, and moves along (forward*sy + right*-sx) normalized,
+    scaled by move_speed*dt. A comment flags that the sign mapping here was
+    deliberately flipped from the "naive" version to fix a bug where pushing
+    forward moved the player backward — a side-effect of player_offset being
+    applied as an inverse shift on the whole scene rather than moving the
+    camera directly (see quest_app's to_space_soup_cuboid, not in this
+    crate).
+
+  update_teleport(input, target)
+    On teleport_pressed -> sets is_teleport_aiming = true (host should be
+      drawing an aim arc/reticle during this window).
+    On teleport_released -> if currently aiming and a valid TeleportTarget
+      was supplied, snaps player_offset directly to the target position
+      (instant teleport, no interpolation); always clears is_teleport_aiming
+      afterward regardless of whether the target was valid.
+
+  apply_to_head(tracked_position, tracked_rotation) -> (Vec3, Quat)
+    The actual composition used by GameRuntime::world_head_transform():
+      yaw_rot  = Quat::from_rotation_y(player_yaw)
+      position = player_offset + yaw_rot * tracked_position
+      rotation = yaw_rot * tracked_rotation
+    i.e. rotate the raw tracked head pose by the accumulated snap-turn yaw,
+    then add the accumulated locomotion offset. This is what the host should
+    feed to its camera.
+
+================================================================================
+ FILE: script.rs  — Rhai engine setup + the two-way scripting API
+================================================================================
+This is the bridge between game-author-written Rhai scripts and the Rust
+engine. Two directions of API, both documented at the top of the file:
+
+  ENGINE -> SCRIPT (functions a script may define; called by convention,
+  missing ones are silently skipped, not an error):
+    on_grab(hand)
+    on_release(hand)
+    on_point(hand)
+    on_press(button)
+    on_collision_enter(other_id)
+    on_collision_exit(other_id)
+    on_update(dt)
+
+  SCRIPT -> ENGINE (global functions registered on the Rhai Engine that
+  scripts can call):
+    move_object(id,x,y,z) / rotate_object(id,x,y,z,w) / scale_object(id,x,y,z)
+    set_color(id,r,g,b,a)
+    play_animation(id,anim_name)  /  trigger(id,anim_name)  (alias of same)
+    stop_animation(id)
+    change_scene(scene_name)
+    destroy_object(id)
+    set_var(key,value) / get_var(key) -> Dynamic     (a small global
+        key/value store scripts can use to share state across objects/frames
+        — NOT persisted to disk, lives only for the runtime's lifetime, and
+        is wiped whenever the script host is recreated, e.g. on scene change)
+    get_object_x/y/z(id)             — read another object's *current*
+        cached position (updated once per frame before scripts run, so
+        scripts see last frame's settled positions, not a half-updated
+        mid-frame value)
+    attach_to_joint(id, joint_name, ox, oy, oz)  /  detach(id)
+    get_rig_x/y/z(joint_name)        — read the player's body position,
+        e.g. "right_grip" or "head"
+
+EngineCommand (enum) — every script->engine call doesn't mutate the Scene
+  directly (Rhai callbacks run inside a Mutex-guarded shared context and
+  don't have direct access to the live Scene/runtime); instead each call
+  pushes one EngineCommand variant onto a shared queue:
+    MoveObject{id,x,y,z}, RotateObject{id,x,y,z,w}, ScaleObject{id,x,y,z},
+    SetColor{id,r,g,b,a}, PlayAnim{id,anim}, StopAnim{id},
+    ChangeScene{scene}, DestroyObject{id},
+    AttachToJoint{id,joint,offset_x,offset_y,offset_z}, Detach{id}
+  These are drained and actually applied by GameRuntime::apply_script_commands
+  once per frame, AFTER all scripts for that frame have run — so command
+  ordering within a frame is "all scripts run first, then all their queued
+  side effects apply," not interleaved.
+
+ScriptContext (the shared mutable state Rust closures read/write while Rhai
+  scripts execute):
+    commands: Vec<EngineCommand>             — queue described above
+    vars: HashMap<String, Dynamic>           — set_var/get_var backing store
+    object_positions: HashMap<id, (f32,f32,f32)> — refreshed once per frame
+    rig_positions: HashMap<joint_name, (f32,f32,f32)> — refreshed once per
+        frame from the current PlayerRig
+  SharedContext = Arc<Mutex<ScriptContext>> — shared so every registered
+  Rhai closure (each captures a clone of the Arc) can read/write the same
+  state regardless of which object's script is currently executing.
+
+ScriptHost
+  engine: rhai::Engine        — one shared Engine with the API registered
+  asts: HashMap<object_id, AST> — one *compiled* script per object that has
+                                   one (compiling is relatively expensive;
+                                   this is done once at load/scene-change
+                                   time, not every frame/call)
+  context: SharedContext
+
+  new()            — builds a fresh Engine via build_engine(), with an empty
+                      asts map. Called once at GameRuntime::load and again
+                      every time GameRuntime::load_scene runs (a full scene
+                      switch wipes ALL script state — vars, AST cache,
+                      command queue — clean slate per scene).
+  context()        — returns a clone of the Arc so the runtime can poll/
+                      update positions on the same shared state.
+  compile(object_id, source) -> Result<()>
+                      Compiles Rhai source into an AST and stores it keyed
+                      by object_id; on a Rhai syntax error, wraps it into an
+                      anyhow error tagged with the object id (so a bad
+                      script in scene authoring tells you exactly which
+                      object broke).
+  has_script(object_id) -> bool
+                      Used by the runtime to skip calling on_update() on
+                      objects with no script at all (avoids a HashMap probe
+                      + Rhai call-overhead for every plain non-scripted
+                      cuboid every frame).
+  call(object_id, fn_name, args) -> Result<()>
+                      The single entry point used by the runtime to invoke
+                      any convention function. If the object has no
+                      compiled AST, it's a silent no-op (not every object
+                      has a script). Calls engine.call_fn(); if Rhai's error
+                      says "Function not found" (i.e. the script simply
+                      didn't define that particular hook, e.g. no on_grab),
+                      that's treated as success/no-op rather than an error —
+                      only *other* Rhai runtime errors (actual bugs in the
+                      script body) propagate up as Err, and the runtime logs
+                      those rather than crashing the whole game (see
+                      runtime.rs's `let _ = ...` call sites — errors are
+                      currently swallowed at the call site level rather than
+                      surfaced, beyond Engine-internal logging if any).
+  drain_commands()  — takes (mem::take) the entire pending EngineCommand
+                      queue out of the shared context, leaving an empty
+                      Vec behind, and returns the drained Vec to the caller.
+  set_object_position / set_rig_position — write-through into the shared
+                      context's caches; called every frame by the runtime
+                      before any scripts run.
+
+build_engine(context) -> Engine  (free function, not a method)
+  Constructs a brand-new rhai::Engine and registers every script->engine
+  function described above. Each registration follows the same pattern:
+    { let ctx = context.clone();
+      engine.register_fn("name", move |args...| { ctx.lock().unwrap()....
+      }); }
+  i.e. each closure captures its own Arc clone (cheap refcount bump) and
+  locks the shared Mutex only for the duration of pushing one command /
+  reading one value — never held across a Rhai call into other engine code,
+  so there's no deadlock risk from re-entrant script calls.
+  Numeric arguments arrive from Rhai as i64/f64 (Rhai's native integer/float
+  types) and are cast down to the engine's f32/u8 as needed; color channel
+  components are explicitly `.clamp(0,255)` before the u8 cast so an
+  out-of-range script value (e.g. set_color(id, 999, 0, 0, 255)) can't wrap
+  around instead of saturating.
+
+================================================================================
+ FILE: hands.rs  — auto-generates a 26-cuboid-per-hand visual hand rig
+================================================================================
+Convenience layer that turns the raw PlayerRig joint data into something
+actually visible: one small cuboid GameObject per hand-tracking joint,
+auto-attached to that joint so it follows tracking every frame without any
+authored script.
+
+joint_half_size(joint) -> Vec3
+  Per-joint-type sizing tuned so the rig reads as a hand rather than a
+  cluster of identical cubes:
+    Palm   -> (0.04, 0.012, 0.05)   (broad, flat)
+    Wrist  -> (0.025, 0.012, 0.025) (square-ish, flat)
+    *Meta  (knuckle bases, all 5 fingers) -> (0.009, 0.009, 0.014)
+    *Tip   (fingertips, all 5 fingers)    -> (0.006, 0.006, 0.008) (smallest)
+    everything else (Prox/Inter/Dist mid-segments) -> (0.007, 0.007, 0.011)
+
+joint_color(hand) -> Color3
+  Left  -> (220,180,150,255), Right -> (230,190,160,255) — two very close
+  but distinguishable skin-tone-ish colors so left vs right hand is visually
+  identifiable at a glance.
+
+spawn_hand_rig(runtime, hand)
+  For each of the 26 FingerJoint::ALL entries:
+    - builds an id like "rhand_index_tip" or "lhand_palm"
+      (prefix "lhand"/"rhand" + FingerJoint::name())
+    - builds a GameObject with that id, a CuboidDef using the sized/colored
+      values above, position = Vec3::ZERO (irrelevant — overwritten every
+      frame by the attachment resolve step before first render), fully
+      opaque solid style, wire_color fully transparent (0,0,0,0) since these
+      aren't meant to show wireframes, mesh=None, is_trigger=false,
+      hidden=false, script=None, animations=[]
+    - pushes that GameObject directly into runtime.scene_mut().objects
+    - registers a rigid Attachment to JointId::Finger(hand, joint) in
+      runtime.attachments, so GameRuntime::apply_attachments will drive its
+      position/rotation every frame from then on.
+  Logs an info! line once both hands' 26 cuboids are spawned.
+
+spawn_both_hand_rigs(runtime) — calls spawn_hand_rig for both Left and Right;
+  this is the function a host app actually calls once after GameRuntime::load
+  and before the first update().
+
+despawn_hand_rig(runtime, hand)
+  Removes all 26 of that hand's GameObjects from the live scene (by id) and
+  detaches their attachments — the inverse of spawn_hand_rig, e.g. for
+  switching to controller-only visuals or hiding hands in a cutscene.
+
+================================================================================
+ FILE: debug_protocol.rs  — quest_app <-> debug_viewer wire protocol
+================================================================================
+Doc comment explains the design rationale directly: newline-delimited JSON
+over TCP. Chosen because it's simple, human-readable (you can `nc` into it
+and read frames by eye), and trivially forward/backward compatible — serde_
+json ignores unknown fields on the receiving end and fills in #[derive(
+Default)] values for fields missing from an older sender, so quest_app and
+debug_viewer don't have to be upgraded in lockstep. Lives inside
+space_soup_engine itself (rather than a separate `mirror` crate) purely
+because both processes that need it already depend on this crate — no
+benefit to a third crate for a handful of plain structs.
+
+Pose { position: [f32;3], rotation: [f32;4] (x,y,z,w) }
+  Plain array wire form of a Transform (kept separate from rig::Transform
+  since that one uses glam types directly, not serde-friendly raw arrays —
+  though Vec3/Quat themselves likely already implement Serialize via glam's
+  serde feature; this wire form is for an explicit, stable, side-channel-
+  friendly layout independent of glam's own serde impl detail).
+    new(position, rotation)         — build from glam types
+    position() -> Vec3              — back to glam
+    rotation() -> Quat              — back to glam; explicitly guards against
+        a degenerate (near-zero) quaternion in the wire data (e.g. an all-
+        zero default before any real pose was ever sent) and falls back to
+        Quat::IDENTITY instead of normalizing a zero vector (which would
+        produce NaNs); otherwise normalizes to guard against any transport-
+        level numerical drift.
+
+JointSample { name: String, pose: Pose, valid: bool }
+  Per-finger-joint debug sample. `name` deliberately matches
+  rig::FingerJoint::name() strings exactly, so the debug_viewer can label
+  joints without needing to depend on / duplicate the rig module's logic.
+
+HandSample — full debug snapshot of one hand for one frame:
+  tracking_active: bool
+  grip: Option<Pose>, aim: Option<Pose>
+  joints: Vec<JointSample>            — empty if hand tracking is inactive
+                                         that frame (controller-only)
+  trigger: f32, squeeze: f32          — analog input values
+  stick: [f32;2], stick_click: bool   — thumbstick state
+  btn_a, btn_b                        — right-hand-only buttons
+  btn_x, btn_y                        — left-hand-only buttons
+  (the right/left-only fields exist on both HandSample instances regardless
+  of which hand they describe — simpler uniform schema, with the
+  unused-for-that-hand fields just left at default/false)
+
+LocomotionSample
+  mode: String ("Smooth"|"Teleport"|"Disabled" — string form of
+       LocomotionMode for human-readability in the debug viewer / logs)
+  player_offset: [f32;3], player_yaw_deg: f32, teleport_aiming: bool
+
+SceneSample
+  scene_name, object_count, render_cuboids, render_meshes,
+  active_animations: Vec<String>      — names of all currently-playing
+                                         animation clips, for at-a-glance
+                                         visibility into what's animating
+
+TimingSample { dt_seconds, fps, frame_count }
+
+DebugPacket — the actual top-level struct sent each frame:
+  head: Pose
+  left_hand: HandSample, right_hand: HandSample
+  locomotion: LocomotionSample
+  scene: SceneSample
+  timing: TimingSample
+  log_lines: Vec<String>              — any log output the host wants to
+                                         forward to the remote viewer instead
+                                         of (or in addition to) local stdout
+
+Transport — two small submodules wrapping std::net::TcpStream:
+
+  mod sender:
+    send(stream, packet) -> io::Result<()>
+      serde_json::to_string(packet), appends '\n', writes the bytes. Any
+      JSON serialization error is converted into an io::Error so the
+      function signature stays a single error type.
+
+  mod receiver:
+    listen(addr) -> io::Result<TcpListener>   — thin wrapper over
+                                                  TcpListener::bind
+    PacketReader { reader: BufReader<TcpStream> }
+      new(stream)             — wraps a connected TcpStream in a BufReader
+      read_packet() -> Option<DebugPacket>
+        Blocks on read_line(); returns None on EOF (0 bytes read, i.e. the
+        other end closed the connection) OR on a malformed/unparsable JSON
+        line — in BOTH cases the caller's contract is "stop reading from
+        this connection," it does not distinguish "the stream closed"
+        from "we got garbage" to the caller, since either way there's
+        nothing more useful to do with that connection.
+
+================================================================================
+ FILE: runtime.rs  — GameRuntime: ties every other module together per frame
+================================================================================
+This is the orchestrator. Everything above this file is a building block;
+this file is the actual frame loop logic.
+
+RenderCuboid — output type for one drawable box this frame:
+  id, position, half_size, rotation, color, wire_color, style
+  Doc comment notes it deliberately mirrors space_soup::renderer::Cuboid's
+  field layout so the host app can convert 1:1 without this engine crate
+  needing to depend on space_soup's internal renderer types (keeps the
+  dependency direction one-way: space_soup_engine doesn't need to know
+  about space_soup's renderer internals, only the host app's glue code does
+  the final conversion).
+
+RenderMesh — output type for one drawable mesh this frame:
+  id, path, position, rotation, scale
+  The host is responsible for loading/caching the actual GLTF GPU resource
+  keyed by `path`; this struct only carries this frame's placement.
+
+GameRuntime — the big owner struct:
+  game_dir: PathBuf            — absolute path to the game folder root (used
+                                  to resolve MeshRef.path, which is stored
+                                  relative to this directory)
+  manifest: Manifest
+  scene: Scene                 — the CURRENTLY LOADED scene; mutated in place
+                                  every frame (animation sampling, attachment
+                                  resolution, and script commands all write
+                                  directly into scene.objects[*].cuboid)
+  script_host: ScriptHost
+  players: HashMap<object_id, AnimationPlayer> — currently-playing animations,
+                                  one entry per object with an active clip
+  collisions: CollisionTracker
+  rig: PlayerRig (pub)          — this frame's player pose, set fresh at the
+                                  top of every update() call
+  attachments: AttachmentTable (pub)
+  locomotion: Locomotion (pub)
+  pending_scene_change: Option<String> — set when a script calls
+                                  change_scene(); read+cleared once per
+                                  update() call and returned to the host, who
+                                  is expected to call load_scene() before the
+                                  NEXT update() if this is Some.
+
+  load(game_dir) -> Result<Self>
+    1. Manifest::load(game_dir)
+    2. Scene::load(manifest.entry_scene_path(game_dir))
+    3. Constructs all the sub-owned state fresh (new ScriptHost, empty
+       players/collisions, fresh PlayerRig/AttachmentTable, Locomotion in
+       Smooth mode by default)
+    4. compile_scripts() — compiles every object's script (if any) into the
+       ScriptHost up front, so the very first frame already has everything
+       ready (no first-frame compile-stall)
+    5. Logs scene name + object count
+    NOTE: spawn_both_hand_rigs() is a SEPARATE call the host must make after
+    load() if it wants visible hand cuboids — load() itself does not spawn
+    hand rigs automatically.
+
+  compile_scripts() (private)
+    Iterates scene.objects, and for every object with a Some(script), calls
+    script_host.compile(id, src); a compile failure is logged as a warning
+    (not an error) and that object simply ends up with no compiled AST
+    (has_script() will be false for it, so it's silently treated exactly
+    like an object that never had a script in the first place) — i.e. one
+    broken script in a scene does not stop the rest of the game from
+    loading and running.
+
+  load_scene(scene_name) -> Result<()>
+    Full scene switch:
+      - loads the new Scene from manifest-relative scene_path
+      - replaces self.scene
+      - WIPES players (no animation carries over between scenes)
+      - WIPES collisions (CollisionTracker::new() — no stale enter/exit
+        state carries over; first frame of the new scene can only produce
+        Enter events, never spurious Exit events for objects that no longer
+        exist)
+      - REPLACES script_host entirely with ScriptHost::new() (wipes set_var
+        state, the command queue, and all compiled ASTs)
+      - recompiles scripts for the new scene's objects
+    Notably: rig, attachments, and locomotion state are NOT reset by a scene
+    change — player position/locomotion mode and any held-object attachments
+    persist across a scene transition (e.g. a tool you're holding stays
+    attached to your hand when you walk through a portal/doorway trigger
+    that calls change_scene). If a game wants attachments cleared on scene
+    change, that's the responsibility of the new scene's own on_update/
+    on_collision_enter scripts, or the host, not something load_scene does
+    automatically.
+
+  manifest() / scene_name() / game_dir() — read-only accessors.
+
+  update(dt, input, rig, locomotion_input, teleport_target)
+      -> (Vec<RenderCuboid>, Vec<RenderMesh>, Option<String>)
+    THE per-frame entry point. In order:
+      1. pending_scene_change = None  (clear any stale value before this
+         frame's scripts potentially set a new one)
+      2. self.rig = rig                (adopt this frame's body pose)
+      3. locomotion.update(dt, locomotion_input, &self.rig, teleport_target)
+      4. update_animations(dt)         — advance + sample + apply all
+         playing clips onto their objects' cuboid fields
+      5. update_object_position_cache() — push every object's *current*
+         (post-animation) position into the script host's cache
+      6. update_rig_position_cache()    — push head/grip/aim positions for
+         both hands into the script host's cache
+      7. apply_attachments()            — resolve all attachments against
+         this frame's rig and overwrite the affected objects' cuboid
+         position/rotation (this runs AFTER animation application, so an
+         attached object's own animation, if any, would be immediately
+         overwritten by its attachment every frame — attachments win)
+      8. dispatch_collisions()          — AABB pass + on_collision_enter/exit
+         calls
+      9. dispatch_input(input)          — on_point/on_grab/on_release/
+         on_press calls
+     10. dispatch_update_hook(dt)       — on_update(dt) for every scripted
+         object
+     11. apply_script_commands()        — drain & apply every EngineCommand
+         queued by ALL of the script calls above, in queue order
+     12. collect_render_cuboids() / collect_render_meshes() — build this
+         frame's output lists from the now-fully-updated scene
+     13. returns (cuboids, meshes, pending_scene_change.take())
+    Ordering implication worth noting: because attachments are applied
+    BEFORE collisions/input/update-hook/script-commands, and script
+    commands (e.g. move_object) are applied AFTER all of those, a script
+    that calls move_object() on an attached object this frame will have
+    its manual move immediately stick for THIS frame's render, but next
+    frame's apply_attachments() will snap it right back to the joint
+    transform (attachments are reasserted every single frame from the live
+    rig, they are not "set once").
+
+  world_head_transform() -> (Vec3, Quat)
+    Convenience the host calls once per frame to get the final camera
+    transform: takes self.rig.head() (raw tracked pose) and runs it through
+    self.locomotion.apply_to_head(...).
+
+  --- Animation subsystem (private helpers) ---
+  update_animations(dt)
+    1. For each (object_id, player) in self.players: looks up that object
+       and its named animation in the (still-current, pre-update) scene,
+       ticks the player by dt against that animation's duration, and
+       collects ids whose player.finished just became true.
+    2. Separately (two-pass, to avoid borrow-checker conflicts between
+       reading scene/players immutably while wanting to write scene
+       mutably): builds a Vec of (object_id, Sample) by re-looking-up each
+       playing object/animation and calling animation::sample() at the
+       player's current elapsed time.
+    3. Writes each Sample's Some(..) fields into that object's cuboid
+       (position/rotation/half_size [from Sample.scale]/color); fields that
+       came back None are left untouched (so an animation that only
+       animates color, say, doesn't reset position to anything).
+    4. Removes every finished (non-looping, fully played) player from
+       self.players.
+  play_animation(obj_id, anim_name) (private)
+    Looks up the object and the named animation; warns and no-ops if either
+    is missing (unknown object id, or object has no animation by that
+    name); otherwise inserts a fresh AnimationPlayer, REPLACING any
+    currently-playing animation on that object (only one animation can play
+    on a given object at a time — starting a new one immediately stops the
+    previous one with no fade/blend).
+  stop_animation(obj_id) (private) — removes that object's entry from
+    self.players if present (silent no-op if it wasn't playing anything).
+
+  --- Position caches (private) ---
+  update_object_position_cache() — for every object in the scene, push its
+    cuboid.position into script_host (used by scripts' get_object_x/y/z).
+  update_rig_position_cache() — pushes "head" from rig.head(), and for each
+    Hand variant, "<prefix>_grip" and "<prefix>_aim" from rig.hand_grip/
+    hand_aim (prefix = Hand::as_str(), i.e. "left"/"right" — NOTE these are
+    the SAME string keys used by JointId::from_name's "right_grip" style
+    parsing minus the underlying enum encoding; they're independently
+    formatted here as plain format! strings into the script_host's flat
+    rig_positions map, which is a parallel, simpler string-keyed cache
+    distinct from the strongly-typed JointId-keyed PlayerRig itself).
+
+  apply_attachments() (private) — attachments.resolve_all(&self.rig), then
+    for each (object_id, Transform) pair, if that object still exists in
+    the scene, overwrite its cuboid.position/.rotation (rotation here is
+    NOT composed with the object's own prior rotation — the resolved
+    Transform fully replaces it, consistent with attachments being an
+    absolute world-space placement, not a relative nudge).
+
+  --- Collisions (private) ---
+  dispatch_collisions()
+    Builds a flat Vec<(id, Aabb)> from EVERY object's current cuboid
+    position/half_size (regardless of hidden/is_trigger — those flags are
+    not consulted here, meaning a hidden object can still collide, and
+    is_trigger objects participate in the exact same AABB pass as solid
+    ones; is_trigger appears to be informational/host-interpreted rather
+    than something the collision pass itself special-cases). Runs
+    collisions.update(bodies), then for every resulting Enter/Exit event,
+    calls on_collision_enter/on_collision_exit on BOTH participants (each
+    side gets the other's id as the argument) — errors from script calls
+    are discarded via `let _ =` (an actual script bug here would currently
+    fail silently rather than crashing the frame or being surfaced to the
+    host; this is the existing error-handling posture throughout this
+    file — every script_host.call() site uses `let _ =`).
+
+  --- Input (private) ---
+  dispatch_input(input)
+    pointed  -> on_point(hand_str)
+    grabbed  -> on_grab(hand_str)
+    released -> on_release(hand_str)
+    button_presses with Some(object_id) -> on_press(button) on that object
+      (button_presses with object_id = None are NOT dispatched to any
+      script here — they're presumably meant for host-level UI handling
+      outside the scripting system entirely, since there's no "global"
+      script to call on_press on)
+
+  dispatch_update_hook(dt) (private)
+    For every object with has_script(id) == true, calls on_update(dt as
+    f64) (Rhai's native float type). The has_script() check up front avoids
+    paying any HashMap-lookup-plus-call overhead for the (likely majority
+    of) plain, non-scripted objects in a scene.
+
+  --- Script command application (private) ---
+  apply_script_commands()
+    Drains the full EngineCommand queue (everything queued by every script
+    call made earlier this same frame, across all dispatch_* calls), then
+    applies each variant:
+      MoveObject     -> overwrite cuboid.position
+      RotateObject   -> overwrite cuboid.rotation (built fresh via
+                          Quat::from_xyzw — NOT normalized here, so a script
+                          passing a non-unit quaternion will store a non-
+                          unit rotation as-is; no defensive normalization)
+      ScaleObject    -> overwrite cuboid.half_size
+      SetColor       -> overwrite cuboid.color (the u8 clamping already
+                          happened back in script.rs's set_color
+                          registration, so by the time the command arrives
+                          here the values are already valid u8s)
+      PlayAnim       -> calls self.play_animation(id, anim) (note: this is
+                          how trigger()/play_animation() from a script
+                          actually take effect — they don't start the
+                          animation immediately when called from Rhai, they
+                          just queue a command that's applied here, after
+                          all scripts for the frame have run)
+      StopAnim       -> calls self.stop_animation(id)
+      ChangeScene    -> sets self.pending_scene_change = Some(scene) (does
+                          NOT call load_scene() itself — that's explicitly
+                          left for the host to do on its own next-tick
+                          schedule, after seeing the returned Some(name)
+                          from update())
+      DestroyObject  -> removes the object from scene.objects (via retain),
+                          AND removes any running animation player for it,
+                          AND detaches any attachment for it — full cleanup
+                          across all three subsystems so a destroyed id
+                          can't leave stale references lying around. (Does
+                          NOT remove a compiled script AST from script_host
+                          — a destroyed-and-later-recreated object with the
+                          same id would still have its old compiled script
+                          available, though nothing in this codebase
+                          currently re-adds objects at runtime by id, so
+                          this is a latent/theoretical wrinkle rather than
+                          an observed bug path.)
+      AttachToJoint  -> parses the joint name via JointId::from_name; if
+                          recognized, builds an Attachment::with_offset and
+                          registers it (this also IMPLICITLY makes future
+                          frames' apply_attachments() take over driving that
+                          object's transform, overriding any of its own
+                          animation from here on, per the ordering note in
+                          update() above); if the joint name isn't
+                          recognized, logs a warning and does nothing.
+      Detach         -> attachments.detach(id)
+
+  --- Render output (private) ---
+  collect_render_cuboids()
+    Filters scene.objects to !hidden && mesh.is_none(), maps each to a
+    RenderCuboid using its current cuboid fields 1:1.
+  collect_render_meshes()
+    Filters to !hidden, then filter_maps to only those with mesh.is_some(),
+    producing a RenderMesh whose position/rotation are still driven by the
+    object's CUBOID transform (so animation/attachment continue to work
+    identically whether an object is shown as a box or a mesh) — rotation
+    is composed as cuboid.rotation * mesh_ref.rotation_offset, and scale
+    comes purely from mesh_ref.scale (the cuboid's half_size is NOT used
+    for mesh scale — only for the physics AABB, as already noted in
+    scene.rs's MeshRef doc comment).
+    NOTE: an object with `hidden=true` produces NEITHER a cuboid nor a mesh
+    (filtered out of both collectors) — "hidden" truly means invisible at
+    render time in every code path, regardless of mesh vs cuboid.
+    NOTE 2: an object can in principle appear in NEITHER list if it's
+    hidden, and in EXACTLY ONE of the two lists otherwise (cuboids list if
+    no mesh, meshes list if it has one) — never both, by construction of
+    the two filters (mesh.is_none() vs mesh.is_some()).
+
+  scene() / scene_mut() — direct access for editor/tooling code that wants
+    to mutate the live scene outside the normal script/command pipeline
+    (e.g. an in-headset or desktop level editor moving objects by hand).
+
+================================================================================
+ CROSS-CUTTING NOTES / GOTCHAS WORTH KNOWING
+================================================================================
+- Error handling posture: almost every script_host.call(...) site in
+  runtime.rs discards the Result via `let _ =`. A genuine bug inside a
+  user-authored script (as opposed to it simply not defining a given hook,
+  which is already handled as a non-error inside ScriptHost::call) will
+  currently fail silently from the runtime's perspective at every dispatch
+  site except script compilation, which DOES surface as a warn! log.
+
+- Attachments always win over animation, every single frame, because
+  apply_attachments() runs after update_animations() in update()'s
+  sequence, and re-asserts position/rotation from the rig unconditionally
+  for every attached object id. An attached object's own `animations` list
+  is not unreachable, but visually never observable, unless you Detach it.
+
+- Script-issued commands are deferred, not immediate: calling
+  move_object()/play_animation()/etc from Rhai does not change anything
+  until apply_script_commands() runs near the end of that same update()
+  call — meaning within a single frame, scripts always observe pre-update
+  state when reading via get_object_x/y/z (position cache is refreshed once,
+  near the start of the frame, before any dispatch_* runs).
+
+- Scene switches reset scripting (compiled scripts, vars, command queue),
+  animation playback, and collision tracking, but explicitly do NOT reset
+  rig, attachments, or locomotion — player position and held items persist
+  through a change_scene call.
+
+- The collision system does not distinguish is_trigger from solid objects
+  on its own — every object's AABB participates in the same overlap pass
+  and gets the same on_collision_enter/exit treatment; any "trigger vs
+  solid response" behavior difference is left to either the host app's
+  rendering/physics-response layer (not present in this crate) or to what
+  individual object scripts choose to do inside their own
+  on_collision_enter handler.
+
+- Hand-tracking joint cuboids spawned via hands.rs become ordinary
+  GameObjects with rigid Attachments — they're not a separate "hand"
+  subsystem at runtime; despawn_hand_rig has to know the exact id-naming
+  scheme ("{lhand|rhand}_{joint_name}") to find and remove them again,
+  since there's no separate registry of "which ids belong to the hand rig."
+================================================================================
