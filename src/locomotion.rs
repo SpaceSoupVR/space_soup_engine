@@ -78,7 +78,7 @@ impl Locomotion {
         rig:   &PlayerRig,
         teleport_target: Option<TeleportTarget>,
     ) {
-        self.update_snap_turn(input);
+        self.update_snap_turn(input, rig);
 
         match self.mode {
             LocomotionMode::Smooth   => self.update_smooth(dt, input, rig),
@@ -87,13 +87,24 @@ impl Locomotion {
         }
     }
 
-    fn update_snap_turn(&mut self, input: &LocomotionInput) {
+    fn update_snap_turn(&mut self, input: &LocomotionInput, rig: &PlayerRig) {
         let x = input.turn_stick_x;
         let threshold = 0.6;
 
         if x.abs() > threshold && self.last_turn_stick.abs() <= threshold {
-            let dir = if x > 0.0 { -1.0 } else { 1.0 };
-            self.player_yaw += dir * self.snap_turn_deg.to_radians();
+            let dir   = if x > 0.0 { -1.0 } else { 1.0 };
+            let delta = dir * self.snap_turn_deg.to_radians();
+
+            // Pivot the turn about the head, not the playspace origin. The head
+            // world position is `player_offset + R(yaw) * head_pos`, so changing
+            // yaw alone swings the player in a circle. Compensate player_offset
+            // to keep the head's world position fixed across the turn.
+            let head_pos = rig.head().position;
+            let old      = Quat::from_rotation_y(self.player_yaw);
+            let new      = Quat::from_rotation_y(self.player_yaw + delta);
+            self.player_offset += (old * head_pos) - (new * head_pos);
+
+            self.player_yaw += delta;
         }
         self.last_turn_stick = x;
     }
