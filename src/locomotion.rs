@@ -21,6 +21,7 @@ pub struct LocomotionInput {
     pub teleport_pressed: bool,
     pub teleport_released: bool,
     pub teleport_hand: Hand,
+    pub jump_pressed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,8 +39,12 @@ pub struct Locomotion {
     pub snap_turn_deg:   f32,
     pub teleport_range:  f32,
 
+    pub jump_speed:   f32,
+    pub gravity:      f32,
+
     is_teleport_aiming: bool,
     last_turn_stick:    f32,
+    vertical_velocity:  f32,
 }
 
 impl Default for Locomotion {
@@ -51,8 +56,11 @@ impl Default for Locomotion {
             move_speed:    1.6,
             snap_turn_deg: 30.0,
             teleport_range: 5.0,
+            jump_speed:    3.0,
+            gravity:       9.81,
             is_teleport_aiming: false,
             last_turn_stick:    0.0,
+            vertical_velocity:  0.0,
         }
     }
 }
@@ -84,6 +92,27 @@ impl Locomotion {
             LocomotionMode::Smooth   => self.update_smooth(dt, input, rig),
             LocomotionMode::Teleport => self.update_teleport(input, teleport_target),
             LocomotionMode::Disabled => {}
+        }
+
+        self.update_jump(dt, input);
+    }
+
+    fn update_jump(&mut self, dt: f32, input: &LocomotionInput) {
+        // Vertical motion lives entirely in player_offset.y; ground is y = 0.
+        // Horizontal locomotion never touches y, so this channel is ours alone.
+        let grounded = self.player_offset.y <= 0.0 && self.vertical_velocity <= 0.0;
+
+        if input.jump_pressed && grounded {
+            self.vertical_velocity = self.jump_speed;
+        }
+
+        self.vertical_velocity -= self.gravity * dt;
+        self.player_offset.y   += self.vertical_velocity * dt;
+
+        // Land: clamp to the ground and kill downward velocity.
+        if self.player_offset.y <= 0.0 {
+            self.player_offset.y   = 0.0;
+            self.vertical_velocity = 0.0;
         }
     }
 
