@@ -21,6 +21,7 @@ pub struct LocomotionInput {
     pub teleport_pressed: bool,
     pub teleport_released: bool,
     pub teleport_hand: Hand,
+    pub jump_pressed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,8 +39,12 @@ pub struct Locomotion {
     pub snap_turn_deg:   f32,
     pub teleport_range:  f32,
 
+    pub jump_speed:   f32,
+    pub gravity:      f32,
+
     is_teleport_aiming: bool,
     last_turn_stick:    f32,
+    vertical_velocity:  f32,
 }
 
 impl Default for Locomotion {
@@ -51,8 +56,11 @@ impl Default for Locomotion {
             move_speed:    1.6,
             snap_turn_deg: 30.0,
             teleport_range: 5.0,
+            jump_speed:    3.0,
+            gravity:       9.81,
             is_teleport_aiming: false,
             last_turn_stick:    0.0,
+            vertical_velocity:  0.0,
         }
     }
 }
@@ -78,22 +86,54 @@ impl Locomotion {
         rig:   &PlayerRig,
         teleport_target: Option<TeleportTarget>,
     ) {
-        self.update_snap_turn(input);
+        self.update_snap_turn(input, rig);
 
         match self.mode {
             LocomotionMode::Smooth   => self.update_smooth(dt, input, rig),
             LocomotionMode::Teleport => self.update_teleport(input, teleport_target),
             LocomotionMode::Disabled => {}
         }
+
+        self.update_jump(dt, input);
     }
 
-    fn update_snap_turn(&mut self, input: &LocomotionInput) {
+    fn update_jump(&mut self, dt: f32, input: &LocomotionInput) {
+        // Vertical motion lives entirely in player_offset.y; ground is y = 0.
+        // Horizontal locomotion never touches y, so this channel is ours alone.
+        let grounded = self.player_offset.y <= 0.0 && self.vertical_velocity <= 0.0;
+
+        if input.jump_pressed && grounded {
+            self.vertical_velocity = self.jump_speed;
+        }
+
+        self.vertical_velocity -= self.gravity * dt;
+        self.player_offset.y   += self.vertical_velocity * dt;
+
+        // Land: clamp to the ground and kill downward velocity.
+        if self.player_offset.y <= 0.0 {
+            self.player_offset.y   = 0.0;
+            self.vertical_velocity = 0.0;
+        }
+    }
+
+    fn update_snap_turn(&mut self, input: &LocomotionInput, rig: &PlayerRig) {
         let x = input.turn_stick_x;
         let threshold = 0.6;
 
         if x.abs() > threshold && self.last_turn_stick.abs() <= threshold {
-            let dir = if x > 0.0 { -1.0 } else { 1.0 };
-            self.player_yaw += dir * self.snap_turn_deg.to_radians();
+            let dir   = if x > 0.0 { -1.0 } else { 1.0 };
+            let delta = dir * self.snap_turn_deg.to_radians();
+
+            // Pivot the turn about the head, not the playspace origin. The head
+            // world position is `player_offset + R(yaw) * head_pos`, so changing
+            // yaw alone swings the player in a circle. Compensate player_offset
+            // to keep the head's world position fixed across the turn.
+            let head_pos = rig.head().position;
+            let old      = Quat::from_rotation_y(self.player_yaw);
+            let new      = Quat::from_rotation_y(self.player_yaw + delta);
+            self.player_offset += (old * head_pos) - (new * head_pos);
+
+            self.player_yaw += delta;
         }
         self.last_turn_stick = x;
     }
@@ -102,15 +142,24 @@ impl Locomotion {
         let (sx, sy) = input.move_stick;
         if sx.abs() < 0.08 && sy.abs() < 0.08 { return; }
 
-        let head = rig.head();
-        let (_, head_yaw, _) = head.rotation.to_euler(glam::EulerRot::YXZ);
-        let total_yaw = head_yaw + self.player_yaw;
-        let facing = Quat::from_rotation_y(total_yaw);
+        // Heading is where the player looks, flattened onto the ground plane.
+        // We take it from the head's forward vector rather than an Euler yaw:
+        // Euler extraction becomes unstable as the head pitches or rolls, which
+        // made the move direction flip or swap axes seemingly at random.
+        let world_rot = Quat::from_rotation_y(self.player_yaw) * rig.head().rotation;
+        let fwd = world_rot * Vec3::NEG_Z;
 
-        let forward = facing * Vec3::new(0.0, 0.0, -1.0);
-        let right   = facing * Vec3::new(1.0, 0.0, 0.0);
+        let mut heading = Vec3::new(fwd.x, 0.0, fwd.z);
+        if heading.length_squared() < 1e-4 {
+            // Looking almost straight up/down: fall back to the head's up axis.
+            let up = world_rot * Vec3::Y;
+            heading = Vec3::new(up.x, 0.0, up.z);
+        }
 
-        let move_dir = (forward * sy + right * -sx).normalize_or_zero();
+        let forward = heading.normalize_or_zero();
+        let right   = Vec3::new(-forward.z, 0.0, forward.x); // forward rotated −90° about Y
+
+        let move_dir = (forward * sy + right * sx).normalize_or_zero();
         self.player_offset += move_dir * self.move_speed * dt;
     }
 
