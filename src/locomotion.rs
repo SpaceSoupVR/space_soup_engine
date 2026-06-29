@@ -142,15 +142,24 @@ impl Locomotion {
         let (sx, sy) = input.move_stick;
         if sx.abs() < 0.08 && sy.abs() < 0.08 { return; }
 
-        let head = rig.head();
-        let (_, head_yaw, _) = head.rotation.to_euler(glam::EulerRot::YXZ);
-        let total_yaw = head_yaw + self.player_yaw;
-        let facing = Quat::from_rotation_y(total_yaw);
+        // Heading is where the player looks, flattened onto the ground plane.
+        // We take it from the head's forward vector rather than an Euler yaw:
+        // Euler extraction becomes unstable as the head pitches or rolls, which
+        // made the move direction flip or swap axes seemingly at random.
+        let world_rot = Quat::from_rotation_y(self.player_yaw) * rig.head().rotation;
+        let fwd = world_rot * Vec3::NEG_Z;
 
-        let forward = facing * Vec3::new(0.0, 0.0, -1.0);
-        let right   = facing * Vec3::new(1.0, 0.0, 0.0);
+        let mut heading = Vec3::new(fwd.x, 0.0, fwd.z);
+        if heading.length_squared() < 1e-4 {
+            // Looking almost straight up/down: fall back to the head's up axis.
+            let up = world_rot * Vec3::Y;
+            heading = Vec3::new(up.x, 0.0, up.z);
+        }
 
-        let move_dir = (forward * sy + right * -sx).normalize_or_zero();
+        let forward = heading.normalize_or_zero();
+        let right   = Vec3::new(-forward.z, 0.0, forward.x); // forward rotated −90° about Y
+
+        let move_dir = (forward * sy + right * sx).normalize_or_zero();
         self.player_offset += move_dir * self.move_speed * dt;
     }
 
