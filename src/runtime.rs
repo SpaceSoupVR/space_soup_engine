@@ -76,6 +76,10 @@ impl GameRuntime {
         Ok(rt)
     }
 
+    pub fn render_lists(&self) -> (Vec<RenderCuboid>, Vec<RenderMesh>) {
+        (self.collect_render_cuboids(), self.collect_render_meshes())
+    }
+
     fn compile_scripts(&mut self) {
         for obj in &self.scene.objects {
             if let Some(src) = &obj.script {
