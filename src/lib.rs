@@ -8,6 +8,7 @@ pub mod rig;
 pub mod attach;
 pub mod locomotion;
 pub mod hands;
+pub mod procedural_hand;
 pub mod runtime;
 pub mod debug_protocol;
 
@@ -21,6 +22,7 @@ pub use rig::{PlayerRig, JointId, FingerJoint, Transform};
 pub use attach::{Attachment, AttachmentTable};
 pub use locomotion::{Locomotion, LocomotionMode, LocomotionInput, TeleportTarget};
 pub use hands::{spawn_hand_rig, spawn_both_hand_rigs, despawn_hand_rig};
+pub use procedural_hand::{build_hand, FingerCurls, HandCuboid};
 pub use runtime::{GameRuntime, RenderCuboid, RenderMesh};
 pub use debug_protocol::{
     DebugPacket, Pose, HandSample, JointSample, LocomotionSample, SceneSample, TimingSample,
