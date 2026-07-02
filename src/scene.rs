@@ -1,5 +1,6 @@
 use glam::{Vec3, Quat};
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 use std::path::Path;
 use anyhow::{Result, Context};
 
@@ -121,6 +122,35 @@ impl Animation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RigAttachmentDef {
+    pub joint: String,
+    #[serde(default)]
+    pub offset: [f32; 3],
+}
+
+fn identity_quat_arr() -> [f32; 4] { [0.0, 0.0, 0.0, 1.0] }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GripPoseDef {
+    #[serde(default)]
+    pub hand_offset_pos: [f32; 3],
+    #[serde(default = "identity_quat_arr")]
+    pub hand_offset_rot: [f32; 4],
+    #[serde(default)]
+    pub finger_curl: HashMap<String, f32>,
+}
+
+impl Default for GripPoseDef {
+    fn default() -> Self {
+        Self {
+            hand_offset_pos: [0.0, 0.0, 0.0],
+            hand_offset_rot: identity_quat_arr(),
+            finger_curl: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameObject {
     pub id: String,
 
@@ -141,6 +171,12 @@ pub struct GameObject {
 
     #[serde(default)]
     pub animations: Vec<Animation>,
+
+    #[serde(default)]
+    pub rig_attachment: Option<RigAttachmentDef>,
+
+    #[serde(default)]
+    pub grip_pose: Option<GripPoseDef>,
 }
 
 impl GameObject {

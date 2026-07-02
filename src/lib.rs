@@ -15,6 +15,7 @@ pub use manifest::Manifest;
 pub use scene::{
     Scene, GameObject, Animation, Keyframe, Easing,
     CuboidDef, Color3, CuboidStyle, MeshRef,
+    RigAttachmentDef, GripPoseDef,
 };
 pub use events::{InputFrame, Hand, ButtonPress};
 pub use rig::{PlayerRig, JointId, FingerJoint, Transform};

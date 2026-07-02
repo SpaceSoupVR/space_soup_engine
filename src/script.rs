@@ -20,6 +20,7 @@ pub enum EngineCommand {
         offset_y:   f32,
         offset_z:   f32,
     },
+    GrabAtJoint { id: String, joint: String },
     Detach { id: String },
 }
 
@@ -253,6 +254,15 @@ fn build_engine(context: SharedContext) -> Engine {
                 });
             },
         );
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("grab_at_joint", move |id: &str, joint: &str| {
+            ctx.lock().unwrap().commands.push(EngineCommand::GrabAtJoint {
+                id: id.to_string(), joint: joint.to_string(),
+            });
+        });
     }
 
     {

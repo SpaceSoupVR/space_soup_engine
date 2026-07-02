@@ -103,9 +103,10 @@ impl Locomotion {
         if sx.abs() < 0.08 && sy.abs() < 0.08 { return; }
 
         let head = rig.head();
+        // head.rotation is in world space (locomotion already applied before update()),
+        // so head_yaw is the full world-facing direction — no need to add player_yaw again.
         let (_, head_yaw, _) = head.rotation.to_euler(glam::EulerRot::YXZ);
-        let total_yaw = head_yaw + self.player_yaw;
-        let facing = Quat::from_rotation_y(total_yaw);
+        let facing = Quat::from_rotation_y(head_yaw);
 
         let forward = facing * Vec3::new(0.0, 0.0, -1.0);
         let right   = facing * Vec3::new(1.0, 0.0, 0.0);

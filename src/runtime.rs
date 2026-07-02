@@ -5,7 +5,7 @@ use anyhow::Result;
 use log::{info, warn};
 
 use crate::manifest::Manifest;
-use crate::scene::{Scene, GameObject, CuboidDef, Color3, CuboidStyle, MeshRef};
+use crate::scene::{Scene, Color3, CuboidStyle, MeshRef};
 use crate::animation::{AnimationPlayer, sample};
 use crate::physics::{Aabb, CollisionTracker, CollisionEvent};
 use crate::events::{InputFrame, Hand};
@@ -70,6 +70,7 @@ impl GameRuntime {
         };
 
         rt.compile_scripts();
+        rt.setup_scene_attachments();
         info!("GameRuntime: loaded scene '{}' with {} objects",
             rt.scene.name, rt.scene.objects.len());
 
@@ -78,6 +79,31 @@ impl GameRuntime {
 
     pub fn render_lists(&self) -> (Vec<RenderCuboid>, Vec<RenderMesh>) {
         (self.collect_render_cuboids(), self.collect_render_meshes())
+    }
+
+    fn setup_scene_attachments(&mut self) {
+        let defs: Vec<(String, String, [f32; 3])> = self.scene.objects.iter()
+            .filter_map(|o| {
+                let att = o.rig_attachment.as_ref()?;
+                Some((o.id.clone(), att.joint.clone(), att.offset))
+            })
+            .collect();
+
+        for (obj_id, joint_name, offset) in defs {
+            match JointId::from_name(&joint_name) {
+                Some(joint_id) => {
+                    let offset_vec = Vec3::from(offset);
+                    let att = if offset_vec == Vec3::ZERO {
+                        Attachment::rigid(joint_id)
+                    } else {
+                        Attachment::with_offset(joint_id, offset_vec, Quat::IDENTITY)
+                    };
+                    self.attachments.attach(&obj_id, att);
+                    info!("setup_scene_attachments: '{obj_id}' → '{joint_name}'");
+                }
+                None => warn!("setup_scene_attachments: unknown joint '{joint_name}' for '{obj_id}'"),
+            }
+        }
     }
 
     fn compile_scripts(&mut self) {
@@ -97,8 +123,10 @@ impl GameRuntime {
         self.scene      = scene;
         self.players    = HashMap::new();
         self.collisions = CollisionTracker::new();
+        self.attachments = AttachmentTable::new();
         self.script_host = ScriptHost::new();
         self.compile_scripts();
+        self.setup_scene_attachments();
 
         info!("GameRuntime: switched to scene '{scene_name}'");
         Ok(())
@@ -138,7 +166,7 @@ impl GameRuntime {
 
     pub fn world_head_transform(&self) -> (Vec3, Quat) {
         let head = self.rig.head();
-        self.locomotion.apply_to_head(head.position, head.rotation)
+        (head.position, head.rotation)
     }
 
     fn update_animations(&mut self, dt: f32) {
@@ -218,11 +246,17 @@ impl GameRuntime {
     }
 
     fn apply_attachments(&mut self) {
-        let resolved = self.attachments.resolve_all(&self.rig);
-        for (obj_id, tf) in resolved {
+        let results = self.attachments.resolve_all_with_visibility(&self.rig);
+        for (obj_id, maybe_tf) in results {
             if let Some(obj) = self.scene.find_object_mut(&obj_id) {
-                obj.cuboid.position = tf.position;
-                obj.cuboid.rotation = tf.rotation;
+                match maybe_tf {
+                    Some(tf) => {
+                        obj.cuboid.position = tf.position;
+                        obj.cuboid.rotation = tf.rotation;
+                    }
+                    // Joint not in rig (hand tracking inactive) — hide the bone
+                    None => obj.hidden = true,
+                }
             }
         }
     }
@@ -326,6 +360,22 @@ impl GameRuntime {
                             self.attachments.attach(&id, att);
                         }
                         None => warn!("attach_to_joint: unknown joint name '{joint}'"),
+                    }
+                }
+                EngineCommand::GrabAtJoint { id, joint } => {
+                    match JointId::from_name(&joint) {
+                        Some(joint_id) => {
+                            match (self.rig.get(joint_id), self.scene.find_object(&id)) {
+                                (Some(joint_tf), Some(obj)) => {
+                                    let inv_rot = joint_tf.rotation.inverse();
+                                    let offset_pos = inv_rot * (obj.cuboid.position - joint_tf.position);
+                                    let offset_rot = inv_rot * obj.cuboid.rotation;
+                                    self.attachments.attach(&id, Attachment::with_offset(joint_id, offset_pos, offset_rot));
+                                }
+                                _ => warn!("grab_at_joint: '{id}' or joint '{joint}' not found"),
+                            }
+                        }
+                        None => warn!("grab_at_joint: unknown joint name '{joint}'"),
                     }
                 }
                 EngineCommand::Detach { id } => {

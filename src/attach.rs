@@ -52,9 +52,23 @@ impl AttachmentTable {
         self.attachments.contains_key(object_id)
     }
 
+    pub fn object_for_joint(&self, joint: JointId) -> Option<&str> {
+        self.attachments.iter()
+            .find(|(_, att)| att.joint == joint)
+            .map(|(id, _)| id.as_str())
+    }
+
     pub fn resolve_all(&self, rig: &PlayerRig) -> Vec<(String, Transform)> {
         self.attachments.iter()
             .filter_map(|(id, att)| att.resolve(rig).map(|tf| (id.clone(), tf)))
+            .collect()
+    }
+
+    /// Like resolve_all, but also returns IDs whose joint isn't currently in
+    /// the rig so callers can hide those objects.
+    pub fn resolve_all_with_visibility(&self, rig: &PlayerRig) -> Vec<(String, Option<Transform>)> {
+        self.attachments.iter()
+            .map(|(id, att)| (id.clone(), att.resolve(rig)))
             .collect()
     }
 }

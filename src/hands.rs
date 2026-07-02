@@ -42,11 +42,13 @@ pub fn spawn_hand_rig(runtime: &mut GameRuntime, hand: Hand) {
                 wire_color: Color3(0, 0, 0, 0),
                 style:      CuboidStyle::Solid,
             },
-            mesh:       None,
-            is_trigger: false,
-            hidden:     false,
-            script:     None,
-            animations: vec![],
+            mesh:           None,
+            is_trigger:     false,
+            hidden:         false,
+            script:         None,
+            animations:     vec![],
+            rig_attachment: None,
+            grip_pose:      None,
         };
 
         runtime.scene_mut().objects.push(obj);
