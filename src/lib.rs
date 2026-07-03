@@ -9,6 +9,7 @@ pub mod attach;
 pub mod locomotion;
 pub mod hands;
 pub mod runtime;
+pub mod rigid_physics;
 pub mod debug_protocol;
 
 pub use manifest::Manifest;
@@ -16,6 +17,8 @@ pub use scene::{
     Scene, GameObject, Animation, Keyframe, Easing,
     CuboidDef, Color3, CuboidStyle, MeshRef,
     RigAttachmentDef, GripPoseDef,
+    BodyMode, ColliderShape, RigidBodyDef,
+    GripKind, GripPointDef,
 };
 pub use events::{InputFrame, Hand, ButtonPress};
 pub use rig::{PlayerRig, JointId, FingerJoint, Transform};

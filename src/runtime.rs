@@ -5,7 +5,7 @@ use anyhow::Result;
 use log::{info, warn};
 
 use crate::manifest::Manifest;
-use crate::scene::{Scene, Color3, CuboidStyle, MeshRef};
+use crate::scene::{Scene, Color3, CuboidStyle, MeshRef, GameObject, GripPointDef};
 use crate::animation::{AnimationPlayer, sample};
 use crate::physics::{Aabb, CollisionTracker, CollisionEvent};
 use crate::events::{InputFrame, Hand};
@@ -13,6 +13,7 @@ use crate::script::{ScriptHost, EngineCommand};
 use crate::rig::{PlayerRig, JointId};
 use crate::attach::{Attachment, AttachmentTable};
 use crate::locomotion::{Locomotion, LocomotionMode, LocomotionInput, TeleportTarget};
+use crate::rigid_physics::PhysicsWorld;
 
 #[derive(Debug, Clone)]
 pub struct RenderCuboid {
@@ -42,6 +43,7 @@ pub struct GameRuntime {
     script_host: ScriptHost,
     players:     HashMap<String, AnimationPlayer>,
     collisions:  CollisionTracker,
+    rigid_physics: PhysicsWorld,
 
     pub rig:         PlayerRig,
     pub attachments: AttachmentTable,
@@ -63,6 +65,7 @@ impl GameRuntime {
             script_host: ScriptHost::new(),
             players:     HashMap::new(),
             collisions:  CollisionTracker::new(),
+            rigid_physics: PhysicsWorld::new(),
             rig:         PlayerRig::new(),
             attachments: AttachmentTable::new(),
             locomotion:  Locomotion::new(LocomotionMode::Smooth),
@@ -71,6 +74,7 @@ impl GameRuntime {
 
         rt.compile_scripts();
         rt.setup_scene_attachments();
+        rt.rigid_physics.rebuild(&rt.scene);
         info!("GameRuntime: loaded scene '{}' with {} objects",
             rt.scene.name, rt.scene.objects.len());
 
@@ -127,6 +131,7 @@ impl GameRuntime {
         self.script_host = ScriptHost::new();
         self.compile_scripts();
         self.setup_scene_attachments();
+        self.rigid_physics.rebuild(&self.scene);
 
         info!("GameRuntime: switched to scene '{scene_name}'");
         Ok(())
@@ -158,6 +163,14 @@ impl GameRuntime {
         self.dispatch_input(input);
         self.dispatch_update_hook(dt);
         self.apply_script_commands();
+        // Physics has final say each frame for any object with a
+        // `rigid_body` — runs after scripts so a `Dynamic` body's
+        // `cuboid.position`/`.rotation` always reflects the simulation,
+        // even if a script called `move_object`/`rotate_object` on it this
+        // frame (use `Kinematic` mode for script/animation-driven objects
+        // that should still collide). Same "last write wins" pattern
+        // `apply_attachments` already uses against animation, above.
+        self.rigid_physics.step(dt, &mut self.scene, &self.rig);
 
         let cuboids = self.collect_render_cuboids();
         let meshes  = self.collect_render_meshes();
@@ -262,7 +275,16 @@ impl GameRuntime {
     }
 
     fn dispatch_collisions(&mut self) {
+        // Objects with a `rigid_body` are excluded — they get real
+        // solid-body collision resolution from PhysX itself
+        // (`rigid_physics.step`, above), so running them through this
+        // brute-force AABB pass too would only add noisy/duplicate
+        // enter/exit events. Everything else (including non-`is_trigger`
+        // objects like hands and held props) stays in the list unchanged,
+        // since `is_trigger` objects still need to detect overlap against
+        // *anything*, not just other triggers.
         let bodies: Vec<(String, Aabb)> = self.scene.objects.iter()
+            .filter(|o| o.rigid_body.is_none())
             .map(|o| {
                 let aabb = Aabb::from_center_half(o.cuboid.position, o.cuboid.half_size);
                 (o.id.clone(), aabb)
@@ -289,8 +311,8 @@ impl GameRuntime {
         for (id, hand) in &input.pointed {
             let _ = self.script_host.call(id, "on_point", (hand.as_str().to_string(),));
         }
-        for (id, hand) in &input.grabbed {
-            let _ = self.script_host.call(id, "on_grab", (hand.as_str().to_string(),));
+        for (id, hand, point) in &input.grabbed {
+            let _ = self.script_host.call(id, "on_grab", (hand.as_str().to_string(), point.clone()));
         }
         for (id, hand) in &input.released {
             let _ = self.script_host.call(id, "on_release", (hand.as_str().to_string(),));
@@ -381,8 +403,31 @@ impl GameRuntime {
                 EngineCommand::Detach { id } => {
                     self.attachments.detach(&id);
                 }
+                EngineCommand::GrabAtPoint { id, point, hand } => {
+                    let Some(obj) = self.scene.find_object(&id) else {
+                        warn!("grab_at_point: unknown object '{id}'");
+                        continue;
+                    };
+                    match obj.grip_point(&point).cloned() {
+                        Some(point_def) => self.rigid_physics.grab(&id, hand, &point_def),
+                        None => warn!("grab_at_point: '{id}' has no grip point named '{point}'"),
+                    }
+                }
+                EngineCommand::ReleaseGrip { id, hand } => {
+                    self.rigid_physics.release(&id, hand);
+                }
             }
         }
+    }
+
+    /// What `hand` currently has grabbed via a named grip point (see
+    /// `rigid_physics::PhysicsWorld::held_by`), if anything — for cosmetic
+    /// hand-mesh alignment in host apps.
+    pub fn held_grip_point(&self, hand: Hand) -> Option<(&GameObject, &GripPointDef)> {
+        let (id, point_name) = self.rigid_physics.held_by(hand)?;
+        let obj = self.scene.find_object(id)?;
+        let point = obj.grip_point(point_name)?;
+        Some((obj, point))
     }
 
     fn collect_render_cuboids(&self) -> Vec<RenderCuboid> {
@@ -418,4 +463,150 @@ impl GameRuntime {
 
     pub fn scene(&self) -> &Scene { &self.scene }
     pub fn scene_mut(&mut self) -> &mut Scene { &mut self.scene }
+}
+
+#[cfg(test)]
+mod rigid_physics_test {
+    use super::*;
+
+    // PhysX only allows one `PxFoundation` per process ("Foundation object
+    // exists already" is a hard C++-side abort, not a recoverable error) —
+    // so every `rigid_body`-exercising scenario has to share the single
+    // `GameRuntime` this test creates rather than each getting its own
+    // `#[test]` fn (which `cargo test` would run in the same process).
+    #[test]
+    fn falls_lands_and_loops() {
+        let dir = std::env::temp_dir().join("space_soup_engine_rigid_physics_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        ).unwrap();
+
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "floor",
+                        "cuboid": { "position": [0.0, -0.5, 0.0], "half_size": [5.0, 0.5, 5.0] },
+                        "rigid_body": { "mode": "Static", "shape": "Box" }
+                    },
+                    {
+                        "id": "ball",
+                        "cuboid": { "position": [0.0, 5.0, 0.0], "half_size": [0.5, 0.5, 0.5] },
+                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 }
+                    },
+                    {
+                        "id": "looping_ball",
+                        "cuboid": { "position": [2.0, 1.5, 0.0], "half_size": [0.5, 0.5, 0.5] },
+                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0, "respawn_interval": 1.5 }
+                    },
+                    {
+                        "id": "handle_box",
+                        "cuboid": { "position": [-3.0, 3.0, 0.0], "half_size": [0.2, 0.2, 0.2] },
+                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 },
+                        "grip_points": [
+                            { "name": "handle", "kind": "Snap", "local_pos": [0.0, 0.0, 0.0] }
+                        ],
+                        "script": "fn on_grab(hand, point) { grab_at_point(\"handle_box\", point, hand); } fn on_release(hand) { release_grip(\"handle_box\", hand); }"
+                    }
+                ]
+            }"#,
+        ).unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+
+        // Captured before any `update()` runs — the grab/release block
+        // below advances the whole scene (including `ball`) by ~60 steps
+        // as a side effect, so this has to happen first to mean anything.
+        let start_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
+        assert!((start_y - 5.0).abs() < 0.01, "expected ball to start at y=5.0, got {start_y}");
+
+        // Grab/release, run first while `handle_box` is still at its spawn
+        // height — the shared floor spans far enough in X to eventually
+        // catch it too, which would make "still at spawn height" a bad
+        // assumption once the later ball/looping_ball sections have run
+        // several more seconds of simulation.
+        //
+        // The script's `on_grab` reads the InputFrame-supplied point name
+        // and calls `grab_at_point`, which creates a `Snap` (fixed) joint
+        // between the right-hand anchor and `handle_box`'s `handle` point —
+        // the box should then follow the hand precisely as it moves,
+        // overriding gravity.
+        let before_grab_y = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+        assert!((before_grab_y - 3.0).abs() < 0.05, "expected handle_box to still be at its spawn height before being grabbed, got {before_grab_y}");
+
+        let mut grab_input = InputFrame::default();
+        grab_input.grabbed.push(("handle_box".to_string(), Hand::Right, "handle".to_string()));
+        let mut rig = PlayerRig::new();
+        rig.set_hand_grip(Hand::Right, Vec3::new(-3.0, 3.0, 0.0), Quat::IDENTITY);
+        rt.update(dt, &grab_input, rig, &LocomotionInput::default(), None);
+
+        // Drag the hand down over half a second; the box should follow.
+        for i in 1..=30 {
+            let mut rig = PlayerRig::new();
+            rig.set_hand_grip(Hand::Right, Vec3::new(-3.0, 3.0 - i as f32 * 0.02, 0.0), Quat::IDENTITY);
+            rt.update(dt, &InputFrame::default(), rig, &LocomotionInput::default(), None);
+        }
+        let held_y = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+        assert!(
+            (held_y - 2.4).abs() < 0.1,
+            "expected handle_box to follow the hand down to y\u{2248}2.4 while snap-grabbed (gravity should be overridden by the joint), got {held_y}"
+        );
+
+        // Release: the box should now fall freely again, independent of
+        // hand position.
+        let mut release_input = InputFrame::default();
+        release_input.released.push(("handle_box".to_string(), Hand::Right));
+        rt.update(dt, &release_input, PlayerRig::new(), &LocomotionInput::default(), None);
+        let y_at_release = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+
+        for _ in 0..30 {
+            rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
+        }
+        let y_after_release = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+        assert!(
+            y_after_release < y_at_release - 0.05,
+            "expected handle_box to fall freely under gravity after release, went from {y_at_release} to {y_after_release}"
+        );
+
+        rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
+        let after_one_step_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
+        assert!(after_one_step_y < start_y, "expected gravity to have pulled the ball down from its start height by now, went from {start_y} to {after_one_step_y}");
+
+        // 3 simulated seconds is comfortably enough to fall ~4.5m and settle.
+        for _ in 0..180 {
+            rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
+        }
+        let landed_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
+        assert!(
+            (landed_y - 0.5).abs() < 0.15,
+            "expected the ball (half_size.y=0.5) to land resting on the floor's top surface (y=0.0) at y\u{2248}0.5, got {landed_y}"
+        );
+
+        // `looping_ball` has been simulating alongside `ball` this whole
+        // time too (3s elapsed, well past its 1.5s respawn_interval) — by
+        // now it should have landed, teleported back up, and be mid-fall
+        // again rather than resting, since 3s isn't a clean multiple of
+        // 1.5s from when it last reset. Rather than pin down its exact
+        // phase, just confirm the respawn loop is actually driving it: run
+        // it a bit further and check it visits both "up near spawn" and
+        // "down near the floor" — i.e. it's genuinely cycling, not stuck.
+        let mut saw_high = false;
+        let mut saw_low = false;
+        for _ in 0..180 {
+            rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
+            let y = rt.scene().find_object("looping_ball").unwrap().cuboid.position.y;
+            if y > 1.2 { saw_high = true; }
+            if y < 0.7 { saw_low = true; }
+        }
+        assert!(saw_high, "expected looping_ball to revisit its spawn height (respawn_interval loop)");
+        assert!(saw_low, "expected looping_ball to also reach the floor (it should still fall each cycle)");
+    }
 }

@@ -48,7 +48,11 @@ pub fn spawn_hand_rig(runtime: &mut GameRuntime, hand: Hand) {
             script:         None,
             animations:     vec![],
             rig_attachment: None,
-            grip_pose:      None,
+            grip_pose_legacy: None,
+            grip_pose_left:   None,
+            grip_pose_right:  None,
+            rigid_body:       None,
+            grip_points:      Vec::new(),
         };
 
         runtime.scene_mut().objects.push(obj);

@@ -3,6 +3,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
+use crate::events::Hand;
+
+fn parse_hand(s: &str) -> Hand {
+    if s.eq_ignore_ascii_case("left") { Hand::Left } else { Hand::Right }
+}
+
 #[derive(Debug, Clone)]
 pub enum EngineCommand {
     MoveObject   { id: String, x: f32, y: f32, z: f32 },
@@ -22,6 +28,8 @@ pub enum EngineCommand {
     },
     GrabAtJoint { id: String, joint: String },
     Detach { id: String },
+    GrabAtPoint { id: String, point: String, hand: Hand },
+    ReleaseGrip { id: String, hand: Hand },
 }
 
 #[derive(Default)]
@@ -269,6 +277,24 @@ fn build_engine(context: SharedContext) -> Engine {
         let ctx = context.clone();
         engine.register_fn("detach", move |id: &str| {
             ctx.lock().unwrap().commands.push(EngineCommand::Detach { id: id.to_string() });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("grab_at_point", move |id: &str, point: &str, hand: &str| {
+            ctx.lock().unwrap().commands.push(EngineCommand::GrabAtPoint {
+                id: id.to_string(), point: point.to_string(), hand: parse_hand(hand),
+            });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("release_grip", move |id: &str, hand: &str| {
+            ctx.lock().unwrap().commands.push(EngineCommand::ReleaseGrip {
+                id: id.to_string(), hand: parse_hand(hand),
+            });
         });
     }
 
