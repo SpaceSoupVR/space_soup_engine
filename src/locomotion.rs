@@ -102,16 +102,26 @@ impl Locomotion {
         let (sx, sy) = input.move_stick;
         if sx.abs() < 0.08 && sy.abs() < 0.08 { return; }
 
-        let head = rig.head();
-        // head.rotation is in world space (locomotion already applied before update()),
-        // so head_yaw is the full world-facing direction — no need to add player_yaw again.
-        let (_, head_yaw, _) = head.rotation.to_euler(glam::EulerRot::YXZ);
-        let facing = Quat::from_rotation_y(head_yaw);
+        // head.rotation is already world-space (locomotion is applied before
+        // update()), so it encodes the full world-facing direction including
+        // player turn. Derive the movement heading from the head's forward
+        // vector projected onto the ground plane. This is stable at any head
+        // pitch/roll — unlike Euler-yaw extraction, which flips (inverts) and
+        // swaps axes near vertical and caused the inverted/sideways movement.
+        let head_rot = rig.head().rotation;
+        let fwd = head_rot * Vec3::new(0.0, 0.0, -1.0);
 
-        let forward = facing * Vec3::new(0.0, 0.0, -1.0);
-        let right   = facing * Vec3::new(1.0, 0.0, 0.0);
+        let mut heading = Vec3::new(fwd.x, 0.0, fwd.z);
+        if heading.length_squared() < 1e-4 {
+            // Looking almost straight up/down — fall back to the head's up axis.
+            let up = head_rot * Vec3::Y;
+            heading = Vec3::new(up.x, 0.0, up.z);
+        }
 
-        let move_dir = (forward * sy + right * -sx).normalize_or_zero();
+        let forward = heading.normalize_or_zero();
+        let right   = Vec3::new(-forward.z, 0.0, forward.x);
+
+        let move_dir = (forward * sy + right * sx).normalize_or_zero();
         self.player_offset += move_dir * self.move_speed * dt;
     }
 
