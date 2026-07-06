@@ -1,53 +1,53 @@
-use glam::{Vec3, Quat};
+use anyhow::Result;
+use glam::{Quat, Vec3};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use anyhow::Result;
-use log::{info, warn};
 
-use crate::manifest::Manifest;
-use crate::scene::{Scene, Color3, CuboidStyle, MeshRef, GameObject, GripPointDef};
-use crate::animation::{AnimationPlayer, sample};
-use crate::physics::{Aabb, CollisionTracker, CollisionEvent};
-use crate::events::{InputFrame, Hand};
-use crate::script::{ScriptHost, EngineCommand};
-use crate::rig::{PlayerRig, JointId};
+use crate::animation::{sample, AnimationPlayer};
 use crate::attach::{Attachment, AttachmentTable};
-use crate::locomotion::{Locomotion, LocomotionMode, LocomotionInput, TeleportTarget};
+use crate::events::{Hand, InputFrame};
+use crate::locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget};
+use crate::manifest::Manifest;
+use crate::physics::{Aabb, CollisionEvent, CollisionTracker};
+use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
+use crate::scene::{Color3, CuboidStyle, GameObject, GripPointDef, MeshRef, Scene};
+use crate::script::{EngineCommand, ScriptHost};
 
 #[derive(Debug, Clone)]
 pub struct RenderCuboid {
-    pub id:         String,
-    pub position:   Vec3,
-    pub half_size:  Vec3,
-    pub rotation:   Quat,
-    pub color:      Color3,
+    pub id: String,
+    pub position: Vec3,
+    pub half_size: Vec3,
+    pub rotation: Quat,
+    pub color: Color3,
     pub wire_color: Color3,
-    pub style:      CuboidStyle,
+    pub style: CuboidStyle,
 }
 
 #[derive(Debug, Clone)]
 pub struct RenderMesh {
-    pub id:             String,
-    pub path:           String,
-    pub position:       Vec3,
-    pub rotation:       Quat,
-    pub scale:          Vec3,
+    pub id: String,
+    pub path: String,
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
 }
 
 pub struct GameRuntime {
-    game_dir:    PathBuf,
-    manifest:    Manifest,
-    scene:       Scene,
+    game_dir: PathBuf,
+    manifest: Manifest,
+    scene: Scene,
 
     script_host: ScriptHost,
-    players:     HashMap<String, AnimationPlayer>,
-    collisions:  CollisionTracker,
+    players: HashMap<String, AnimationPlayer>,
+    collisions: CollisionTracker,
     rigid_physics: PhysicsWorld,
 
-    pub rig:         PlayerRig,
+    pub rig: PlayerRig,
     pub attachments: AttachmentTable,
-    pub locomotion:  Locomotion,
+    pub locomotion: Locomotion,
 
     pending_scene_change: Option<String>,
 }
@@ -59,24 +59,27 @@ impl GameRuntime {
         let scene = Scene::load(&scene_path)?;
 
         let mut rt = Self {
-            game_dir:    game_dir.to_path_buf(),
+            game_dir: game_dir.to_path_buf(),
             manifest,
             scene,
             script_host: ScriptHost::new(),
-            players:     HashMap::new(),
-            collisions:  CollisionTracker::new(),
+            players: HashMap::new(),
+            collisions: CollisionTracker::new(),
             rigid_physics: PhysicsWorld::new(),
-            rig:         PlayerRig::new(),
+            rig: PlayerRig::new(),
             attachments: AttachmentTable::new(),
-            locomotion:  Locomotion::new(LocomotionMode::Smooth),
+            locomotion: Locomotion::new(LocomotionMode::Smooth),
             pending_scene_change: None,
         };
 
         rt.compile_scripts();
         rt.setup_scene_attachments();
-        rt.rigid_physics.rebuild(&rt.scene);
-        info!("GameRuntime: loaded scene '{}' with {} objects",
-            rt.scene.name, rt.scene.objects.len());
+        rt.rigid_physics.rebuild(&rt.scene, &rt.game_dir);
+        info!(
+            "GameRuntime: loaded scene '{}' with {} objects",
+            rt.scene.name,
+            rt.scene.objects.len()
+        );
 
         Ok(rt)
     }
@@ -86,7 +89,10 @@ impl GameRuntime {
     }
 
     fn setup_scene_attachments(&mut self) {
-        let defs: Vec<(String, String, [f32; 3])> = self.scene.objects.iter()
+        let defs: Vec<(String, String, [f32; 3])> = self
+            .scene
+            .objects
+            .iter()
             .filter_map(|o| {
                 let att = o.rig_attachment.as_ref()?;
                 Some((o.id.clone(), att.joint.clone(), att.offset))
@@ -105,7 +111,9 @@ impl GameRuntime {
                     self.attachments.attach(&obj_id, att);
                     info!("setup_scene_attachments: '{obj_id}' → '{joint_name}'");
                 }
-                None => warn!("setup_scene_attachments: unknown joint '{joint_name}' for '{obj_id}'"),
+                None => {
+                    warn!("setup_scene_attachments: unknown joint '{joint_name}' for '{obj_id}'")
+                }
             }
         }
     }
@@ -124,36 +132,45 @@ impl GameRuntime {
         let path = Manifest::scene_path(&self.game_dir, scene_name);
         let scene = Scene::load(&path)?;
 
-        self.scene      = scene;
-        self.players    = HashMap::new();
+        self.scene = scene;
+        self.players = HashMap::new();
         self.collisions = CollisionTracker::new();
         self.attachments = AttachmentTable::new();
         self.script_host = ScriptHost::new();
         self.compile_scripts();
         self.setup_scene_attachments();
-        self.rigid_physics.rebuild(&self.scene);
+        self.rigid_physics.rebuild(&self.scene, &self.game_dir);
 
         info!("GameRuntime: switched to scene '{scene_name}'");
         Ok(())
     }
 
-    pub fn manifest(&self) -> &Manifest { &self.manifest }
-    pub fn scene_name(&self) -> &str { &self.scene.name }
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+    pub fn scene_name(&self) -> &str {
+        &self.scene.name
+    }
 
-    pub fn game_dir(&self) -> &Path { &self.game_dir }
+    pub fn game_dir(&self) -> &Path {
+        &self.game_dir
+    }
 
     pub fn update(
         &mut self,
-        dt:               f32,
-        input:            &InputFrame,
-        rig:              PlayerRig,
+        dt: f32,
+        input: &InputFrame,
+        rig: PlayerRig,
         locomotion_input: &LocomotionInput,
-        teleport_target:  Option<TeleportTarget>,
+        teleport_target: Option<TeleportTarget>,
     ) -> (Vec<RenderCuboid>, Vec<RenderMesh>, Option<String>) {
         self.pending_scene_change = None;
         self.rig = rig;
 
-        self.locomotion.update(dt, locomotion_input, &self.rig, teleport_target);
+        let prev_xz = (self.locomotion.player_offset.x, self.locomotion.player_offset.z);
+        self.locomotion
+            .update(dt, locomotion_input, &self.rig, teleport_target);
+        self.apply_ground_follow(prev_xz);
 
         self.update_animations(dt);
         self.update_object_position_cache();
@@ -163,18 +180,34 @@ impl GameRuntime {
         self.dispatch_input(input);
         self.dispatch_update_hook(dt);
         self.apply_script_commands();
-        // Physics has final say each frame for any object with a
-        // `rigid_body` — runs after scripts so a `Dynamic` body's
-        // `cuboid.position`/`.rotation` always reflects the simulation,
-        // even if a script called `move_object`/`rotate_object` on it this
-        // frame (use `Kinematic` mode for script/animation-driven objects
-        // that should still collide). Same "last write wins" pattern
-        // `apply_attachments` already uses against animation, above.
+
         self.rigid_physics.step(dt, &mut self.scene, &self.rig);
 
         let cuboids = self.collect_render_cuboids();
-        let meshes  = self.collect_render_meshes();
+        let meshes = self.collect_render_meshes();
         (cuboids, meshes, self.pending_scene_change.take())
+    }
+
+    /// Snaps the player's height to the ground directly beneath them and blocks horizontal
+    /// movement into slopes steeper than `Locomotion::max_climb_angle_deg`.
+    fn apply_ground_follow(&mut self, prev_xz: (f32, f32)) {
+        if self.locomotion.mode == LocomotionMode::Disabled {
+            return;
+        }
+
+        let offset = self.locomotion.player_offset;
+        let probe_origin = Vec3::new(offset.x, offset.y + 3.0, offset.z);
+        let Some((hit_point, normal)) = self.rigid_physics.raycast_down(probe_origin, 50.0) else {
+            return;
+        };
+
+        let slope_deg = normal.dot(Vec3::Y).clamp(-1.0, 1.0).acos().to_degrees();
+        if slope_deg <= self.locomotion.max_climb_angle_deg {
+            self.locomotion.player_offset.y = hit_point.y;
+        } else {
+            self.locomotion.player_offset.x = prev_xz.0;
+            self.locomotion.player_offset.z = prev_xz.1;
+        }
     }
 
     pub fn world_head_transform(&self) -> (Vec3, Quat) {
@@ -187,8 +220,12 @@ impl GameRuntime {
 
         let Self { scene, players, .. } = self;
         for (obj_id, player) in players.iter_mut() {
-            let Some(obj) = scene.find_object(obj_id) else { continue };
-            let Some(anim) = obj.find_animation(&player.anim_name) else { continue };
+            let Some(obj) = scene.find_object(obj_id) else {
+                continue;
+            };
+            let Some(anim) = obj.find_animation(&player.anim_name) else {
+                continue;
+            };
             let duration = anim.duration();
             player.tick(dt, duration);
             if player.finished {
@@ -196,7 +233,9 @@ impl GameRuntime {
             }
         }
 
-        let samples: Vec<(String, crate::animation::Sample)> = self.players.iter()
+        let samples: Vec<(String, crate::animation::Sample)> = self
+            .players
+            .iter()
             .filter_map(|(obj_id, player)| {
                 let obj = self.scene.find_object(obj_id)?;
                 let anim = obj.find_animation(&player.anim_name)?;
@@ -206,10 +245,18 @@ impl GameRuntime {
 
         for (obj_id, s) in samples {
             if let Some(obj_mut) = self.scene.find_object_mut(&obj_id) {
-                if let Some(p) = s.position { obj_mut.cuboid.position = p; }
-                if let Some(r) = s.rotation { obj_mut.cuboid.rotation = r; }
-                if let Some(sc) = s.scale   { obj_mut.cuboid.half_size = sc; }
-                if let Some(c) = s.color    { obj_mut.cuboid.color = c; }
+                if let Some(p) = s.position {
+                    obj_mut.cuboid.position = p;
+                }
+                if let Some(r) = s.rotation {
+                    obj_mut.cuboid.rotation = r;
+                }
+                if let Some(sc) = s.scale {
+                    obj_mut.cuboid.half_size = sc;
+                }
+                if let Some(c) = s.color {
+                    obj_mut.cuboid.color = c;
+                }
             }
         }
 
@@ -227,7 +274,8 @@ impl GameRuntime {
             warn!("play_animation: object '{obj_id}' has no animation '{anim_name}'");
             return;
         };
-        self.players.insert(obj_id.to_string(), AnimationPlayer::new(anim));
+        self.players
+            .insert(obj_id.to_string(), AnimationPlayer::new(anim));
     }
 
     fn stop_animation(&mut self, obj_id: &str) {
@@ -243,17 +291,28 @@ impl GameRuntime {
 
     fn update_rig_position_cache(&self) {
         let head = self.rig.head();
-        self.script_host.set_rig_position("head", head.position.x, head.position.y, head.position.z);
+        self.script_host.set_rig_position(
+            "head",
+            head.position.x,
+            head.position.y,
+            head.position.z,
+        );
 
         for hand in [Hand::Left, Hand::Right] {
             let grip = self.rig.hand_grip(hand);
-            let aim  = self.rig.hand_aim(hand);
+            let aim = self.rig.hand_aim(hand);
             let prefix = hand.as_str();
             self.script_host.set_rig_position(
-                &format!("{prefix}_grip"), grip.position.x, grip.position.y, grip.position.z,
+                &format!("{prefix}_grip"),
+                grip.position.x,
+                grip.position.y,
+                grip.position.z,
             );
             self.script_host.set_rig_position(
-                &format!("{prefix}_aim"), aim.position.x, aim.position.y, aim.position.z,
+                &format!("{prefix}_aim"),
+                aim.position.x,
+                aim.position.y,
+                aim.position.z,
             );
         }
     }
@@ -267,7 +326,7 @@ impl GameRuntime {
                         obj.cuboid.position = tf.position;
                         obj.cuboid.rotation = tf.rotation;
                     }
-                    // Joint not in rig (hand tracking inactive) — hide the bone
+
                     None => obj.hidden = true,
                 }
             }
@@ -275,15 +334,10 @@ impl GameRuntime {
     }
 
     fn dispatch_collisions(&mut self) {
-        // Objects with a `rigid_body` are excluded — they get real
-        // solid-body collision resolution from PhysX itself
-        // (`rigid_physics.step`, above), so running them through this
-        // brute-force AABB pass too would only add noisy/duplicate
-        // enter/exit events. Everything else (including non-`is_trigger`
-        // objects like hands and held props) stays in the list unchanged,
-        // since `is_trigger` objects still need to detect overlap against
-        // *anything*, not just other triggers.
-        let bodies: Vec<(String, Aabb)> = self.scene.objects.iter()
+        let bodies: Vec<(String, Aabb)> = self
+            .scene
+            .objects
+            .iter()
             .filter(|o| o.rigid_body.is_none())
             .map(|o| {
                 let aabb = Aabb::from_center_half(o.cuboid.position, o.cuboid.half_size);
@@ -296,7 +350,9 @@ impl GameRuntime {
         for event in events {
             match event {
                 CollisionEvent::Enter(a, b) => {
-                    let _ = self.script_host.call(&a, "on_collision_enter", (b.clone(),));
+                    let _ = self
+                        .script_host
+                        .call(&a, "on_collision_enter", (b.clone(),));
                     let _ = self.script_host.call(&b, "on_collision_enter", (a,));
                 }
                 CollisionEvent::Exit(a, b) => {
@@ -309,17 +365,25 @@ impl GameRuntime {
 
     fn dispatch_input(&mut self, input: &InputFrame) {
         for (id, hand) in &input.pointed {
-            let _ = self.script_host.call(id, "on_point", (hand.as_str().to_string(),));
+            let _ = self
+                .script_host
+                .call(id, "on_point", (hand.as_str().to_string(),));
         }
         for (id, hand, point) in &input.grabbed {
-            let _ = self.script_host.call(id, "on_grab", (hand.as_str().to_string(), point.clone()));
+            let _ =
+                self.script_host
+                    .call(id, "on_grab", (hand.as_str().to_string(), point.clone()));
         }
         for (id, hand) in &input.released {
-            let _ = self.script_host.call(id, "on_release", (hand.as_str().to_string(),));
+            let _ = self
+                .script_host
+                .call(id, "on_release", (hand.as_str().to_string(),));
         }
         for press in &input.button_presses {
             if let Some(id) = &press.object_id {
-                let _ = self.script_host.call(id, "on_press", (press.button.clone(),));
+                let _ = self
+                    .script_host
+                    .call(id, "on_press", (press.button.clone(),));
             }
         }
     }
@@ -371,35 +435,38 @@ impl GameRuntime {
                     self.players.remove(&id);
                     self.attachments.detach(&id);
                 }
-                EngineCommand::AttachToJoint { id, joint, offset_x, offset_y, offset_z } => {
-                    match JointId::from_name(&joint) {
-                        Some(joint_id) => {
-                            let att = Attachment::with_offset(
-                                joint_id,
-                                Vec3::new(offset_x, offset_y, offset_z),
-                                Quat::IDENTITY,
+                EngineCommand::AttachToJoint {
+                    id,
+                    joint,
+                    offset_x,
+                    offset_y,
+                    offset_z,
+                } => match JointId::from_name(&joint) {
+                    Some(joint_id) => {
+                        let att = Attachment::with_offset(
+                            joint_id,
+                            Vec3::new(offset_x, offset_y, offset_z),
+                            Quat::IDENTITY,
+                        );
+                        self.attachments.attach(&id, att);
+                    }
+                    None => warn!("attach_to_joint: unknown joint name '{joint}'"),
+                },
+                EngineCommand::GrabAtJoint { id, joint } => match JointId::from_name(&joint) {
+                    Some(joint_id) => match (self.rig.get(joint_id), self.scene.find_object(&id)) {
+                        (Some(joint_tf), Some(obj)) => {
+                            let inv_rot = joint_tf.rotation.inverse();
+                            let offset_pos = inv_rot * (obj.cuboid.position - joint_tf.position);
+                            let offset_rot = inv_rot * obj.cuboid.rotation;
+                            self.attachments.attach(
+                                &id,
+                                Attachment::with_offset(joint_id, offset_pos, offset_rot),
                             );
-                            self.attachments.attach(&id, att);
                         }
-                        None => warn!("attach_to_joint: unknown joint name '{joint}'"),
-                    }
-                }
-                EngineCommand::GrabAtJoint { id, joint } => {
-                    match JointId::from_name(&joint) {
-                        Some(joint_id) => {
-                            match (self.rig.get(joint_id), self.scene.find_object(&id)) {
-                                (Some(joint_tf), Some(obj)) => {
-                                    let inv_rot = joint_tf.rotation.inverse();
-                                    let offset_pos = inv_rot * (obj.cuboid.position - joint_tf.position);
-                                    let offset_rot = inv_rot * obj.cuboid.rotation;
-                                    self.attachments.attach(&id, Attachment::with_offset(joint_id, offset_pos, offset_rot));
-                                }
-                                _ => warn!("grab_at_joint: '{id}' or joint '{joint}' not found"),
-                            }
-                        }
-                        None => warn!("grab_at_joint: unknown joint name '{joint}'"),
-                    }
-                }
+                        _ => warn!("grab_at_joint: '{id}' or joint '{joint}' not found"),
+                    },
+                    None => warn!("grab_at_joint: unknown joint name '{joint}'"),
+                },
                 EngineCommand::Detach { id } => {
                     self.attachments.detach(&id);
                 }
@@ -420,9 +487,6 @@ impl GameRuntime {
         }
     }
 
-    /// What `hand` currently has grabbed via a named grip point (see
-    /// `rigid_physics::PhysicsWorld::held_by`), if anything — for cosmetic
-    /// hand-mesh alignment in host apps.
     pub fn held_grip_point(&self, hand: Hand) -> Option<(&GameObject, &GripPointDef)> {
         let (id, point_name) = self.rigid_physics.held_by(hand)?;
         let obj = self.scene.find_object(id)?;
@@ -431,49 +495,52 @@ impl GameRuntime {
     }
 
     fn collect_render_cuboids(&self) -> Vec<RenderCuboid> {
-        self.scene.objects.iter()
+        self.scene
+            .objects
+            .iter()
             .filter(|o| !o.hidden && o.mesh.is_none())
             .map(|o| RenderCuboid {
-                id:         o.id.clone(),
-                position:   o.cuboid.position,
-                half_size:  o.cuboid.half_size,
-                rotation:   o.cuboid.rotation,
-                color:      o.cuboid.color,
+                id: o.id.clone(),
+                position: o.cuboid.position,
+                half_size: o.cuboid.half_size,
+                rotation: o.cuboid.rotation,
+                color: o.cuboid.color,
                 wire_color: o.cuboid.wire_color,
-                style:      o.cuboid.style,
+                style: o.cuboid.style,
             })
             .collect()
     }
 
     fn collect_render_meshes(&self) -> Vec<RenderMesh> {
-        self.scene.objects.iter()
+        self.scene
+            .objects
+            .iter()
             .filter(|o| !o.hidden)
             .filter_map(|o| {
                 let mesh_ref: &MeshRef = o.mesh.as_ref()?;
                 Some(RenderMesh {
-                    id:       o.id.clone(),
-                    path:     mesh_ref.path.clone(),
+                    id: o.id.clone(),
+                    path: mesh_ref.path.clone(),
                     position: o.cuboid.position,
                     rotation: o.cuboid.rotation * mesh_ref.rotation_offset,
-                    scale:    mesh_ref.scale,
+                    scale: mesh_ref.scale,
                 })
             })
             .collect()
     }
 
-    pub fn scene(&self) -> &Scene { &self.scene }
-    pub fn scene_mut(&mut self) -> &mut Scene { &mut self.scene }
+    pub fn scene(&self) -> &Scene {
+        &self.scene
+    }
+    pub fn scene_mut(&mut self) -> &mut Scene {
+        &mut self.scene
+    }
 }
 
 #[cfg(test)]
 mod rigid_physics_test {
     use super::*;
 
-    // PhysX only allows one `PxFoundation` per process ("Foundation object
-    // exists already" is a hard C++-side abort, not a recoverable error) —
-    // so every `rigid_body`-exercising scenario has to share the single
-    // `GameRuntime` this test creates rather than each getting its own
-    // `#[test]` fn (which `cargo test` would run in the same process).
     #[test]
     fn falls_lands_and_loops() {
         let dir = std::env::temp_dir().join("space_soup_engine_rigid_physics_test");
@@ -483,7 +550,8 @@ mod rigid_physics_test {
         std::fs::write(
             dir.join("manifest.json"),
             r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         std::fs::write(
             scenes_dir.join("test.json"),
@@ -522,67 +590,114 @@ mod rigid_physics_test {
         std::fs::remove_dir_all(&dir).ok();
         let dt = 1.0 / 60.0;
 
-        // Captured before any `update()` runs — the grab/release block
-        // below advances the whole scene (including `ball`) by ~60 steps
-        // as a side effect, so this has to happen first to mean anything.
         let start_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
-        assert!((start_y - 5.0).abs() < 0.01, "expected ball to start at y=5.0, got {start_y}");
+        assert!(
+            (start_y - 5.0).abs() < 0.01,
+            "expected ball to start at y=5.0, got {start_y}"
+        );
 
-        // Grab/release, run first while `handle_box` is still at its spawn
-        // height — the shared floor spans far enough in X to eventually
-        // catch it too, which would make "still at spawn height" a bad
-        // assumption once the later ball/looping_ball sections have run
-        // several more seconds of simulation.
-        //
-        // The script's `on_grab` reads the InputFrame-supplied point name
-        // and calls `grab_at_point`, which creates a `Snap` (fixed) joint
-        // between the right-hand anchor and `handle_box`'s `handle` point —
-        // the box should then follow the hand precisely as it moves,
-        // overriding gravity.
-        let before_grab_y = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+        let before_grab_y = rt
+            .scene()
+            .find_object("handle_box")
+            .unwrap()
+            .cuboid
+            .position
+            .y;
         assert!((before_grab_y - 3.0).abs() < 0.05, "expected handle_box to still be at its spawn height before being grabbed, got {before_grab_y}");
 
         let mut grab_input = InputFrame::default();
-        grab_input.grabbed.push(("handle_box".to_string(), Hand::Right, "handle".to_string()));
+        grab_input
+            .grabbed
+            .push(("handle_box".to_string(), Hand::Right, "handle".to_string()));
         let mut rig = PlayerRig::new();
         rig.set_hand_grip(Hand::Right, Vec3::new(-3.0, 3.0, 0.0), Quat::IDENTITY);
         rt.update(dt, &grab_input, rig, &LocomotionInput::default(), None);
 
-        // Drag the hand down over half a second; the box should follow.
         for i in 1..=30 {
             let mut rig = PlayerRig::new();
-            rig.set_hand_grip(Hand::Right, Vec3::new(-3.0, 3.0 - i as f32 * 0.02, 0.0), Quat::IDENTITY);
-            rt.update(dt, &InputFrame::default(), rig, &LocomotionInput::default(), None);
+            rig.set_hand_grip(
+                Hand::Right,
+                Vec3::new(-3.0, 3.0 - i as f32 * 0.02, 0.0),
+                Quat::IDENTITY,
+            );
+            rt.update(
+                dt,
+                &InputFrame::default(),
+                rig,
+                &LocomotionInput::default(),
+                None,
+            );
         }
-        let held_y = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+        let held_y = rt
+            .scene()
+            .find_object("handle_box")
+            .unwrap()
+            .cuboid
+            .position
+            .y;
         assert!(
             (held_y - 2.4).abs() < 0.1,
             "expected handle_box to follow the hand down to y\u{2248}2.4 while snap-grabbed (gravity should be overridden by the joint), got {held_y}"
         );
 
-        // Release: the box should now fall freely again, independent of
-        // hand position.
         let mut release_input = InputFrame::default();
-        release_input.released.push(("handle_box".to_string(), Hand::Right));
-        rt.update(dt, &release_input, PlayerRig::new(), &LocomotionInput::default(), None);
-        let y_at_release = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+        release_input
+            .released
+            .push(("handle_box".to_string(), Hand::Right));
+        rt.update(
+            dt,
+            &release_input,
+            PlayerRig::new(),
+            &LocomotionInput::default(),
+            None,
+        );
+        let y_at_release = rt
+            .scene()
+            .find_object("handle_box")
+            .unwrap()
+            .cuboid
+            .position
+            .y;
 
         for _ in 0..30 {
-            rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
+            rt.update(
+                dt,
+                &InputFrame::default(),
+                PlayerRig::new(),
+                &LocomotionInput::default(),
+                None,
+            );
         }
-        let y_after_release = rt.scene().find_object("handle_box").unwrap().cuboid.position.y;
+        let y_after_release = rt
+            .scene()
+            .find_object("handle_box")
+            .unwrap()
+            .cuboid
+            .position
+            .y;
         assert!(
             y_after_release < y_at_release - 0.05,
             "expected handle_box to fall freely under gravity after release, went from {y_at_release} to {y_after_release}"
         );
 
-        rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
+        rt.update(
+            dt,
+            &InputFrame::default(),
+            PlayerRig::new(),
+            &LocomotionInput::default(),
+            None,
+        );
         let after_one_step_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
         assert!(after_one_step_y < start_y, "expected gravity to have pulled the ball down from its start height by now, went from {start_y} to {after_one_step_y}");
 
-        // 3 simulated seconds is comfortably enough to fall ~4.5m and settle.
         for _ in 0..180 {
-            rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
+            rt.update(
+                dt,
+                &InputFrame::default(),
+                PlayerRig::new(),
+                &LocomotionInput::default(),
+                None,
+            );
         }
         let landed_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
         assert!(
@@ -590,23 +705,37 @@ mod rigid_physics_test {
             "expected the ball (half_size.y=0.5) to land resting on the floor's top surface (y=0.0) at y\u{2248}0.5, got {landed_y}"
         );
 
-        // `looping_ball` has been simulating alongside `ball` this whole
-        // time too (3s elapsed, well past its 1.5s respawn_interval) — by
-        // now it should have landed, teleported back up, and be mid-fall
-        // again rather than resting, since 3s isn't a clean multiple of
-        // 1.5s from when it last reset. Rather than pin down its exact
-        // phase, just confirm the respawn loop is actually driving it: run
-        // it a bit further and check it visits both "up near spawn" and
-        // "down near the floor" — i.e. it's genuinely cycling, not stuck.
         let mut saw_high = false;
         let mut saw_low = false;
         for _ in 0..180 {
-            rt.update(dt, &InputFrame::default(), PlayerRig::new(), &LocomotionInput::default(), None);
-            let y = rt.scene().find_object("looping_ball").unwrap().cuboid.position.y;
-            if y > 1.2 { saw_high = true; }
-            if y < 0.7 { saw_low = true; }
+            rt.update(
+                dt,
+                &InputFrame::default(),
+                PlayerRig::new(),
+                &LocomotionInput::default(),
+                None,
+            );
+            let y = rt
+                .scene()
+                .find_object("looping_ball")
+                .unwrap()
+                .cuboid
+                .position
+                .y;
+            if y > 1.2 {
+                saw_high = true;
+            }
+            if y < 0.7 {
+                saw_low = true;
+            }
         }
-        assert!(saw_high, "expected looping_ball to revisit its spawn height (respawn_interval loop)");
-        assert!(saw_low, "expected looping_ball to also reach the floor (it should still fall each cycle)");
+        assert!(
+            saw_high,
+            "expected looping_ball to revisit its spawn height (respawn_interval loop)"
+        );
+        assert!(
+            saw_low,
+            "expected looping_ball to also reach the floor (it should still fall each cycle)"
+        );
     }
 }

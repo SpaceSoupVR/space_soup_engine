@@ -1,13 +1,13 @@
-use serde::{Serialize, Deserialize};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use anyhow::{Result, Context};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
-    pub name:        String,
-    pub version:     String,
+    pub name: String,
+    pub version: String,
     pub entry_scene: String,
-    pub scenes:      Vec<String>,
+    pub scenes: Vec<String>,
 }
 
 impl Manifest {
@@ -40,10 +40,10 @@ impl Manifest {
 impl Default for Manifest {
     fn default() -> Self {
         Self {
-            name:        "Untitled Game".into(),
-            version:     "0.1.0".into(),
+            name: "Untitled Game".into(),
+            version: "0.1.0".into(),
             entry_scene: "lobby".into(),
-            scenes:      vec!["lobby".into()],
+            scenes: vec!["lobby".into()],
         }
     }
 }
