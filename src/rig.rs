@@ -1,28 +1,66 @@
-use glam::{Vec3, Quat};
+use glam::{Quat, Vec3};
 use std::collections::HashMap;
 
 use crate::events::Hand;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FingerJoint {
     Palm,
     Wrist,
-    ThumbMeta,  ThumbProx,  ThumbDist,  ThumbTip,
-    IndexMeta,  IndexProx,  IndexInter,  IndexDist,  IndexTip,
-    MiddleMeta, MiddleProx, MiddleInter, MiddleDist, MiddleTip,
-    RingMeta,   RingProx,   RingInter,   RingDist,   RingTip,
-    LittleMeta, LittleProx, LittleInter, LittleDist, LittleTip,
+    ThumbMeta,
+    ThumbProx,
+    ThumbDist,
+    ThumbTip,
+    IndexMeta,
+    IndexProx,
+    IndexInter,
+    IndexDist,
+    IndexTip,
+    MiddleMeta,
+    MiddleProx,
+    MiddleInter,
+    MiddleDist,
+    MiddleTip,
+    RingMeta,
+    RingProx,
+    RingInter,
+    RingDist,
+    RingTip,
+    LittleMeta,
+    LittleProx,
+    LittleInter,
+    LittleDist,
+    LittleTip,
 }
 
 impl FingerJoint {
     pub const ALL: [FingerJoint; 26] = [
-        FingerJoint::Palm,        FingerJoint::Wrist,
-        FingerJoint::ThumbMeta,   FingerJoint::ThumbProx,  FingerJoint::ThumbDist,  FingerJoint::ThumbTip,
-        FingerJoint::IndexMeta,   FingerJoint::IndexProx,  FingerJoint::IndexInter, FingerJoint::IndexDist, FingerJoint::IndexTip,
-        FingerJoint::MiddleMeta,  FingerJoint::MiddleProx, FingerJoint::MiddleInter,FingerJoint::MiddleDist,FingerJoint::MiddleTip,
-        FingerJoint::RingMeta,    FingerJoint::RingProx,   FingerJoint::RingInter,  FingerJoint::RingDist,  FingerJoint::RingTip,
-        FingerJoint::LittleMeta,  FingerJoint::LittleProx, FingerJoint::LittleInter,FingerJoint::LittleDist,FingerJoint::LittleTip,
+        FingerJoint::Palm,
+        FingerJoint::Wrist,
+        FingerJoint::ThumbMeta,
+        FingerJoint::ThumbProx,
+        FingerJoint::ThumbDist,
+        FingerJoint::ThumbTip,
+        FingerJoint::IndexMeta,
+        FingerJoint::IndexProx,
+        FingerJoint::IndexInter,
+        FingerJoint::IndexDist,
+        FingerJoint::IndexTip,
+        FingerJoint::MiddleMeta,
+        FingerJoint::MiddleProx,
+        FingerJoint::MiddleInter,
+        FingerJoint::MiddleDist,
+        FingerJoint::MiddleTip,
+        FingerJoint::RingMeta,
+        FingerJoint::RingProx,
+        FingerJoint::RingInter,
+        FingerJoint::RingDist,
+        FingerJoint::RingTip,
+        FingerJoint::LittleMeta,
+        FingerJoint::LittleProx,
+        FingerJoint::LittleInter,
+        FingerJoint::LittleDist,
+        FingerJoint::LittleTip,
     ];
 
     pub fn from_index(i: usize) -> Option<FingerJoint> {
@@ -31,20 +69,31 @@ impl FingerJoint {
 
     pub fn name(self) -> &'static str {
         match self {
-            FingerJoint::Palm => "palm", FingerJoint::Wrist => "wrist",
-            FingerJoint::ThumbMeta => "thumb_meta", FingerJoint::ThumbProx => "thumb_prox",
-            FingerJoint::ThumbDist => "thumb_dist", FingerJoint::ThumbTip => "thumb_tip",
-            FingerJoint::IndexMeta => "index_meta", FingerJoint::IndexProx => "index_prox",
-            FingerJoint::IndexInter => "index_inter", FingerJoint::IndexDist => "index_dist",
+            FingerJoint::Palm => "palm",
+            FingerJoint::Wrist => "wrist",
+            FingerJoint::ThumbMeta => "thumb_meta",
+            FingerJoint::ThumbProx => "thumb_prox",
+            FingerJoint::ThumbDist => "thumb_dist",
+            FingerJoint::ThumbTip => "thumb_tip",
+            FingerJoint::IndexMeta => "index_meta",
+            FingerJoint::IndexProx => "index_prox",
+            FingerJoint::IndexInter => "index_inter",
+            FingerJoint::IndexDist => "index_dist",
             FingerJoint::IndexTip => "index_tip",
-            FingerJoint::MiddleMeta => "middle_meta", FingerJoint::MiddleProx => "middle_prox",
-            FingerJoint::MiddleInter => "middle_inter", FingerJoint::MiddleDist => "middle_dist",
+            FingerJoint::MiddleMeta => "middle_meta",
+            FingerJoint::MiddleProx => "middle_prox",
+            FingerJoint::MiddleInter => "middle_inter",
+            FingerJoint::MiddleDist => "middle_dist",
             FingerJoint::MiddleTip => "middle_tip",
-            FingerJoint::RingMeta => "ring_meta", FingerJoint::RingProx => "ring_prox",
-            FingerJoint::RingInter => "ring_inter", FingerJoint::RingDist => "ring_dist",
+            FingerJoint::RingMeta => "ring_meta",
+            FingerJoint::RingProx => "ring_prox",
+            FingerJoint::RingInter => "ring_inter",
+            FingerJoint::RingDist => "ring_dist",
             FingerJoint::RingTip => "ring_tip",
-            FingerJoint::LittleMeta => "little_meta", FingerJoint::LittleProx => "little_prox",
-            FingerJoint::LittleInter => "little_inter", FingerJoint::LittleDist => "little_dist",
+            FingerJoint::LittleMeta => "little_meta",
+            FingerJoint::LittleProx => "little_prox",
+            FingerJoint::LittleInter => "little_inter",
+            FingerJoint::LittleDist => "little_dist",
             FingerJoint::LittleTip => "little_tip",
         }
     }
@@ -67,9 +116,9 @@ impl JointId {
         match s {
             "head" => return Some(JointId::Head),
             "right_grip" => return Some(JointId::HandGrip(Hand::Right)),
-            "left_grip"  => return Some(JointId::HandGrip(Hand::Left)),
-            "right_aim"  => return Some(JointId::HandAim(Hand::Right)),
-            "left_aim"   => return Some(JointId::HandAim(Hand::Left)),
+            "left_grip" => return Some(JointId::HandGrip(Hand::Left)),
+            "right_aim" => return Some(JointId::HandAim(Hand::Right)),
+            "left_aim" => return Some(JointId::HandAim(Hand::Left)),
             _ => {}
         }
 
@@ -91,7 +140,10 @@ pub struct Transform {
 
 impl Default for Transform {
     fn default() -> Self {
-        Self { position: Vec3::ZERO, rotation: Quat::IDENTITY }
+        Self {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        }
     }
 }
 
@@ -140,22 +192,28 @@ impl PlayerRig {
     }
 
     pub fn set_head(&mut self, position: Vec3, rotation: Quat) {
-        self.joints.insert(JointId::Head, Transform::new(position, rotation));
+        self.joints
+            .insert(JointId::Head, Transform::new(position, rotation));
     }
 
     pub fn set_hand_grip(&mut self, hand: Hand, position: Vec3, rotation: Quat) {
-        self.joints.insert(JointId::HandGrip(hand), Transform::new(position, rotation));
+        self.joints
+            .insert(JointId::HandGrip(hand), Transform::new(position, rotation));
     }
 
     pub fn set_hand_aim(&mut self, hand: Hand, position: Vec3, rotation: Quat) {
-        self.joints.insert(JointId::HandAim(hand), Transform::new(position, rotation));
+        self.joints
+            .insert(JointId::HandAim(hand), Transform::new(position, rotation));
     }
 
     pub fn set_hand_joints(&mut self, hand: Hand, joints: &[(Vec3, Quat, bool)]) {
         for (i, &(pos, rot, valid)) in joints.iter().enumerate() {
-            if !valid { continue; }
+            if !valid {
+                continue;
+            }
             if let Some(fj) = FingerJoint::from_index(i) {
-                self.joints.insert(JointId::Finger(hand, fj), Transform::new(pos, rot));
+                self.joints
+                    .insert(JointId::Finger(hand, fj), Transform::new(pos, rot));
             }
         }
         self.hand_tracking_active.insert(hand, true);

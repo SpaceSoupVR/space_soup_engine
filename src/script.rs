@@ -1,51 +1,104 @@
-use rhai::{Engine, Scope, AST, Dynamic};
+use anyhow::Result;
+use rhai::{Dynamic, Engine, Scope, AST};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use anyhow::Result;
 
 use crate::events::Hand;
 
 fn parse_hand(s: &str) -> Hand {
-    if s.eq_ignore_ascii_case("left") { Hand::Left } else { Hand::Right }
+    if s.eq_ignore_ascii_case("left") {
+        Hand::Left
+    } else {
+        Hand::Right
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum EngineCommand {
-    MoveObject   { id: String, x: f32, y: f32, z: f32 },
-    RotateObject { id: String, x: f32, y: f32, z: f32, w: f32 },
-    ScaleObject  { id: String, x: f32, y: f32, z: f32 },
-    SetColor     { id: String, r: u8, g: u8, b: u8, a: u8 },
-    PlayAnim     { id: String, anim: String },
-    StopAnim     { id: String },
-    ChangeScene  { scene: String },
-    DestroyObject{ id: String },
-    AttachToJoint {
-        id:         String,
-        joint:      String,
-        offset_x:   f32,
-        offset_y:   f32,
-        offset_z:   f32,
+    MoveObject {
+        id: String,
+        x: f32,
+        y: f32,
+        z: f32,
     },
-    GrabAtJoint { id: String, joint: String },
-    Detach { id: String },
-    GrabAtPoint { id: String, point: String, hand: Hand },
-    ReleaseGrip { id: String, hand: Hand },
+    RotateObject {
+        id: String,
+        x: f32,
+        y: f32,
+        z: f32,
+        w: f32,
+    },
+    ScaleObject {
+        id: String,
+        x: f32,
+        y: f32,
+        z: f32,
+    },
+    SetColor {
+        id: String,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    },
+    PlayAnim {
+        id: String,
+        anim: String,
+    },
+    StopAnim {
+        id: String,
+    },
+    ChangeScene {
+        scene: String,
+    },
+    DestroyObject {
+        id: String,
+    },
+    AttachToJoint {
+        id: String,
+        joint: String,
+        offset_x: f32,
+        offset_y: f32,
+        offset_z: f32,
+    },
+    GrabAtJoint {
+        id: String,
+        joint: String,
+    },
+    Detach {
+        id: String,
+    },
+    GrabAtPoint {
+        id: String,
+        point: String,
+        hand: Hand,
+    },
+    ReleaseGrip {
+        id: String,
+        hand: Hand,
+    },
 }
 
 #[derive(Default)]
 pub struct ScriptContext {
-    pub commands:         Vec<EngineCommand>,
-    pub vars:             HashMap<String, Dynamic>,
+    pub commands: Vec<EngineCommand>,
+    pub vars: HashMap<String, Dynamic>,
     pub object_positions: HashMap<String, (f32, f32, f32)>,
-    pub rig_positions:    HashMap<String, (f32, f32, f32)>,
+    pub rig_positions: HashMap<String, (f32, f32, f32)>,
 }
 
 pub type SharedContext = Arc<Mutex<ScriptContext>>;
 
 pub struct ScriptHost {
-    engine:  Engine,
-    asts:    HashMap<String, AST>,
+    engine: Engine,
+    asts: HashMap<String, AST>,
     context: SharedContext,
+}
+
+impl Default for ScriptHost {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ScriptHost {
@@ -65,7 +118,9 @@ impl ScriptHost {
     }
 
     pub fn compile(&mut self, object_id: &str, source: &str) -> Result<()> {
-        let ast = self.engine.compile(source)
+        let ast = self
+            .engine
+            .compile(source)
             .map_err(|e| anyhow::anyhow!("script compile error in {object_id}: {e}"))?;
         self.asts.insert(object_id.to_string(), ast);
         Ok(())
@@ -76,12 +131,12 @@ impl ScriptHost {
     }
 
     pub fn call(&self, object_id: &str, fn_name: &str, args: impl rhai::FuncArgs) -> Result<()> {
-        let Some(ast) = self.asts.get(object_id) else { return Ok(()) };
+        let Some(ast) = self.asts.get(object_id) else {
+            return Ok(());
+        };
 
         let mut scope = Scope::new();
-        let result: Result<Dynamic, _> = self.engine.call_fn(
-            &mut scope, ast, fn_name, args,
-        );
+        let result: Result<Dynamic, _> = self.engine.call_fn(&mut scope, ast, fn_name, args);
 
         match result {
             Ok(_) => Ok(()),
@@ -89,7 +144,9 @@ impl ScriptHost {
                 if e.to_string().contains("Function not found") {
                     Ok(())
                 } else {
-                    Err(anyhow::anyhow!("script error in {object_id}::{fn_name}: {e}"))
+                    Err(anyhow::anyhow!(
+                        "script error in {object_id}::{fn_name}: {e}"
+                    ))
                 }
             }
         }
@@ -117,9 +174,15 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("move_object", move |id: &str, x: f64, y: f64, z: f64| {
-            ctx.lock().unwrap().commands.push(EngineCommand::MoveObject {
-                id: id.to_string(), x: x as f32, y: y as f32, z: z as f32,
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::MoveObject {
+                    id: id.to_string(),
+                    x: x as f32,
+                    y: y as f32,
+                    z: z as f32,
+                });
         });
     }
 
@@ -128,10 +191,16 @@ fn build_engine(context: SharedContext) -> Engine {
         engine.register_fn(
             "rotate_object",
             move |id: &str, x: f64, y: f64, z: f64, w: f64| {
-                ctx.lock().unwrap().commands.push(EngineCommand::RotateObject {
-                    id: id.to_string(),
-                    x: x as f32, y: y as f32, z: z as f32, w: w as f32,
-                });
+                ctx.lock()
+                    .unwrap()
+                    .commands
+                    .push(EngineCommand::RotateObject {
+                        id: id.to_string(),
+                        x: x as f32,
+                        y: y as f32,
+                        z: z as f32,
+                        w: w as f32,
+                    });
             },
         );
     }
@@ -139,9 +208,15 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("scale_object", move |id: &str, x: f64, y: f64, z: f64| {
-            ctx.lock().unwrap().commands.push(EngineCommand::ScaleObject {
-                id: id.to_string(), x: x as f32, y: y as f32, z: z as f32,
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::ScaleObject {
+                    id: id.to_string(),
+                    x: x as f32,
+                    y: y as f32,
+                    z: z as f32,
+                });
         });
     }
 
@@ -165,7 +240,8 @@ fn build_engine(context: SharedContext) -> Engine {
         let ctx = context.clone();
         engine.register_fn("play_animation", move |id: &str, anim: &str| {
             ctx.lock().unwrap().commands.push(EngineCommand::PlayAnim {
-                id: id.to_string(), anim: anim.to_string(),
+                id: id.to_string(),
+                anim: anim.to_string(),
             });
         });
     }
@@ -174,7 +250,8 @@ fn build_engine(context: SharedContext) -> Engine {
         let ctx = context.clone();
         engine.register_fn("trigger", move |id: &str, anim: &str| {
             ctx.lock().unwrap().commands.push(EngineCommand::PlayAnim {
-                id: id.to_string(), anim: anim.to_string(),
+                id: id.to_string(),
+                anim: anim.to_string(),
             });
         });
     }
@@ -182,27 +259,32 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("stop_animation", move |id: &str| {
-            ctx.lock().unwrap().commands.push(EngineCommand::StopAnim {
-                id: id.to_string(),
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::StopAnim { id: id.to_string() });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("change_scene", move |scene: &str| {
-            ctx.lock().unwrap().commands.push(EngineCommand::ChangeScene {
-                scene: scene.to_string(),
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::ChangeScene {
+                    scene: scene.to_string(),
+                });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("destroy_object", move |id: &str| {
-            ctx.lock().unwrap().commands.push(EngineCommand::DestroyObject {
-                id: id.to_string(),
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::DestroyObject { id: id.to_string() });
         });
     }
 
@@ -215,8 +297,10 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("get_var", move |key: &str| -> Dynamic {
-            ctx.lock().unwrap()
-                .vars.get(key)
+            ctx.lock()
+                .unwrap()
+                .vars
+                .get(key)
                 .cloned()
                 .unwrap_or(Dynamic::UNIT)
         });
@@ -225,8 +309,10 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("get_object_x", move |id: &str| -> f64 {
-            ctx.lock().unwrap()
-                .object_positions.get(id)
+            ctx.lock()
+                .unwrap()
+                .object_positions
+                .get(id)
                 .map(|p| p.0 as f64)
                 .unwrap_or(0.0)
         });
@@ -234,8 +320,10 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("get_object_y", move |id: &str| -> f64 {
-            ctx.lock().unwrap()
-                .object_positions.get(id)
+            ctx.lock()
+                .unwrap()
+                .object_positions
+                .get(id)
                 .map(|p| p.1 as f64)
                 .unwrap_or(0.0)
         });
@@ -243,8 +331,10 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("get_object_z", move |id: &str| -> f64 {
-            ctx.lock().unwrap()
-                .object_positions.get(id)
+            ctx.lock()
+                .unwrap()
+                .object_positions
+                .get(id)
                 .map(|p| p.2 as f64)
                 .unwrap_or(0.0)
         });
@@ -255,11 +345,16 @@ fn build_engine(context: SharedContext) -> Engine {
         engine.register_fn(
             "attach_to_joint",
             move |id: &str, joint: &str, ox: f64, oy: f64, oz: f64| {
-                ctx.lock().unwrap().commands.push(EngineCommand::AttachToJoint {
-                    id: id.to_string(),
-                    joint: joint.to_string(),
-                    offset_x: ox as f32, offset_y: oy as f32, offset_z: oz as f32,
-                });
+                ctx.lock()
+                    .unwrap()
+                    .commands
+                    .push(EngineCommand::AttachToJoint {
+                        id: id.to_string(),
+                        joint: joint.to_string(),
+                        offset_x: ox as f32,
+                        offset_y: oy as f32,
+                        offset_z: oz as f32,
+                    });
             },
         );
     }
@@ -267,42 +362,60 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("grab_at_joint", move |id: &str, joint: &str| {
-            ctx.lock().unwrap().commands.push(EngineCommand::GrabAtJoint {
-                id: id.to_string(), joint: joint.to_string(),
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::GrabAtJoint {
+                    id: id.to_string(),
+                    joint: joint.to_string(),
+                });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("detach", move |id: &str| {
-            ctx.lock().unwrap().commands.push(EngineCommand::Detach { id: id.to_string() });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::Detach { id: id.to_string() });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("grab_at_point", move |id: &str, point: &str, hand: &str| {
-            ctx.lock().unwrap().commands.push(EngineCommand::GrabAtPoint {
-                id: id.to_string(), point: point.to_string(), hand: parse_hand(hand),
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::GrabAtPoint {
+                    id: id.to_string(),
+                    point: point.to_string(),
+                    hand: parse_hand(hand),
+                });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("release_grip", move |id: &str, hand: &str| {
-            ctx.lock().unwrap().commands.push(EngineCommand::ReleaseGrip {
-                id: id.to_string(), hand: parse_hand(hand),
-            });
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::ReleaseGrip {
+                    id: id.to_string(),
+                    hand: parse_hand(hand),
+                });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("get_rig_x", move |joint: &str| -> f64 {
-            ctx.lock().unwrap()
-                .rig_positions.get(joint)
+            ctx.lock()
+                .unwrap()
+                .rig_positions
+                .get(joint)
                 .map(|p| p.0 as f64)
                 .unwrap_or(0.0)
         });
@@ -310,8 +423,10 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("get_rig_y", move |joint: &str| -> f64 {
-            ctx.lock().unwrap()
-                .rig_positions.get(joint)
+            ctx.lock()
+                .unwrap()
+                .rig_positions
+                .get(joint)
                 .map(|p| p.1 as f64)
                 .unwrap_or(0.0)
         });
@@ -319,8 +434,10 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("get_rig_z", move |joint: &str| -> f64 {
-            ctx.lock().unwrap()
-                .rig_positions.get(joint)
+            ctx.lock()
+                .unwrap()
+                .rig_positions
+                .get(joint)
                 .map(|p| p.2 as f64)
                 .unwrap_or(0.0)
         });

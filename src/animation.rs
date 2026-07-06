@@ -1,32 +1,34 @@
-use glam::{Vec3, Quat};
 use crate::scene::{Animation, Color3};
+use glam::{Quat, Vec3};
 
 #[derive(Debug, Clone)]
 pub struct AnimationPlayer {
     pub anim_name: String,
-    pub elapsed:   f32,
-    pub looping:   bool,
-    pub finished:  bool,
+    pub elapsed: f32,
+    pub looping: bool,
+    pub finished: bool,
 }
 
 impl AnimationPlayer {
     pub fn new(anim: &Animation) -> Self {
         Self {
             anim_name: anim.name.clone(),
-            elapsed:   0.0,
-            looping:   anim.looping,
-            finished:  false,
+            elapsed: 0.0,
+            looping: anim.looping,
+            finished: false,
         }
     }
 
     pub fn tick(&mut self, dt: f32, duration: f32) {
-        if self.finished { return; }
+        if self.finished {
+            return;
+        }
         self.elapsed += dt;
         if self.elapsed >= duration {
             if self.looping {
                 self.elapsed %= duration.max(0.0001);
             } else {
-                self.elapsed  = duration;
+                self.elapsed = duration;
                 self.finished = true;
             }
         }
@@ -37,8 +39,8 @@ impl AnimationPlayer {
 pub struct Sample {
     pub position: Option<Vec3>,
     pub rotation: Option<Quat>,
-    pub scale:    Option<Vec3>,
-    pub color:    Option<Color3>,
+    pub scale: Option<Vec3>,
+    pub color: Option<Color3>,
 }
 
 pub fn sample(anim: &Animation, t: f32) -> Sample {
@@ -50,8 +52,8 @@ pub fn sample(anim: &Animation, t: f32) -> Sample {
         return Sample {
             position: k.position,
             rotation: k.rotation,
-            scale:    k.scale,
-            color:    k.color,
+            scale: k.scale,
+            color: k.color,
         };
     }
 
@@ -75,26 +77,26 @@ pub fn sample(anim: &Animation, t: f32) -> Sample {
     Sample {
         position: lerp_opt_vec3(prev.position, next.position, alpha),
         rotation: lerp_opt_quat(prev.rotation, next.rotation, alpha),
-        scale:    lerp_opt_vec3(prev.scale,    next.scale,    alpha),
-        color:    lerp_opt_color(prev.color,   next.color,   alpha),
+        scale: lerp_opt_vec3(prev.scale, next.scale, alpha),
+        color: lerp_opt_color(prev.color, next.color, alpha),
     }
 }
 
 fn lerp_opt_vec3(a: Option<Vec3>, b: Option<Vec3>, t: f32) -> Option<Vec3> {
     match (a, b) {
         (Some(a), Some(b)) => Some(a.lerp(b, t)),
-        (Some(a), None)    => Some(a),
-        (None, Some(b))    => Some(b),
-        (None, None)       => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 
 fn lerp_opt_quat(a: Option<Quat>, b: Option<Quat>, t: f32) -> Option<Quat> {
     match (a, b) {
         (Some(a), Some(b)) => Some(a.slerp(b, t)),
-        (Some(a), None)    => Some(a),
-        (None, Some(b))    => Some(b),
-        (None, None)       => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 
@@ -108,10 +110,12 @@ fn lerp_opt_color(a: Option<Color3>, b: Option<Color3>, t: f32) -> Option<Color3
         )),
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
-        (None, None)    => None,
+        (None, None) => None,
     }
 }
 
 fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
+    (a as f32 + (b as f32 - a as f32) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }

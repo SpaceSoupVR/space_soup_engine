@@ -1,39 +1,27 @@
-//! Rigid-body physics via NVIDIA PhysX (EmbarkStudios' `physx`/`physx-sys`
-//! bindings). Separate from `physics.rs`, which stays as the AABB
-//! trigger/event pass for `is_trigger` objects — this module owns
-//! `cuboid.position`/`.rotation` for any `GameObject` with a `rigid_body`.
-//!
-//! The type aliases and no-op simulation-event callback structs below are
-//! required boilerplate: `PxScene`'s generic signature has ten type
-//! parameters (including all four callback kinds) even though this module
-//! doesn't use collision/trigger/wake/advance callbacks — copied from the
-//! crate's own `examples/ball_physx.rs`.
-
 use std::collections::HashMap;
+use std::path::Path;
 
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use physx::prelude::*;
-// `physx::prelude::*` also brings in a `Scene` trait, but our own
-// `crate::scene::Scene` struct (imported by name below) shadows it — pull
-// the trait in unnamed so its methods (`add_static_actor`, `step`, ...)
-// still resolve without a naming collision.
+
 use physx::scene::Scene as _;
-// Needed for `.as_mut_ptr()`/`.as_ptr()` on the high-level wrapper types —
-// not re-exported by the prelude.
+
 use physx::traits::Class;
-// `SceneFlags` (the bitflags container, as opposed to `SceneFlag` the enum
-// which the prelude does re-export) isn't in the prelude either.
+
 use physx::scene::SceneFlags;
+
+use physx::cooking::{
+    create_triangle_mesh, PxCookingParams, PxTriangleMeshDesc, TriangleMeshCookingResult,
+};
+use physx::triangle_mesh::TriangleMesh;
 
 use crate::events::Hand;
 use crate::rig::PlayerRig;
-use crate::scene::{BodyMode, ColliderShape, GameObject, GripKind, GripPointDef, RigidBodyDef, Scene};
+use crate::scene::{
+    BodyMode, ColliderShape, GameObject, GripKind, GripPointDef, RigidBodyDef, Scene,
+    TerrainColliderDef,
+};
 
-// `physx`'s own "glam" feature interop is pinned to glam 0.23, a different
-// (and thus incompatible, per Rust's type system) `Mat4`/`Vec3`/`Quat` from
-// the 0.29 this crate otherwise uses everywhere — so these are hand-rolled
-// against `PxVec3`/`PxQuat`/`PxTransform`'s own public constructors instead
-// of relying on that feature (which is deliberately left off in Cargo.toml).
 fn to_px_transform(pos: Vec3, rot: Quat) -> PxTransform {
     PxTransform::from_translation_rotation(
         &PxVec3::new(pos.x, pos.y, pos.z),
@@ -44,16 +32,16 @@ fn to_px_transform(pos: Vec3, rot: Quat) -> PxTransform {
 fn from_px_transform(t: &PxTransform) -> (Vec3, Quat) {
     let p = t.translation();
     let r = t.rotation();
-    (Vec3::new(p.x(), p.y(), p.z()), Quat::from_xyzw(r.x(), r.y(), r.z(), r.w()))
+    (
+        Vec3::new(p.x(), p.y(), p.z()),
+        Quat::from_xyzw(r.x(), r.y(), r.z(), r.w()),
+    )
 }
 
 fn to_px_vec3(v: [f32; 3]) -> PxVec3 {
     PxVec3::new(v[0], v[1], v[2])
 }
 
-/// kg/m³ — roughly wood/plastic-ish, used when an object's `rigid_body.mass`
-/// is left unset so relative weights (a house heavier than a duck) come out
-/// believable without hand-authoring every mass.
 const DEFAULT_DENSITY: f32 = 500.0;
 
 fn calculated_mass(half_size: Vec3, density: f32) -> f32 {
@@ -61,10 +49,6 @@ fn calculated_mass(half_size: Vec3, density: f32) -> f32 {
     (volume * density).max(0.001)
 }
 
-/// The joint-creation FFI (`phys_PxFixedJointCreate`/`phys_PxSphericalJointCreate`)
-/// takes raw `physx_sys::PxTransform`, not the high-level wrapper — this
-/// crate's own `From<PxTransform> for physx_sys::PxTransform` (`.into()`)
-/// does the conversion, so this is just a short name for that at call sites.
 fn to_raw_transform(t: PxTransform) -> physx_sys::PxTransform {
     t.into()
 }
@@ -83,16 +67,7 @@ type PxRigidStatic = physx::rigid_static::PxRigidStatic<(), PxShape>;
 type PxRigidDynamic = physx::rigid_dynamic::PxRigidDynamic<(), PxShape>;
 type PxArticulationReducedCoordinate =
     physx::articulation_reduced_coordinate::PxArticulationReducedCoordinate<(), PxArticulationLink>;
-// The scene's own user-data type param is `u64`, not `()` — `SceneDescriptor`
-// packs user data by reinterpreting `&self.user_data` as a `*const *mut
-// c_void` and dereferencing it when `size_of::<U>() <= size_of::<*mut
-// c_void>()`. `()` has alignment 1, so that pointer isn't guaranteed 8-byte
-// aligned and this segfaults (confirmed by hitting exactly that crash with
-// `()`); `u64` has the matching size *and* alignment, so the same code path
-// reads correctly. Actor-level user data (still `()` below) doesn't hit
-// this — it goes through `UserData::init_user_data`, which writes into a
-// real, already-aligned FFI struct field rather than reinterpreting a local
-// stack variable's address.
+
 type PxScene = physx::scene::PxScene<
     u64,
     PxArticulationLink,
@@ -109,7 +84,12 @@ type PxFoundation = PhysicsFoundation<physx::foundation::DefaultAllocator, PxSha
 
 struct OnCollision;
 impl CollisionCallback for OnCollision {
-    fn on_collision(&mut self, _header: &physx_sys::PxContactPairHeader, _pairs: &[physx_sys::PxContactPair]) {}
+    fn on_collision(
+        &mut self,
+        _header: &physx_sys::PxContactPairHeader,
+        _pairs: &[physx_sys::PxContactPair],
+    ) {
+    }
 }
 struct OnTrigger;
 impl TriggerCallback for OnTrigger {
@@ -138,13 +118,10 @@ impl AdvanceCallback<PxArticulationLink, PxRigidDynamic> for OnAdvance {
     }
 }
 
-fn gravity() -> PxVec3 { PxVec3::new(0.0, -9.81, 0.0) }
+fn gravity() -> PxVec3 {
+    PxVec3::new(0.0, -9.81, 0.0)
+}
 
-/// A tracked `Dynamic` actor — beyond the raw pointer used to read its pose
-/// back each frame, this also remembers where it spawned so `step` can
-/// teleport it back there on a timer when `respawn_interval` is set (see
-/// `RigidBodyDef::respawn_interval`), making a falling object loop instead
-/// of settling permanently.
 struct DynamicActor {
     ptr: *mut PxRigidDynamic,
     spawn_pos: Vec3,
@@ -153,29 +130,15 @@ struct DynamicActor {
     elapsed: f32,
 }
 
-/// One PhysX scene per `space_soup_engine::Scene` — rebuilt wholesale on
-/// every `GameRuntime::load`/`load_scene` (matches how `players`/
-/// `collisions`/`attachments`/`script_host` already fully reset there).
-///
-/// Actor pointers are captured *before* handing ownership to `scene` via
-/// `add_dynamic_actor`/`add_static_actor` (those consume the `Owner<T>` and
-/// hand it fully to the C++ scene — there is no handle returned). PhysX
-/// never relocates actors once created, and `PhysicsWorld` owns the `scene`
-/// that keeps them alive, so the pointers stay valid for exactly as long as
-/// `self.scene` does; `rebuild` always replaces `scene` and the pointer maps
-/// together as a unit, so no pointer can ever outlive its scene.
-///
-/// Field order matters here: Rust drops struct fields top-to-bottom (the
-/// opposite of local variables, which drop bottom-to-top), and `scene`/
-/// `materials` hold PhysX objects that reference `foundation` internally —
-/// dropping `foundation` first crashes deep inside PhysX's own cleanup
-/// (confirmed by reproducing it standalone). `foundation` must stay last.
-/// An active grab — a physics joint between a hand anchor and the object's
-/// actor, plus the grip point's name so `held_by` can report back which
-/// point is currently held (for cosmetic hand-mesh alignment).
 struct GrabState {
     joint: *mut physx_sys::PxJoint,
     point_name: String,
+}
+
+#[derive(Clone, Copy)]
+struct Drive {
+    stiffness: f32,
+    damping: f32,
 }
 
 pub struct PhysicsWorld {
@@ -183,13 +146,12 @@ pub struct PhysicsWorld {
     materials: Vec<Owner<PxMaterial>>,
     dynamic: HashMap<String, DynamicActor>,
     kinematic: HashMap<String, *mut PxRigidDynamic>,
-    /// Small kinematic sphere actors, one per hand, pushed from
-    /// `PlayerRig::hand_grip` every frame — grab joints connect to these
-    /// rather than to any `GameObject`, since a hand isn't a scene object.
+
     hand_anchors: [*mut PxRigidDynamic; 2],
     grabs: HashMap<(String, Hand), GrabState>,
     scratch: ScratchBuffer,
     foundation: PxFoundation,
+    terrain_meshes: Vec<Owner<TriangleMesh>>,
 }
 
 fn new_px_scene(foundation: &mut PxFoundation) -> Owner<PxScene> {
@@ -197,26 +159,13 @@ fn new_px_scene(foundation: &mut PxFoundation) -> Owner<PxScene> {
         .create(SceneDescriptor {
             gravity: gravity(),
             thread_count: 1,
-            // Continuous collision detection — without it, a fast-moving
-            // `Dynamic` body (e.g. something that's fallen for a second or
-            // two) can tunnel clean through thin geometry within a single
-            // step of discrete collision detection (confirmed: the rifle
-            // fell straight through the — very thin, 2cm — ground plane
-            // without this). Scene-level flag plus the matching per-actor
-            // `RigidBodyFlag::EnableCcd` (set in `spawn_actor`) are both
-            // required for it to actually take effect.
+
             flags: SceneFlags::EnablePcm | SceneFlags::EnableCcd,
             ..SceneDescriptor::new(0u64)
         })
         .expect("space_soup_engine: failed to create PxScene")
 }
 
-/// Creates the two per-hand kinematic anchor actors used as grab-joint
-/// endpoints, adding them to `scene` and pushing their material into
-/// `materials` to keep it alive. Small sphere collider — this does mean a
-/// hand anchor can nudge dynamic objects it passes through even without an
-/// active grab, which reads as "your hand can push things," a reasonable
-/// default rather than a bug.
 fn create_hand_anchors(
     foundation: &mut PxFoundation,
     scene: &mut Owner<PxScene>,
@@ -228,9 +177,14 @@ fn create_hand_anchors(
             log::warn!("rigid_physics: failed to create hand-anchor material for {hand:?}");
             continue;
         };
-        let geo = PxSphereGeometry::new(0.05);
+        let geo = PxSphereGeometry::new(0.035);
         let Some(mut actor) = foundation.create_rigid_dynamic(
-            PxTransform::default(), &geo, material.as_mut(), 1.0, PxTransform::default(), (),
+            PxTransform::default(),
+            &geo,
+            material.as_mut(),
+            1.0,
+            PxTransform::default(),
+            (),
         ) else {
             log::warn!("rigid_physics: failed to create hand anchor for {hand:?}");
             continue;
@@ -242,6 +196,89 @@ fn create_hand_anchors(
         anchors[hand_index(hand)] = ptr;
     }
     anchors
+}
+
+/// Walks a glTF node tree collecting `(mesh_index, world_matrix)` for every node with a mesh
+/// whose name starts with `node_filter` (all mesh nodes, if `node_filter` is `None`).
+fn collect_terrain_instances(doc: &gltf::Document, node_filter: Option<&str>) -> Vec<(usize, Mat4)> {
+    fn walk(node: gltf::Node, parent: Mat4, filter: Option<&str>, out: &mut Vec<(usize, Mat4)>) {
+        let local = Mat4::from_cols_array_2d(&node.transform().matrix());
+        let world = parent * local;
+
+        if let Some(mesh) = node.mesh() {
+            let matches = match filter {
+                Some(f) => node.name().is_some_and(|n| n.starts_with(f)),
+                None => true,
+            };
+            if matches {
+                out.push((mesh.index(), world));
+            }
+        }
+
+        for child in node.children() {
+            walk(child, world, filter, out);
+        }
+    }
+
+    let mut out = Vec::new();
+    for scene in doc.scenes() {
+        for node in scene.nodes() {
+            walk(node, Mat4::IDENTITY, node_filter, &mut out);
+        }
+    }
+    out
+}
+
+/// Reads a mesh's raw local-space (untransformed) positions and triangle indices, concatenated
+/// across all of its primitives.
+fn read_mesh_geometry(mesh: &gltf::Mesh, buffers: &[gltf::buffer::Data]) -> (Vec<PxVec3>, Vec<u32>) {
+    let mut points = Vec::new();
+    let mut indices = Vec::new();
+
+    for prim in mesh.primitives() {
+        let reader = prim.reader(|b| Some(&buffers[b.index()]));
+        let base = points.len() as u32;
+
+        let Some(pos_iter) = reader.read_positions() else {
+            continue;
+        };
+        for p in pos_iter {
+            points.push(PxVec3::new(p[0], p[1], p[2]));
+        }
+
+        let point_count = points.len() as u32 - base;
+        let prim_indices: Vec<u32> = match reader.read_indices() {
+            Some(it) => it.into_u32().collect(),
+            None => (0..point_count).collect(),
+        };
+        indices.extend(prim_indices.into_iter().map(|i| base + i));
+    }
+
+    (points, indices)
+}
+
+/// Cooks a static triangle mesh from raw local-space geometry, ready to be instanced by any
+/// number of `PxTriangleMeshGeometry` shapes with per-instance position/rotation/scale.
+fn cook_triangle_mesh(
+    foundation: &mut PxFoundation,
+    points: &[PxVec3],
+    indices: &[u32],
+) -> Option<Owner<TriangleMesh>> {
+    let params = PxCookingParams::new(foundation)?;
+
+    let mut desc = PxTriangleMeshDesc::new();
+    desc.obj.points.count = points.len() as u32;
+    desc.obj.points.stride = std::mem::size_of::<PxVec3>() as u32;
+    desc.obj.points.data = points.as_ptr() as *const std::ffi::c_void;
+
+    desc.obj.triangles.count = (indices.len() / 3) as u32;
+    desc.obj.triangles.stride = (std::mem::size_of::<u32>() * 3) as u32;
+    desc.obj.triangles.data = indices.as_ptr() as *const std::ffi::c_void;
+
+    match create_triangle_mesh(foundation, &params, &desc) {
+        TriangleMeshCookingResult::Success(mesh) => Some(mesh),
+        _ => None,
+    }
 }
 
 impl PhysicsWorld {
@@ -258,40 +295,57 @@ impl PhysicsWorld {
             kinematic: HashMap::new(),
             hand_anchors,
             grabs: HashMap::new(),
-            // SAFETY: freed on drop of the ScratchBuffer itself; must simply
-            // outlive any in-flight `scene.step()` call, which it does as a
-            // sibling field alongside `scene`.
+
             scratch: unsafe { ScratchBuffer::new(4) },
+            terrain_meshes: Vec::new(),
         }
     }
 
-    /// Full teardown + recreate — simplest correct thing given scene
-    /// switches are already a full reset everywhere else in `GameRuntime`.
-    pub fn rebuild(&mut self, scene: &Scene) {
+    pub fn rebuild(&mut self, scene: &Scene, game_dir: &Path) {
         self.dynamic.clear();
         self.kinematic.clear();
         self.materials.clear();
-        // Joints and hand anchors from the old scene are destroyed along
-        // with it (see `grabs` clear below) — no individual release needed,
-        // same reasoning as `dynamic`/`kinematic`'s plain `.clear()`.
+        self.terrain_meshes.clear();
+
         self.grabs.clear();
         self.scene = new_px_scene(&mut self.foundation);
-        self.hand_anchors = create_hand_anchors(&mut self.foundation, &mut self.scene, &mut self.materials);
+        self.hand_anchors =
+            create_hand_anchors(&mut self.foundation, &mut self.scene, &mut self.materials);
 
         for obj in &scene.objects {
             let Some(def) = &obj.rigid_body else { continue };
             self.spawn_actor(obj, def);
         }
+
+        for obj in &scene.objects {
+            let Some(def) = &obj.slider_joint else {
+                continue;
+            };
+            self.spawn_slider_joint(obj, def);
+        }
+
+        for obj in &scene.objects {
+            let Some(def) = &obj.terrain_collider else {
+                continue;
+            };
+            self.spawn_terrain_colliders(obj, def, game_dir);
+        }
     }
 
     fn spawn_actor(&mut self, obj: &GameObject, def: &RigidBodyDef) {
         let transform = to_px_transform(obj.cuboid.position, obj.cuboid.rotation);
-        let mass = def.mass.unwrap_or_else(|| calculated_mass(obj.cuboid.half_size, DEFAULT_DENSITY));
-        let collider_half = def.collider_half_size.map(Vec3::from).unwrap_or(obj.cuboid.half_size);
+        let mass = def
+            .mass
+            .unwrap_or_else(|| calculated_mass(obj.cuboid.half_size, DEFAULT_DENSITY));
+        let collider_half = def
+            .collider_half_size
+            .map(Vec3::from)
+            .unwrap_or(obj.cuboid.half_size);
         let shape_transform = to_px_transform(Vec3::from(def.collider_offset), Quat::IDENTITY);
 
         let Some(mut material) =
-            self.foundation.create_material(def.friction, def.friction, def.restitution, ())
+            self.foundation
+                .create_material(def.friction, def.friction, def.restitution, ())
         else {
             log::warn!("rigid_physics: failed to create material for '{}'", obj.id);
             return;
@@ -301,36 +355,86 @@ impl PhysicsWorld {
             BodyMode::Static => {
                 let created = match def.shape {
                     ColliderShape::Box => {
-                        let geo = PxBoxGeometry::new(collider_half.x, collider_half.y, collider_half.z);
-                        self.foundation.create_rigid_static(transform, &geo, material.as_mut(), shape_transform, ())
+                        let geo =
+                            PxBoxGeometry::new(collider_half.x, collider_half.y, collider_half.z);
+                        self.foundation.create_rigid_static(
+                            transform,
+                            &geo,
+                            material.as_mut(),
+                            shape_transform,
+                            (),
+                        )
                     }
                     ColliderShape::Sphere { radius } => {
                         let geo = PxSphereGeometry::new(radius);
-                        self.foundation.create_rigid_static(transform, &geo, material.as_mut(), shape_transform, ())
+                        self.foundation.create_rigid_static(
+                            transform,
+                            &geo,
+                            material.as_mut(),
+                            shape_transform,
+                            (),
+                        )
                     }
-                    ColliderShape::Capsule { radius, half_height } => {
+                    ColliderShape::Capsule {
+                        radius,
+                        half_height,
+                    } => {
                         let geo = PxCapsuleGeometry::new(radius, half_height);
-                        self.foundation.create_rigid_static(transform, &geo, material.as_mut(), shape_transform, ())
+                        self.foundation.create_rigid_static(
+                            transform,
+                            &geo,
+                            material.as_mut(),
+                            shape_transform,
+                            (),
+                        )
                     }
                 };
                 match created {
                     Some(actor) => self.scene.add_static_actor(actor),
-                    None => log::warn!("rigid_physics: failed to create static actor for '{}'", obj.id),
+                    None => log::warn!(
+                        "rigid_physics: failed to create static actor for '{}'",
+                        obj.id
+                    ),
                 }
             }
             BodyMode::Kinematic | BodyMode::Dynamic => {
                 let created = match def.shape {
                     ColliderShape::Box => {
-                        let geo = PxBoxGeometry::new(collider_half.x, collider_half.y, collider_half.z);
-                        self.foundation.create_rigid_dynamic(transform, &geo, material.as_mut(), 1.0, shape_transform, ())
+                        let geo =
+                            PxBoxGeometry::new(collider_half.x, collider_half.y, collider_half.z);
+                        self.foundation.create_rigid_dynamic(
+                            transform,
+                            &geo,
+                            material.as_mut(),
+                            1.0,
+                            shape_transform,
+                            (),
+                        )
                     }
                     ColliderShape::Sphere { radius } => {
                         let geo = PxSphereGeometry::new(radius);
-                        self.foundation.create_rigid_dynamic(transform, &geo, material.as_mut(), 1.0, shape_transform, ())
+                        self.foundation.create_rigid_dynamic(
+                            transform,
+                            &geo,
+                            material.as_mut(),
+                            1.0,
+                            shape_transform,
+                            (),
+                        )
                     }
-                    ColliderShape::Capsule { radius, half_height } => {
+                    ColliderShape::Capsule {
+                        radius,
+                        half_height,
+                    } => {
                         let geo = PxCapsuleGeometry::new(radius, half_height);
-                        self.foundation.create_rigid_dynamic(transform, &geo, material.as_mut(), 1.0, shape_transform, ())
+                        self.foundation.create_rigid_dynamic(
+                            transform,
+                            &geo,
+                            material.as_mut(),
+                            1.0,
+                            shape_transform,
+                            (),
+                        )
                     }
                 };
                 match created {
@@ -343,26 +447,28 @@ impl PhysicsWorld {
                             self.kinematic.insert(obj.id.clone(), ptr);
                         } else {
                             actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
-                            // Default (4, 1) position/velocity solver iterations are too
-                            // weak for small/thin dynamic shapes against the scene's much
-                            // larger static geometry (confirmed: small props were sinking
-                            // partway through the ground on contact instead of resting) —
-                            // more position iterations resolve penetration more firmly.
+
                             actor.set_solver_iteration_counts(8, 2);
                             let vel = to_px_vec3(def.linear_velocity);
                             actor.set_linear_velocity(&vel, true);
                             let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
                             self.scene.add_dynamic_actor(actor);
-                            self.dynamic.insert(obj.id.clone(), DynamicActor {
-                                ptr,
-                                spawn_pos: obj.cuboid.position,
-                                spawn_rot: obj.cuboid.rotation,
-                                respawn_interval: def.respawn_interval,
-                                elapsed: 0.0,
-                            });
+                            self.dynamic.insert(
+                                obj.id.clone(),
+                                DynamicActor {
+                                    ptr,
+                                    spawn_pos: obj.cuboid.position,
+                                    spawn_rot: obj.cuboid.rotation,
+                                    respawn_interval: def.respawn_interval,
+                                    elapsed: 0.0,
+                                },
+                            );
                         }
                     }
-                    None => log::warn!("rigid_physics: failed to create dynamic actor for '{}'", obj.id),
+                    None => log::warn!(
+                        "rigid_physics: failed to create dynamic actor for '{}'",
+                        obj.id
+                    ),
                 }
             }
         }
@@ -370,17 +476,276 @@ impl PhysicsWorld {
         self.materials.push(material);
     }
 
-    /// Grabs `object_id` at the named `point` with `hand` — creates a fixed
-    /// (`GripKind::Snap`) or spherical (`GripKind::Free`) joint between that
-    /// hand's anchor actor and the object's actor, local to `point`'s
-    /// offset. No-ops (with a warning) if the object isn't a tracked
-    /// `Dynamic` body. Grabbing the same `(object_id, hand)` again first
-    /// releases the previous joint.
+    fn spawn_slider_joint(&mut self, obj: &GameObject, def: &crate::scene::SliderJointDef) {
+        let Some(child) = self.dynamic.get(&obj.id) else {
+            log::warn!(
+                "rigid_physics: slider_joint on '{}' failed — not a tracked Dynamic body",
+                obj.id
+            );
+            return;
+        };
+        let Some(parent) = self.dynamic.get(&def.parent) else {
+            log::warn!("rigid_physics: slider_joint on '{}' failed — parent '{}' is not a tracked Dynamic body", obj.id, def.parent);
+            return;
+        };
+
+        let axis = Vec3::from(def.axis);
+        if axis.length_squared() < 1e-6 {
+            log::warn!(
+                "rigid_physics: slider_joint on '{}' has a degenerate axis {:?}",
+                obj.id,
+                def.axis
+            );
+            return;
+        }
+        let axis = axis.normalize();
+        let frame_rot = Quat::from_rotation_arc(Vec3::X, axis);
+        let frame = to_raw_transform(PxTransform::from_translation_rotation(
+            &PxVec3::new(0.0, 0.0, 0.0),
+            &PxQuat::new(frame_rot.x, frame_rot.y, frame_rot.z, frame_rot.w),
+        ));
+
+        let joint = unsafe {
+            physx_sys::phys_PxD6JointCreate(
+                self.foundation.as_mut_ptr(),
+                parent.ptr as *mut physx_sys::PxRigidActor,
+                &frame,
+                child.ptr as *mut physx_sys::PxRigidActor,
+                &frame,
+            )
+        };
+        if joint.is_null() {
+            log::warn!(
+                "rigid_physics: D6 slider joint creation failed for '{}'",
+                obj.id
+            );
+            return;
+        }
+
+        unsafe {
+            physx_sys::PxD6Joint_setMotion_mut(
+                joint,
+                physx_sys::PxD6Axis::X,
+                physx_sys::PxD6Motion::Limited,
+            );
+            physx_sys::PxD6Joint_setMotion_mut(
+                joint,
+                physx_sys::PxD6Axis::Y,
+                physx_sys::PxD6Motion::Limited,
+            );
+            physx_sys::PxD6Joint_setMotion_mut(
+                joint,
+                physx_sys::PxD6Axis::Z,
+                physx_sys::PxD6Motion::Limited,
+            );
+            physx_sys::PxD6Joint_setMotion_mut(
+                joint,
+                physx_sys::PxD6Axis::Twist,
+                physx_sys::PxD6Motion::Locked,
+            );
+            physx_sys::PxD6Joint_setMotion_mut(
+                joint,
+                physx_sys::PxD6Axis::Swing1,
+                physx_sys::PxD6Motion::Locked,
+            );
+            physx_sys::PxD6Joint_setMotion_mut(
+                joint,
+                physx_sys::PxD6Axis::Swing2,
+                physx_sys::PxD6Motion::Locked,
+            );
+
+            let hard_spring = physx_sys::PxSpring_new(0.0, 0.0);
+            let limit =
+                physx_sys::PxJointLinearLimitPair_new_1(0.0, def.travel.max(0.001), &hard_spring);
+            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::X, &limit);
+
+            let side_spring = physx_sys::PxSpring_new(4000.0, 120.0);
+            let side_limit = physx_sys::PxJointLinearLimitPair_new_1(-0.0005, 0.0005, &side_spring);
+            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::Y, &side_limit);
+            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::Z, &side_limit);
+
+            let drive = physx_sys::PxD6JointDrive_new_1(
+                def.spring_stiffness,
+                def.spring_damping,
+                1.0e6,
+                false,
+            );
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::X, &drive);
+            let rest_pose = to_raw_transform(PxTransform::default());
+            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &rest_pose, true);
+        }
+    }
+
+    fn spawn_terrain_colliders(&mut self, obj: &GameObject, def: &TerrainColliderDef, game_dir: &Path) {
+        let Some(mesh_ref) = &obj.mesh else {
+            log::warn!(
+                "rigid_physics: terrain_collider on '{}' has no mesh to source geometry from",
+                obj.id
+            );
+            return;
+        };
+
+        let full_path = game_dir.join(&mesh_ref.path);
+        let (doc, buffers, _images) = match gltf::import(&full_path) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!(
+                    "rigid_physics: terrain_collider on '{}' failed to load '{}': {e}",
+                    obj.id,
+                    full_path.display()
+                );
+                return;
+            }
+        };
+
+        let instances = collect_terrain_instances(&doc, def.node_filter.as_deref());
+        if instances.is_empty() {
+            log::warn!(
+                "rigid_physics: terrain_collider on '{}' matched no nodes (node_filter {:?})",
+                obj.id,
+                def.node_filter
+            );
+            return;
+        }
+        log::info!(
+            "rigid_physics: terrain_collider on '{}' matched {} node instance(s) (node_filter {:?})",
+            obj.id,
+            instances.len(),
+            def.node_filter
+        );
+
+        let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
+            log::warn!(
+                "rigid_physics: failed to create terrain material for '{}'",
+                obj.id
+            );
+            return;
+        };
+
+        let object_mat = Mat4::from_scale_rotation_translation(
+            mesh_ref.scale,
+            obj.cuboid.rotation * mesh_ref.rotation_offset,
+            obj.cuboid.position,
+        );
+
+        let mut cooked: HashMap<usize, usize> = HashMap::new();
+        let mut spawned = 0u32;
+
+        for (mesh_index, node_mat) in instances {
+            let mesh_idx_in_pool = if let Some(&i) = cooked.get(&mesh_index) {
+                i
+            } else {
+                let mesh = doc.meshes().nth(mesh_index).expect("mesh index from node tree");
+                let (points, tri_indices) = read_mesh_geometry(&mesh, &buffers);
+                if points.is_empty() || tri_indices.is_empty() {
+                    log::warn!(
+                        "rigid_physics: terrain_collider on '{}' found an empty mesh (index {mesh_index})",
+                        obj.id
+                    );
+                    continue;
+                }
+                match cook_triangle_mesh(&mut self.foundation, &points, &tri_indices) {
+                    Some(owned) => {
+                        self.terrain_meshes.push(owned);
+                        let i = self.terrain_meshes.len() - 1;
+                        cooked.insert(mesh_index, i);
+                        i
+                    }
+                    None => {
+                        log::warn!(
+                            "rigid_physics: terrain_collider on '{}' failed to cook mesh (index {mesh_index})",
+                            obj.id
+                        );
+                        continue;
+                    }
+                }
+            };
+
+            let world = object_mat * node_mat;
+            let (scale, rotation, translation) = world.to_scale_rotation_translation();
+
+            let scale_px = PxVec3::new(scale.x, scale.y, scale.z);
+            let rot_px = PxQuat::new(rotation.x, rotation.y, rotation.z, rotation.w);
+            let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };
+
+            let geo = PxTriangleMeshGeometry::new(
+                self.terrain_meshes[mesh_idx_in_pool].as_mut(),
+                &mesh_scale,
+                MeshGeometryFlags::empty(),
+            );
+
+            let transform = to_px_transform(translation, rotation);
+            match self.foundation.create_rigid_static(
+                transform,
+                &geo,
+                material.as_mut(),
+                PxTransform::default(),
+                (),
+            ) {
+                Some(actor) => {
+                    self.scene.add_static_actor(actor);
+                    spawned += 1;
+                }
+                None => log::warn!(
+                    "rigid_physics: terrain_collider on '{}' failed to create static actor",
+                    obj.id
+                ),
+            }
+        }
+        log::info!(
+            "rigid_physics: terrain_collider on '{}' spawned {spawned} static collider(s) from {} unique cooked mesh(es)",
+            obj.id,
+            cooked.len()
+        );
+
+        self.materials.push(material);
+    }
+
+    pub fn raycast_down(&self, origin: Vec3, max_distance: f32) -> Option<(Vec3, Vec3)> {
+        let origin_px = physx_sys::PxVec3 {
+            x: origin.x,
+            y: origin.y,
+            z: origin.z,
+        };
+        let dir_px = physx_sys::PxVec3 {
+            x: 0.0,
+            y: -1.0,
+            z: 0.0,
+        };
+        let mut hit: physx_sys::PxRaycastHit = unsafe { std::mem::zeroed() };
+        let hit_flags = physx_sys::PxHitFlags::Position | physx_sys::PxHitFlags::Normal;
+        // filterData is taken by reference (never null) in the C++ API — a real default-
+        // constructed value must be passed, unlike filterCall/cache which tolerate null.
+        let filter_data = unsafe { physx_sys::PxQueryFilterData_new() };
+        let found = unsafe {
+            physx_sys::PxSceneQueryExt_raycastSingle(
+                self.scene.as_ptr(),
+                &origin_px,
+                &dir_px,
+                max_distance,
+                hit_flags,
+                &mut hit,
+                &filter_data,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        };
+        if !found {
+            return None;
+        }
+        let p = hit.position;
+        let n = hit.normal;
+        Some((Vec3::new(p.x, p.y, p.z), Vec3::new(n.x, n.y, n.z)))
+    }
+
     pub fn grab(&mut self, object_id: &str, hand: Hand, point: &GripPointDef) {
         self.release(object_id, hand);
 
         let Some(state) = self.dynamic.get(object_id) else {
-            log::warn!("rigid_physics: grab '{object_id}' at '{}' failed — not a tracked Dynamic body", point.name);
+            log::warn!(
+                "rigid_physics: grab '{object_id}' at '{}' failed — not a tracked Dynamic body",
+                point.name
+            );
             return;
         };
         let anchor_ptr = self.hand_anchors[hand_index(hand)];
@@ -396,108 +761,179 @@ impl PhysicsWorld {
             &PxQuat::new(local_rot[0], local_rot[1], local_rot[2], local_rot[3]),
         ));
 
-        // SAFETY: `anchor_ptr`/`state.ptr` are both actors owned by
-        // `self.scene`, guaranteed alive for this call (see struct doc
-        // comment); the joint create functions borrow them only for the
-        // duration of the call and return an owned `*mut PxJoint` this
-        // struct is responsible for releasing (`release`, or implicitly via
-        // scene teardown in `rebuild`).
-        let joint = unsafe {
-            match point.kind {
-                GripKind::Snap => physx_sys::phys_PxFixedJointCreate(
-                    self.foundation.as_mut_ptr(),
-                    anchor_ptr as *mut physx_sys::PxRigidActor,
-                    &anchor_frame,
-                    state.ptr as *mut physx_sys::PxRigidActor,
-                    &object_frame,
-                ) as *mut physx_sys::PxJoint,
-                GripKind::Free => physx_sys::phys_PxSphericalJointCreate(
-                    self.foundation.as_mut_ptr(),
-                    anchor_ptr as *mut physx_sys::PxRigidActor,
-                    &anchor_frame,
-                    state.ptr as *mut physx_sys::PxRigidActor,
-                    &object_frame,
-                ) as *mut physx_sys::PxJoint,
-            }
+        let (linear, angular): (Drive, Option<Drive>) = match point.kind {
+            GripKind::Snap => (
+                Drive {
+                    stiffness: 20000.0,
+                    damping: 300.0,
+                },
+                Some(Drive {
+                    stiffness: 2000.0,
+                    damping: 80.0,
+                }),
+            ),
+            GripKind::Free => (
+                Drive {
+                    stiffness: 20000.0,
+                    damping: 300.0,
+                },
+                None,
+            ),
+            GripKind::Pinch => (
+                Drive {
+                    stiffness: 6000.0,
+                    damping: 150.0,
+                },
+                Some(Drive {
+                    stiffness: 6000.0,
+                    damping: 150.0,
+                }),
+            ),
         };
 
+        let anchor_ra = anchor_ptr as *mut physx_sys::PxRigidActor;
+        let object_ra = state.ptr as *mut physx_sys::PxRigidActor;
+        let joint = Self::create_driven_joint(
+            &mut self.foundation,
+            anchor_ra,
+            &anchor_frame,
+            object_ra,
+            &object_frame,
+            linear,
+            angular,
+        );
+
         if joint.is_null() {
-            log::warn!("rigid_physics: joint creation failed for '{object_id}' at '{}'", point.name);
+            log::warn!(
+                "rigid_physics: joint creation failed for '{object_id}' at '{}'",
+                point.name
+            );
             return;
         }
 
-        self.grabs.insert((object_id.to_string(), hand), GrabState { joint, point_name: point.name.clone() });
+        self.grabs.insert(
+            (object_id.to_string(), hand),
+            GrabState {
+                joint,
+                point_name: point.name.clone(),
+            },
+        );
     }
 
-    /// Releases `hand`'s grab on `object_id`, if any.
+    fn create_driven_joint(
+        foundation: &mut PxFoundation,
+        actor0: *mut physx_sys::PxRigidActor,
+        frame0: &physx_sys::PxTransform,
+        actor1: *mut physx_sys::PxRigidActor,
+        frame1: &physx_sys::PxTransform,
+        linear: Drive,
+        angular: Option<Drive>,
+    ) -> *mut physx_sys::PxJoint {
+        unsafe {
+            let joint = physx_sys::phys_PxD6JointCreate(
+                foundation.as_mut_ptr(),
+                actor0,
+                frame0,
+                actor1,
+                frame1,
+            );
+            if joint.is_null() {
+                return std::ptr::null_mut();
+            }
+
+            for axis in [
+                physx_sys::PxD6Axis::X,
+                physx_sys::PxD6Axis::Y,
+                physx_sys::PxD6Axis::Z,
+                physx_sys::PxD6Axis::Twist,
+                physx_sys::PxD6Axis::Swing1,
+                physx_sys::PxD6Axis::Swing2,
+            ] {
+                physx_sys::PxD6Joint_setMotion_mut(joint, axis, physx_sys::PxD6Motion::Free);
+            }
+
+            let linear_drive =
+                physx_sys::PxD6JointDrive_new_1(linear.stiffness, linear.damping, 1.0e6, false);
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::X, &linear_drive);
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::Y, &linear_drive);
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::Z, &linear_drive);
+            if let Some(a) = angular {
+                let angular_drive =
+                    physx_sys::PxD6JointDrive_new_1(a.stiffness, a.damping, 1.0e6, false);
+                physx_sys::PxD6Joint_setDrive_mut(
+                    joint,
+                    physx_sys::PxD6Drive::Slerp,
+                    &angular_drive,
+                );
+            }
+            let rest = to_raw_transform(PxTransform::default());
+            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &rest, true);
+
+            let zero = physx_sys::PxVec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            };
+            physx_sys::PxD6Joint_setDriveVelocity_mut(joint, &zero, &zero, false);
+
+            joint as *mut physx_sys::PxJoint
+        }
+    }
+
     pub fn release(&mut self, object_id: &str, hand: Hand) {
         if let Some(state) = self.grabs.remove(&(object_id.to_string(), hand)) {
-            // SAFETY: `state.joint` was created by `grab` and never handed
-            // out elsewhere; releasing it here is the sole owner's release.
             unsafe { physx_sys::PxJoint_release_mut(state.joint) };
         }
     }
 
-    /// What `hand` currently has grabbed, if anything — `(object_id,
-    /// point_name)`. Used to keep the rendered hand mesh aligned to the
-    /// grip it's actually holding.
     pub fn held_by(&self, hand: Hand) -> Option<(&str, &str)> {
-        self.grabs.iter()
+        self.grabs
+            .iter()
             .find(|((_, h), _)| *h == hand)
             .map(|((id, _), state)| (id.as_str(), state.point_name.as_str()))
     }
 
-    /// Pushes current `Kinematic` transforms and hand-anchor positions into
-    /// PhysX, steps the simulation, then writes `Dynamic` results back into
-    /// `scene`. Called from `GameRuntime::update` right before render-list
-    /// collection, so it always has the final say over
-    /// `cuboid.position`/`.rotation` for any object with a `rigid_body` —
-    /// see that call site for the script-write-vs-physics ordering
-    /// rationale.
     pub fn step(&mut self, dt: f32, scene: &mut Scene, rig: &PlayerRig) {
         for (id, &ptr) in &self.kinematic {
-            let Some(obj) = scene.find_object(id) else { continue };
+            let Some(obj) = scene.find_object(id) else {
+                continue;
+            };
             let target = to_px_transform(obj.cuboid.position, obj.cuboid.rotation);
-            // SAFETY: `ptr` was captured from an actor now owned by
-            // `self.scene`, which is guaranteed alive for the duration of
-            // this call (see struct doc comment).
+
             unsafe { (*ptr).set_kinematic_target(&target) };
         }
 
         for hand in [Hand::Left, Hand::Right] {
             let ptr = self.hand_anchors[hand_index(hand)];
-            if ptr.is_null() { continue; }
+            if ptr.is_null() {
+                continue;
+            }
             let grip = rig.hand_grip(hand);
             let target = to_px_transform(grip.position, grip.rotation);
-            // SAFETY: see above.
+
             unsafe { (*ptr).set_kinematic_target(&target) };
         }
 
         let zero = PxVec3::new(0.0, 0.0, 0.0);
         for state in self.dynamic.values_mut() {
-            // Safety net: an unlucky contact (e.g. a Kinematic body like the
-            // wandering duck clipping a small/light prop) can occasionally
-            // impart enough velocity to launch a `Dynamic` body clean off
-            // the playable area — once it's outside every collider's
-            // footprint it just free-falls forever with nothing left to
-            // catch it, i.e. "disappears". Rather than chase every possible
-            // source of an energetic contact, guarantee it can never be
-            // lost for good: falling below a generous kill plane always
-            // teleports back to spawn, exactly like the timed
-            // `respawn_interval` reset below.
             const KILL_Y: f32 = -15.0;
-            // SAFETY: see above.
+
             let fell_out = unsafe { (*state.ptr).get_global_pose() }.translation().y() < KILL_Y;
 
-            let due_for_timed_respawn = state.respawn_interval.map(|interval| {
-                state.elapsed += dt;
-                state.elapsed >= interval
-            }).unwrap_or(false);
+            let due_for_timed_respawn = state
+                .respawn_interval
+                .map(|interval| {
+                    state.elapsed += dt;
+                    state.elapsed >= interval
+                })
+                .unwrap_or(false);
 
-            if !fell_out && !due_for_timed_respawn { continue; }
+            if !fell_out && !due_for_timed_respawn {
+                continue;
+            }
             state.elapsed = 0.0;
             let spawn = to_px_transform(state.spawn_pos, state.spawn_rot);
-            // SAFETY: see above.
+
             unsafe {
                 (*state.ptr).set_global_pose(&spawn, true);
                 (*state.ptr).set_linear_velocity(&zero, true);
@@ -505,13 +941,17 @@ impl PhysicsWorld {
             }
         }
 
-        if let Err(e) = self.scene.step(dt, None::<&mut physx_sys::PxBaseTask>, Some(&mut self.scratch), true) {
+        if let Err(e) = self.scene.step(
+            dt,
+            None::<&mut physx_sys::PxBaseTask>,
+            Some(&mut self.scratch),
+            true,
+        ) {
             log::warn!("rigid_physics: simulation step failed: {e:?}");
             return;
         }
 
         for (id, state) in &self.dynamic {
-            // SAFETY: see above.
             let pose = unsafe { (*state.ptr).get_global_pose() };
             let (pos, rot) = from_px_transform(&pose);
             if let Some(obj) = scene.find_object_mut(id) {
@@ -523,5 +963,7 @@ impl PhysicsWorld {
 }
 
 impl Default for PhysicsWorld {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

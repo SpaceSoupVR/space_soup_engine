@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
-use glam::{Vec3, Quat};
+use glam::{Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct Pose {
@@ -9,33 +9,42 @@ pub struct Pose {
 
 impl Pose {
     pub fn new(position: Vec3, rotation: Quat) -> Self {
-        Self { position: position.into(), rotation: [rotation.x, rotation.y, rotation.z, rotation.w] }
+        Self {
+            position: position.into(),
+            rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
+        }
     }
-    pub fn position(&self) -> Vec3 { Vec3::from(self.position) }
+    pub fn position(&self) -> Vec3 {
+        Vec3::from(self.position)
+    }
     pub fn rotation(&self) -> Quat {
         let r = self.rotation;
         let q = Quat::from_xyzw(r[0], r[1], r[2], r[3]);
-        if q.length_squared() < 1e-6 { Quat::IDENTITY } else { q.normalize() }
+        if q.length_squared() < 1e-6 {
+            Quat::IDENTITY
+        } else {
+            q.normalize()
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JointSample {
-    pub name:  String,
-    pub pose:  Pose,
+    pub name: String,
+    pub pose: Pose,
     pub valid: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HandSample {
     pub tracking_active: bool,
-    pub grip:    Option<Pose>,
-    pub aim:     Option<Pose>,
-    pub joints:  Vec<JointSample>,
+    pub grip: Option<Pose>,
+    pub aim: Option<Pose>,
+    pub joints: Vec<JointSample>,
 
-    pub trigger:     f32,
-    pub squeeze:     f32,
-    pub stick:       [f32; 2],
+    pub trigger: f32,
+    pub squeeze: f32,
+    pub stick: [f32; 2],
     pub stick_click: bool,
     pub btn_a: bool,
     pub btn_b: bool,
@@ -45,39 +54,38 @@ pub struct HandSample {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LocomotionSample {
-    pub mode:           String,
-    pub player_offset:  [f32; 3],
+    pub mode: String,
+    pub player_offset: [f32; 3],
     pub player_yaw_deg: f32,
     pub teleport_aiming: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SceneSample {
-    pub scene_name:        String,
-    pub object_count:      usize,
-    pub render_cuboids:    usize,
-    pub render_meshes:     usize,
+    pub scene_name: String,
+    pub object_count: usize,
+    pub render_cuboids: usize,
+    pub render_meshes: usize,
     pub active_animations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TimingSample {
-    pub dt_seconds:  f32,
-    pub fps:         f32,
+    pub dt_seconds: f32,
+    pub fps: f32,
     pub frame_count: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DebugPacket {
-    pub head:       Pose,
-    pub left_hand:  HandSample,
+    pub head: Pose,
+    pub left_hand: HandSample,
     pub right_hand: HandSample,
     pub locomotion: LocomotionSample,
-    pub scene:      SceneSample,
-    pub timing:     TimingSample,
-    pub log_lines:  Vec<String>,
+    pub scene: SceneSample,
+    pub timing: TimingSample,
+    pub log_lines: Vec<String>,
 }
-
 
 pub mod sender {
     use super::DebugPacket;
@@ -107,16 +115,18 @@ pub mod receiver {
 
     impl PacketReader {
         pub fn new(stream: TcpStream) -> Self {
-            Self { reader: BufReader::new(stream) }
+            Self {
+                reader: BufReader::new(stream),
+            }
         }
 
         pub fn read_packet(&mut self) -> Option<DebugPacket> {
             let mut line = String::new();
             let n = self.reader.read_line(&mut line).ok()?;
-            if n == 0 { return None; }
+            if n == 0 {
+                return None;
+            }
             serde_json::from_str(line.trim()).ok()
         }
     }
 }
-
-//fisx 

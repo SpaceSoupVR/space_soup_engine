@@ -9,13 +9,19 @@ pub struct Aabb {
 
 impl Aabb {
     pub fn from_center_half(center: Vec3, half: Vec3) -> Self {
-        Self { min: center - half, max: center + half }
+        Self {
+            min: center - half,
+            max: center + half,
+        }
     }
 
     pub fn overlaps(&self, other: &Aabb) -> bool {
-        self.min.x <= other.max.x && self.max.x >= other.min.x &&
-        self.min.y <= other.max.y && self.max.y >= other.min.y &&
-        self.min.z <= other.max.z && self.max.z >= other.min.z
+        self.min.x <= other.max.x
+            && self.max.x >= other.min.x
+            && self.min.y <= other.max.y
+            && self.max.y >= other.min.y
+            && self.min.z <= other.max.z
+            && self.max.z >= other.min.z
     }
 }
 

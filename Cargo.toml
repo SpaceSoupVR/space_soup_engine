@@ -18,3 +18,4 @@ log = "0.4"
 rhai = { version = "1.19", features = ["sync"] }
 physx = "0.19.0"
 physx-sys = "0.11.5"
+gltf = "1.4"
