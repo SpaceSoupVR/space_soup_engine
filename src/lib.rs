@@ -24,7 +24,7 @@ pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
 pub use runtime::{GameRuntime, RenderCuboid, RenderMesh};
 pub use scene::{
-    Animation, BodyMode, ColliderShape, Color3, CuboidDef, CuboidStyle, Easing, GameObject,
-    GripKind, GripPointDef, GripPoseDef, Keyframe, MeshRef, RigAttachmentDef, RigidBodyDef, Scene,
-    SliderJointDef,
+    Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape, Color3, CuboidDef,
+    CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe, MeshRef,
+    PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, BINDING_BUTTONS,
 };
