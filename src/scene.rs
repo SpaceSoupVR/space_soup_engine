@@ -112,7 +112,7 @@ impl Easing {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Keyframe {
     pub t: f32,
     pub position: Option<Vec3>,
@@ -121,7 +121,7 @@ pub struct Keyframe {
     pub color: Option<Color3>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Animation {
     pub name: String,
     pub keyframes: Vec<Keyframe>,
@@ -135,6 +135,53 @@ impl Animation {
     pub fn duration(&self) -> f32 {
         self.keyframes.iter().map(|k| k.t).fold(0.0_f32, f32::max)
     }
+}
+
+/// How a bound animation is started relative to whatever is already playing
+/// on the object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlayMode {
+    /// Fire immediately, replacing the object's current animation.
+    Simultaneous,
+    /// Queue behind the currently playing animation; starts when it finishes.
+    Sequential,
+}
+
+impl Default for PlayMode {
+    fn default() -> Self {
+        Self::Simultaneous
+    }
+}
+
+/// When a controller-button binding is allowed to trigger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BindingScope {
+    /// Only while the player is holding this object.
+    ContextualHold,
+    /// Anywhere, regardless of what (if anything) is held.
+    GlobalAnywhere,
+}
+
+impl Default for BindingScope {
+    fn default() -> Self {
+        Self::ContextualHold
+    }
+}
+
+/// Canonical controller button identifiers used by `AnimationBinding::button`.
+pub const BINDING_BUTTONS: [&str; 6] = ["btn_a", "btn_b", "btn_x", "btn_y", "trigger", "grip"];
+
+/// Maps a controller button press to an animation on the owning `GameObject`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnimationBinding {
+    /// "btn_a", "btn_b", "btn_x", "btn_y", "trigger", "grip", ...
+    pub button: String,
+    /// Name of the animation (in the same object's `animations`) to play.
+    pub animation: String,
+    #[serde(default)]
+    pub play_mode: PlayMode,
+    #[serde(default)]
+    pub scope: BindingScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,6 +382,9 @@ pub struct GameObject {
 
     #[serde(default)]
     pub animations: Vec<Animation>,
+
+    #[serde(default)]
+    pub animation_bindings: Vec<AnimationBinding>,
 
     #[serde(default)]
     pub rig_attachment: Option<RigAttachmentDef>,

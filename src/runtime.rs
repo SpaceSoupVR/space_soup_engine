@@ -12,7 +12,9 @@ use crate::manifest::Manifest;
 use crate::physics::{Aabb, CollisionEvent, CollisionTracker};
 use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
-use crate::scene::{Color3, CuboidStyle, GameObject, GripPointDef, MeshRef, Scene};
+use crate::scene::{
+    BindingScope, Color3, CuboidStyle, GameObject, GripPointDef, MeshRef, PlayMode, Scene,
+};
 use crate::script::{EngineCommand, ScriptHost};
 
 #[derive(Debug, Clone)]
@@ -42,6 +44,9 @@ pub struct GameRuntime {
 
     script_host: ScriptHost,
     players: HashMap<String, AnimationPlayer>,
+    /// Sequential-mode animations waiting per object; the front entry starts
+    /// when the object's current animation finishes.
+    anim_queues: HashMap<String, Vec<String>>,
     collisions: CollisionTracker,
     rigid_physics: PhysicsWorld,
 
@@ -64,6 +69,7 @@ impl GameRuntime {
             scene,
             script_host: ScriptHost::new(),
             players: HashMap::new(),
+            anim_queues: HashMap::new(),
             collisions: CollisionTracker::new(),
             rigid_physics: PhysicsWorld::new(),
             rig: PlayerRig::new(),
@@ -134,6 +140,7 @@ impl GameRuntime {
 
         self.scene = scene;
         self.players = HashMap::new();
+        self.anim_queues = HashMap::new();
         self.collisions = CollisionTracker::new();
         self.attachments = AttachmentTable::new();
         self.script_host = ScriptHost::new();
@@ -262,6 +269,14 @@ impl GameRuntime {
 
         for id in finished {
             self.players.remove(&id);
+            // Sequential bindings: start the next queued animation, if any.
+            let next = self
+                .anim_queues
+                .get_mut(&id)
+                .and_then(|q| (!q.is_empty()).then(|| q.remove(0)));
+            if let Some(anim_name) = next {
+                self.play_animation(&id, &anim_name);
+            }
         }
     }
 
@@ -280,6 +295,7 @@ impl GameRuntime {
 
     fn stop_animation(&mut self, obj_id: &str) {
         self.players.remove(obj_id);
+        self.anim_queues.remove(obj_id);
     }
 
     fn update_object_position_cache(&self) {
@@ -386,6 +402,44 @@ impl GameRuntime {
                     .call(id, "on_press", (press.button.clone(),));
             }
         }
+        self.dispatch_animation_bindings(input);
+    }
+
+    /// Fires `animation_bindings` matching this frame's button presses.
+    /// Contextual bindings require the press to carry the bound object's id
+    /// (i.e. the player is holding it); global bindings fire from anywhere.
+    fn dispatch_animation_bindings(&mut self, input: &InputFrame) {
+        let mut to_play: Vec<(String, String, PlayMode)> = Vec::new();
+        for press in &input.button_presses {
+            for obj in &self.scene.objects {
+                for binding in &obj.animation_bindings {
+                    if binding.button != press.button || binding.animation.is_empty() {
+                        continue;
+                    }
+                    let in_scope = match binding.scope {
+                        BindingScope::GlobalAnywhere => true,
+                        BindingScope::ContextualHold => {
+                            press.object_id.as_deref() == Some(obj.id.as_str())
+                        }
+                    };
+                    if in_scope {
+                        to_play.push((obj.id.clone(), binding.animation.clone(), binding.play_mode));
+                    }
+                }
+            }
+        }
+        for (obj_id, anim, mode) in to_play {
+            match mode {
+                PlayMode::Simultaneous => self.play_animation(&obj_id, &anim),
+                PlayMode::Sequential => {
+                    if self.players.contains_key(&obj_id) {
+                        self.anim_queues.entry(obj_id).or_default().push(anim);
+                    } else {
+                        self.play_animation(&obj_id, &anim);
+                    }
+                }
+            }
+        }
     }
 
     fn dispatch_update_hook(&self, dt: f32) {
@@ -433,6 +487,7 @@ impl GameRuntime {
                 EngineCommand::DestroyObject { id } => {
                     self.scene.objects.retain(|o| o.id != id);
                     self.players.remove(&id);
+                    self.anim_queues.remove(&id);
                     self.attachments.detach(&id);
                 }
                 EngineCommand::AttachToJoint {

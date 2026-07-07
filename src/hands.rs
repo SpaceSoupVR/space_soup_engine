@@ -56,6 +56,7 @@ pub fn spawn_hand_rig(runtime: &mut GameRuntime, hand: Hand) {
             hidden: false,
             script: None,
             animations: vec![],
+            animation_bindings: Vec::new(),
             rig_attachment: None,
             grip_pose_legacy: None,
             grip_pose_left: None,
