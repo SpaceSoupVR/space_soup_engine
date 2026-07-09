@@ -15,6 +15,8 @@ use physx::cooking::{
 };
 use physx::triangle_mesh::TriangleMesh;
 
+use space_soup_protocol::PlayerId;
+
 use crate::events::Hand;
 use crate::rig::PlayerRig;
 use crate::scene::{
@@ -51,13 +53,6 @@ fn calculated_mass(half_size: Vec3, density: f32) -> f32 {
 
 fn to_raw_transform(t: PxTransform) -> physx_sys::PxTransform {
     t.into()
-}
-
-fn hand_index(hand: Hand) -> usize {
-    match hand {
-        Hand::Left => 0,
-        Hand::Right => 1,
-    }
 }
 
 type PxMaterial = physx::material::PxMaterial<()>;
@@ -147,8 +142,12 @@ pub struct PhysicsWorld {
     dynamic: HashMap<String, DynamicActor>,
     kinematic: HashMap<String, *mut PxRigidDynamic>,
 
-    hand_anchors: [*mut PxRigidDynamic; 2],
-    grabs: HashMap<(String, Hand), GrabState>,
+    /// One kinematic anchor per (player, hand), created lazily on first
+    /// sight of that player via `ensure_player` rather than eagerly for a
+    /// fixed player count — this is what lets N simultaneous players each
+    /// grab things with PhysX instead of just one.
+    hand_anchors: HashMap<(PlayerId, Hand), *mut PxRigidDynamic>,
+    grabs: HashMap<(PlayerId, String, Hand), GrabState>,
     scratch: ScratchBuffer,
     foundation: PxFoundation,
     terrain_meshes: Vec<Owner<TriangleMesh>>,
@@ -166,36 +165,34 @@ fn new_px_scene(foundation: &mut PxFoundation) -> Owner<PxScene> {
         .expect("space_soup_engine: failed to create PxScene")
 }
 
-fn create_hand_anchors(
+fn create_hand_anchor(
     foundation: &mut PxFoundation,
     scene: &mut Owner<PxScene>,
     materials: &mut Vec<Owner<PxMaterial>>,
-) -> [*mut PxRigidDynamic; 2] {
-    let mut anchors = [std::ptr::null_mut(); 2];
-    for hand in [Hand::Left, Hand::Right] {
-        let Some(mut material) = foundation.create_material(0.0, 0.0, 0.0, ()) else {
-            log::warn!("rigid_physics: failed to create hand-anchor material for {hand:?}");
-            continue;
-        };
-        let geo = PxSphereGeometry::new(0.035);
-        let Some(mut actor) = foundation.create_rigid_dynamic(
-            PxTransform::default(),
-            &geo,
-            material.as_mut(),
-            1.0,
-            PxTransform::default(),
-            (),
-        ) else {
-            log::warn!("rigid_physics: failed to create hand anchor for {hand:?}");
-            continue;
-        };
-        actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
-        let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
-        scene.add_dynamic_actor(actor);
-        materials.push(material);
-        anchors[hand_index(hand)] = ptr;
-    }
-    anchors
+    player: PlayerId,
+    hand: Hand,
+) -> Option<*mut PxRigidDynamic> {
+    let Some(mut material) = foundation.create_material(0.0, 0.0, 0.0, ()) else {
+        log::warn!("rigid_physics: failed to create hand-anchor material for {player:?}/{hand:?}");
+        return None;
+    };
+    let geo = PxSphereGeometry::new(0.035);
+    let Some(mut actor) = foundation.create_rigid_dynamic(
+        PxTransform::default(),
+        &geo,
+        material.as_mut(),
+        1.0,
+        PxTransform::default(),
+        (),
+    ) else {
+        log::warn!("rigid_physics: failed to create hand anchor for {player:?}/{hand:?}");
+        return None;
+    };
+    actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
+    let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
+    scene.add_dynamic_actor(actor);
+    materials.push(material);
+    Some(ptr)
 }
 
 /// Walks a glTF node tree collecting `(mesh_index, world_matrix)` for every node with a mesh
@@ -284,20 +281,72 @@ fn cook_triangle_mesh(
 impl PhysicsWorld {
     pub fn new() -> Self {
         let mut foundation: PxFoundation = PhysicsFoundation::default();
-        let mut scene = new_px_scene(&mut foundation);
-        let mut materials = Vec::new();
-        let hand_anchors = create_hand_anchors(&mut foundation, &mut scene, &mut materials);
+        let scene = new_px_scene(&mut foundation);
         Self {
             foundation,
             scene,
-            materials,
+            materials: Vec::new(),
             dynamic: HashMap::new(),
             kinematic: HashMap::new(),
-            hand_anchors,
+            hand_anchors: HashMap::new(),
             grabs: HashMap::new(),
 
             scratch: unsafe { ScratchBuffer::new(4) },
             terrain_meshes: Vec::new(),
+        }
+    }
+
+    /// Ensures `player` has PhysX kinematic hand anchors, creating them on
+    /// first sight. Idempotent — safe to call every tick for every active
+    /// player (`GameRuntime::update` does exactly that).
+    pub fn ensure_player(&mut self, player: PlayerId) {
+        for hand in [Hand::Left, Hand::Right] {
+            if self.hand_anchors.contains_key(&(player, hand)) {
+                continue;
+            }
+            if let Some(ptr) = create_hand_anchor(
+                &mut self.foundation,
+                &mut self.scene,
+                &mut self.materials,
+                player,
+                hand,
+            ) {
+                self.hand_anchors.insert((player, hand), ptr);
+            }
+        }
+    }
+
+    /// Tears down `player`'s hand anchors (and releases any grab they were
+    /// holding first, so we don't leave a joint referencing a freed actor) —
+    /// call this when a player disconnects, or their anchors/joints just sit
+    /// in the scene forever wasting memory.
+    pub fn remove_player(&mut self, player: PlayerId) {
+        let held_by_player: Vec<(PlayerId, String, Hand)> = self
+            .grabs
+            .keys()
+            .filter(|(p, _, _)| *p == player)
+            .cloned()
+            .collect();
+        for key in held_by_player {
+            if let Some(state) = self.grabs.remove(&key) {
+                unsafe { physx_sys::PxJoint_release_mut(state.joint) };
+            }
+        }
+
+        for hand in [Hand::Left, Hand::Right] {
+            let Some(ptr) = self.hand_anchors.remove(&(player, hand)) else {
+                continue;
+            };
+            if ptr.is_null() {
+                continue;
+            }
+            // Detach from the scene, then release the actor itself — PhysX's
+            // `removeActor` only unregisters it from simulation, it doesn't
+            // free the object.
+            unsafe {
+                self.scene.remove_actor(&mut *ptr, false);
+                physx_sys::PxActor_release_mut(ptr as *mut physx_sys::PxActor);
+            }
         }
     }
 
@@ -308,9 +357,8 @@ impl PhysicsWorld {
         self.terrain_meshes.clear();
 
         self.grabs.clear();
+        self.hand_anchors.clear();
         self.scene = new_px_scene(&mut self.foundation);
-        self.hand_anchors =
-            create_hand_anchors(&mut self.foundation, &mut self.scene, &mut self.materials);
 
         for obj in &scene.objects {
             let Some(def) = &obj.rigid_body else { continue };
@@ -738,8 +786,21 @@ impl PhysicsWorld {
         Some((Vec3::new(p.x, p.y, p.z), Vec3::new(n.x, n.y, n.z)))
     }
 
-    pub fn grab(&mut self, object_id: &str, hand: Hand, point: &GripPointDef) {
-        self.release(object_id, hand);
+    pub fn grab(&mut self, player: PlayerId, object_id: &str, hand: Hand, point: &GripPointDef) {
+        self.release(player, object_id, hand);
+
+        // Blocks a second hand from grabbing the same spot on the same
+        // object — whether that's this player's other hand (as before
+        // multiplayer) or a different player's hand entirely.
+        if self.grabs.iter().any(|((p, id, h), state)| {
+            id == object_id && !(*p == player && *h == hand) && state.point_name == point.name
+        }) {
+            log::warn!(
+                "rigid_physics: grab '{object_id}' at '{}' failed — already held by another hand",
+                point.name
+            );
+            return;
+        }
 
         let Some(state) = self.dynamic.get(object_id) else {
             log::warn!(
@@ -748,9 +809,16 @@ impl PhysicsWorld {
             );
             return;
         };
-        let anchor_ptr = self.hand_anchors[hand_index(hand)];
+        let Some(&anchor_ptr) = self.hand_anchors.get(&(player, hand)) else {
+            log::warn!(
+                "rigid_physics: grab '{object_id}' failed — no hand anchor for {player:?}/{hand:?} (ensure_player not called yet?)"
+            );
+            return;
+        };
         if anchor_ptr.is_null() {
-            log::warn!("rigid_physics: grab '{object_id}' failed — no hand anchor for {hand:?}");
+            log::warn!(
+                "rigid_physics: grab '{object_id}' failed — hand anchor for {player:?}/{hand:?} is null"
+            );
             return;
         }
 
@@ -812,7 +880,7 @@ impl PhysicsWorld {
         }
 
         self.grabs.insert(
-            (object_id.to_string(), hand),
+            (player, object_id.to_string(), hand),
             GrabState {
                 joint,
                 point_name: point.name.clone(),
@@ -880,20 +948,20 @@ impl PhysicsWorld {
         }
     }
 
-    pub fn release(&mut self, object_id: &str, hand: Hand) {
-        if let Some(state) = self.grabs.remove(&(object_id.to_string(), hand)) {
+    pub fn release(&mut self, player: PlayerId, object_id: &str, hand: Hand) {
+        if let Some(state) = self.grabs.remove(&(player, object_id.to_string(), hand)) {
             unsafe { physx_sys::PxJoint_release_mut(state.joint) };
         }
     }
 
-    pub fn held_by(&self, hand: Hand) -> Option<(&str, &str)> {
+    pub fn held_by(&self, player: PlayerId, hand: Hand) -> Option<(&str, &str)> {
         self.grabs
             .iter()
-            .find(|((_, h), _)| *h == hand)
-            .map(|((id, _), state)| (id.as_str(), state.point_name.as_str()))
+            .find(|((p, _, h), _)| *p == player && *h == hand)
+            .map(|((_, id, _), state)| (id.as_str(), state.point_name.as_str()))
     }
 
-    pub fn step(&mut self, dt: f32, scene: &mut Scene, rig: &PlayerRig) {
+    pub fn step(&mut self, dt: f32, scene: &mut Scene, rigs: &HashMap<PlayerId, PlayerRig>) {
         for (id, &ptr) in &self.kinematic {
             let Some(obj) = scene.find_object(id) else {
                 continue;
@@ -903,11 +971,13 @@ impl PhysicsWorld {
             unsafe { (*ptr).set_kinematic_target(&target) };
         }
 
-        for hand in [Hand::Left, Hand::Right] {
-            let ptr = self.hand_anchors[hand_index(hand)];
+        for (&(player, hand), &ptr) in &self.hand_anchors {
             if ptr.is_null() {
                 continue;
             }
+            let Some(rig) = rigs.get(&player) else {
+                continue;
+            };
             let grip = rig.hand_grip(hand);
             let target = to_px_transform(grip.position, grip.rotation);
 
