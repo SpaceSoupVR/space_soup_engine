@@ -1,11 +1,12 @@
 use anyhow::Result;
 use glam::{Quat, Vec3};
 use log::{info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::animation::{sample, AnimationPlayer};
 use crate::attach::{Attachment, AttachmentTable};
+use crate::audio::SoundEngine;
 use crate::events::{Hand, InputFrame};
 use crate::locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget};
 use crate::manifest::Manifest;
@@ -13,7 +14,8 @@ use crate::physics::{Aabb, CollisionEvent, CollisionTracker};
 use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
 use crate::scene::{
-    BindingScope, Color3, CuboidStyle, GameObject, GripPointDef, MeshRef, PlayMode, Scene,
+    BindingScope, Color3, CuboidStyle, GameObject, GripPointDef, LightKind, MeshRef, PlayMode,
+    Scene,
 };
 use crate::script::{EngineCommand, ScriptHost};
 
@@ -37,6 +39,19 @@ pub struct RenderMesh {
     pub scale: Vec3,
 }
 
+#[derive(Debug, Clone)]
+pub struct RenderLight {
+    pub id: String,
+    pub position: Vec3,
+    /// Aim direction for `Spot` lights (derived from `cuboid.rotation`); unused for `Point`.
+    pub direction: Vec3,
+    pub kind: LightKind,
+    pub color: Color3,
+    pub intensity: f32,
+    pub range: f32,
+    pub cone_angle_deg: f32,
+}
+
 pub struct GameRuntime {
     game_dir: PathBuf,
     manifest: Manifest,
@@ -49,12 +64,15 @@ pub struct GameRuntime {
     anim_queues: HashMap<String, Vec<String>>,
     collisions: CollisionTracker,
     rigid_physics: PhysicsWorld,
+    sound_engine: SoundEngine,
 
     pub rig: PlayerRig,
     pub attachments: AttachmentTable,
     pub locomotion: Locomotion,
 
     pending_scene_change: Option<String>,
+    sound_play_requests: HashSet<String>,
+    sound_stop_requests: HashSet<String>,
 }
 
 impl GameRuntime {
@@ -72,10 +90,13 @@ impl GameRuntime {
             anim_queues: HashMap::new(),
             collisions: CollisionTracker::new(),
             rigid_physics: PhysicsWorld::new(),
+            sound_engine: SoundEngine::new(),
             rig: PlayerRig::new(),
             attachments: AttachmentTable::new(),
             locomotion: Locomotion::new(LocomotionMode::Smooth),
             pending_scene_change: None,
+            sound_play_requests: HashSet::new(),
+            sound_stop_requests: HashSet::new(),
         };
 
         rt.compile_scripts();
@@ -90,8 +111,12 @@ impl GameRuntime {
         Ok(rt)
     }
 
-    pub fn render_lists(&self) -> (Vec<RenderCuboid>, Vec<RenderMesh>) {
-        (self.collect_render_cuboids(), self.collect_render_meshes())
+    pub fn render_lists(&self) -> (Vec<RenderCuboid>, Vec<RenderMesh>, Vec<RenderLight>) {
+        (
+            self.collect_render_cuboids(),
+            self.collect_render_meshes(),
+            self.collect_render_lights(),
+        )
     }
 
     fn setup_scene_attachments(&mut self) {
@@ -170,7 +195,7 @@ impl GameRuntime {
         rig: PlayerRig,
         locomotion_input: &LocomotionInput,
         teleport_target: Option<TeleportTarget>,
-    ) -> (Vec<RenderCuboid>, Vec<RenderMesh>, Option<String>) {
+    ) -> (Vec<RenderCuboid>, Vec<RenderMesh>, Vec<RenderLight>, Option<String>) {
         self.pending_scene_change = None;
         self.rig = rig;
 
@@ -190,9 +215,22 @@ impl GameRuntime {
 
         self.rigid_physics.step(dt, &mut self.scene, &self.rig);
 
+        let (listener_pos, listener_rot) = self.world_head_transform();
+        self.sound_engine.update(
+            &self.game_dir,
+            &self.scene.objects,
+            &self.sound_play_requests,
+            &self.sound_stop_requests,
+            listener_pos,
+            listener_rot,
+        );
+        self.sound_play_requests.clear();
+        self.sound_stop_requests.clear();
+
         let cuboids = self.collect_render_cuboids();
         let meshes = self.collect_render_meshes();
-        (cuboids, meshes, self.pending_scene_change.take())
+        let lights = self.collect_render_lights();
+        (cuboids, meshes, lights, self.pending_scene_change.take())
     }
 
     /// Snaps the player's height to the ground directly beneath them and blocks horizontal
@@ -538,6 +576,26 @@ impl GameRuntime {
                 EngineCommand::ReleaseGrip { id, hand } => {
                     self.rigid_physics.release(&id, hand);
                 }
+                EngineCommand::PlaySound { id } => {
+                    self.sound_play_requests.insert(id);
+                }
+                EngineCommand::StopSound { id } => {
+                    self.sound_stop_requests.insert(id);
+                }
+                EngineCommand::SetLightIntensity { id, intensity } => {
+                    if let Some(o) = self.scene.find_object_mut(&id) {
+                        if let Some(light) = o.light.as_mut() {
+                            light.intensity = intensity;
+                        }
+                    }
+                }
+                EngineCommand::SetSoundPitch { id, pitch } => {
+                    if let Some(o) = self.scene.find_object_mut(&id) {
+                        if let Some(sound) = o.sound.as_mut() {
+                            sound.pitch = pitch;
+                        }
+                    }
+                }
             }
         }
     }
@@ -582,6 +640,34 @@ impl GameRuntime {
                 })
             })
             .collect()
+    }
+
+    fn collect_render_lights(&self) -> Vec<RenderLight> {
+        // Unlike cuboids/meshes, `hidden` only suppresses a visible body —
+        // a light marker object still shines even though it draws nothing.
+        self.scene
+            .objects
+            .iter()
+            .filter_map(|o| {
+                let light = o.light.as_ref()?;
+                Some(RenderLight {
+                    id: o.id.clone(),
+                    position: o.cuboid.position,
+                    direction: o.cuboid.rotation * Vec3::NEG_Z,
+                    kind: light.kind,
+                    color: light.color,
+                    intensity: light.intensity,
+                    range: light.range,
+                    cone_angle_deg: light.cone_angle_deg,
+                })
+            })
+            .collect()
+    }
+
+    /// One-off, non-spatial playback for editor authoring — hear a clip at a
+    /// given volume/pitch immediately, without needing a listener or play-mode.
+    pub fn preview_sound(&mut self, clip: &str, volume: f32, pitch: f32) {
+        self.sound_engine.preview(&self.game_dir, clip, volume, pitch);
     }
 
     pub fn scene(&self) -> &Scene {
