@@ -77,6 +77,20 @@ pub enum EngineCommand {
         id: String,
         hand: Hand,
     },
+    PlaySound {
+        id: String,
+    },
+    StopSound {
+        id: String,
+    },
+    SetLightIntensity {
+        id: String,
+        intensity: f32,
+    },
+    SetSoundPitch {
+        id: String,
+        pitch: f32,
+    },
 }
 
 #[derive(Default)]
@@ -405,6 +419,52 @@ fn build_engine(context: SharedContext) -> Engine {
                 .push(EngineCommand::ReleaseGrip {
                     id: id.to_string(),
                     hand: parse_hand(hand),
+                });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("play_sound", move |id: &str| {
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::PlaySound { id: id.to_string() });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("stop_sound", move |id: &str| {
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::StopSound { id: id.to_string() });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("set_light_intensity", move |id: &str, intensity: f64| {
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::SetLightIntensity {
+                    id: id.to_string(),
+                    intensity: intensity as f32,
+                });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("set_sound_pitch", move |id: &str, pitch: f64| {
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::SetSoundPitch {
+                    id: id.to_string(),
+                    pitch: pitch as f32,
                 });
         });
     }

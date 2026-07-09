@@ -65,6 +65,8 @@ pub fn spawn_hand_rig(runtime: &mut GameRuntime, hand: Hand) {
             grip_points: Vec::new(),
             slider_joint: None,
             terrain_collider: None,
+            light: None,
+            sound: None,
         };
 
         runtime.scene_mut().objects.push(obj);
