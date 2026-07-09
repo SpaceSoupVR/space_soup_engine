@@ -1,9 +1,10 @@
 use glam::{Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::events::Hand;
 use crate::rig::PlayerRig;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LocomotionMode {
     Teleport,
     #[default]
@@ -11,7 +12,7 @@ pub enum LocomotionMode {
     Disabled,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LocomotionInput {
     pub move_stick: (f32, f32),
     pub turn_stick_x: f32,
@@ -20,7 +21,7 @@ pub struct LocomotionInput {
     pub teleport_hand: Hand,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TeleportTarget {
     pub position: Vec3,
     pub valid: bool,
