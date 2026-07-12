@@ -237,11 +237,17 @@ impl Default for GripKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GripPointDef {
     pub name: String,
     #[serde(default)]
     pub kind: GripKind,
+    /// Which hand this point is authored for; only that hand grabs it in-game,
+    /// so a left-hand pose is never applied to the right hand. Defaults to
+    /// Right (`Hand`'s default) — points from before this field existed were
+    /// all authored right-handed.
+    #[serde(default)]
+    pub hand: crate::events::Hand,
     #[serde(default)]
     pub local_pos: [f32; 3],
     #[serde(default = "identity_quat_arr")]
