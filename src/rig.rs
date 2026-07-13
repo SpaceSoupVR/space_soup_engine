@@ -1,9 +1,10 @@
 use glam::{Quat, Vec3};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::events::Hand;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FingerJoint {
     Palm,
     Wrist,
@@ -103,7 +104,7 @@ impl FingerJoint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum JointId {
     Head,
     HandGrip(Hand),
@@ -132,7 +133,7 @@ impl JointId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Transform {
     pub position: Vec3,
     pub rotation: Quat,
@@ -160,7 +161,36 @@ impl Transform {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+/// Plain, JSON-safe mirror of `PlayerRig` — `serde_json` rejects non-string
+/// map keys, so the wire form is a `Vec` of pairs instead of the enum-keyed
+/// `HashMap`s `PlayerRig` uses internally. `#[serde(into/from)]` below
+/// routes (de)serialization through this automatically.
+#[derive(Serialize, Deserialize)]
+struct PlayerRigWire {
+    joints: Vec<(JointId, Transform)>,
+    hand_tracking_active: Vec<(Hand, bool)>,
+}
+
+impl From<PlayerRig> for PlayerRigWire {
+    fn from(rig: PlayerRig) -> Self {
+        Self {
+            joints: rig.joints.into_iter().collect(),
+            hand_tracking_active: rig.hand_tracking_active.into_iter().collect(),
+        }
+    }
+}
+
+impl From<PlayerRigWire> for PlayerRig {
+    fn from(wire: PlayerRigWire) -> Self {
+        Self {
+            joints: wire.joints.into_iter().collect(),
+            hand_tracking_active: wire.hand_tracking_active.into_iter().collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(into = "PlayerRigWire", from = "PlayerRigWire")]
 pub struct PlayerRig {
     pub joints: HashMap<JointId, Transform>,
     pub hand_tracking_active: HashMap<Hand, bool>,
@@ -221,5 +251,35 @@ impl PlayerRig {
 
     pub fn clear_hand_tracking(&mut self, hand: Hand) {
         self.hand_tracking_active.insert(hand, false);
+    }
+}
+
+#[cfg(test)]
+mod wire_test {
+    use super::*;
+
+    #[test]
+    fn player_rig_round_trips_through_json() {
+        let mut rig = PlayerRig::new();
+        rig.set_head(Vec3::new(1.0, 2.0, 3.0), Quat::from_rotation_y(0.5));
+        rig.set_hand_grip(Hand::Right, Vec3::new(0.1, 0.2, 0.3), Quat::IDENTITY);
+        rig.set_hand_joints(
+            Hand::Left,
+            &[(Vec3::ZERO, Quat::IDENTITY, true); FingerJoint::ALL.len()],
+        );
+
+        let json = serde_json::to_string(&rig).expect("serialize PlayerRig to JSON");
+        let restored: PlayerRig = serde_json::from_str(&json).expect("deserialize PlayerRig from JSON");
+
+        assert_eq!(restored.head(), rig.head());
+        assert_eq!(restored.hand_grip(Hand::Right), rig.hand_grip(Hand::Right));
+        assert_eq!(
+            restored.hand_tracking_active.get(&Hand::Left),
+            rig.hand_tracking_active.get(&Hand::Left)
+        );
+        assert_eq!(
+            restored.finger(Hand::Left, FingerJoint::Wrist),
+            rig.finger(Hand::Left, FingerJoint::Wrist)
+        );
     }
 }
