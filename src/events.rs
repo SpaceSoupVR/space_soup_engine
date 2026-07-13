@@ -15,9 +15,16 @@ impl Hand {
             Hand::Right => "right",
         }
     }
+
+    pub fn other(self) -> Hand {
+        match self {
+            Hand::Left => Hand::Right,
+            Hand::Right => Hand::Left,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputFrame {
     pub pointed: Vec<(String, Hand)>,
 
@@ -26,7 +33,7 @@ pub struct InputFrame {
     pub button_presses: Vec<ButtonPress>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ButtonPress {
     pub button: String,
     pub object_id: Option<String>,
