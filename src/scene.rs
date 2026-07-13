@@ -367,6 +367,101 @@ impl Default for RigidBodyDef {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum LightKind {
+    Point,
+    Spot,
+}
+
+impl Default for LightKind {
+    fn default() -> Self {
+        Self::Point
+    }
+}
+
+fn default_light_color() -> Color3 {
+    Color3(255, 255, 255, 255)
+}
+fn default_light_intensity() -> f32 {
+    1.0
+}
+fn default_light_range() -> f32 {
+    5.0
+}
+fn default_cone_angle() -> f32 {
+    45.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightDef {
+    #[serde(default)]
+    pub kind: LightKind,
+    #[serde(default = "default_light_color")]
+    pub color: Color3,
+    #[serde(default = "default_light_intensity")]
+    pub intensity: f32,
+    #[serde(default = "default_light_range")]
+    pub range: f32,
+    /// Full cone angle in degrees; only meaningful when `kind == Spot`.
+    #[serde(default = "default_cone_angle")]
+    pub cone_angle_deg: f32,
+}
+
+impl Default for LightDef {
+    fn default() -> Self {
+        Self {
+            kind: LightKind::default(),
+            color: default_light_color(),
+            intensity: default_light_intensity(),
+            range: default_light_range(),
+            cone_angle_deg: default_cone_angle(),
+        }
+    }
+}
+
+fn default_volume() -> f32 {
+    1.0
+}
+fn default_pitch() -> f32 {
+    1.0
+}
+fn default_min_distance() -> f32 {
+    1.0
+}
+fn default_max_distance() -> f32 {
+    10.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundSourceDef {
+    /// Path relative to the game dir, e.g. "sound/activate.mp3".
+    pub clip: String,
+    #[serde(default = "default_volume")]
+    pub volume: f32,
+    /// Playback speed multiplier; also shifts pitch. 1.0 = normal.
+    #[serde(default = "default_pitch")]
+    pub pitch: f32,
+    /// Full volume within this radius of the listener.
+    #[serde(default = "default_min_distance")]
+    pub min_distance: f32,
+    /// Silent beyond this radius of the listener.
+    #[serde(default = "default_max_distance")]
+    pub max_distance: f32,
+    #[serde(default)]
+    pub looping: bool,
+    /// Starts playing as soon as the scene loads, instead of waiting for a
+    /// script's `play_sound(id)` call.
+    #[serde(default)]
+    pub autoplay: bool,
+    /// If true, emission is a cone aimed along the object's `cuboid.rotation`
+    /// forward axis instead of omnidirectional.
+    #[serde(default)]
+    pub directional: bool,
+    /// Full cone angle in degrees; only meaningful when `directional`.
+    #[serde(default = "default_cone_angle")]
+    pub cone_angle_deg: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameObject {
     pub id: String,
@@ -415,6 +510,12 @@ pub struct GameObject {
 
     #[serde(default)]
     pub terrain_collider: Option<TerrainColliderDef>,
+
+    #[serde(default)]
+    pub light: Option<LightDef>,
+
+    #[serde(default)]
+    pub sound: Option<SoundSourceDef>,
 }
 
 impl GameObject {

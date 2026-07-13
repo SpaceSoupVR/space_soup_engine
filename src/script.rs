@@ -3,6 +3,8 @@ use rhai::{Dynamic, Engine, Scope, AST};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use space_soup_protocol::PlayerId;
+
 use crate::events::Hand;
 
 fn parse_hand(s: &str) -> Hand {
@@ -64,18 +66,38 @@ pub enum EngineCommand {
     GrabAtJoint {
         id: String,
         joint: String,
+        point: Option<String>,
+        player: PlayerId,
     },
     Detach {
         id: String,
+        hand: Option<Hand>,
+        player: PlayerId,
     },
     GrabAtPoint {
         id: String,
         point: String,
         hand: Hand,
+        player: PlayerId,
     },
     ReleaseGrip {
         id: String,
         hand: Hand,
+        player: PlayerId,
+    },
+    PlaySound {
+        id: String,
+    },
+    StopSound {
+        id: String,
+    },
+    SetLightIntensity {
+        id: String,
+        intensity: f32,
+    },
+    SetSoundPitch {
+        id: String,
+        pitch: f32,
     },
 }
 
@@ -85,6 +107,12 @@ pub struct ScriptContext {
     pub vars: HashMap<String, Dynamic>,
     pub object_positions: HashMap<String, (f32, f32, f32)>,
     pub rig_positions: HashMap<String, (f32, f32, f32)>,
+    /// Whichever player's turn is currently being dispatched this tick (see
+    /// `GameRuntime::update`, which processes each connected player's input
+    /// sequentially and sets this immediately beforehand) — grab/attach
+    /// Rhai bindings stamp it onto the `EngineCommand`s they push, since a
+    /// script itself has no notion of "which player" triggered it.
+    pub current_player: PlayerId,
 }
 
 pub type SharedContext = Arc<Mutex<ScriptContext>>;
@@ -165,6 +193,10 @@ impl ScriptHost {
     pub fn set_rig_position(&self, joint_name: &str, x: f32, y: f32, z: f32) {
         let mut ctx = self.context.lock().unwrap();
         ctx.rig_positions.insert(joint_name.to_string(), (x, y, z));
+    }
+
+    pub fn set_current_player(&self, player: PlayerId) {
+        self.context.lock().unwrap().current_player = player;
     }
 }
 
@@ -362,49 +394,129 @@ fn build_engine(context: SharedContext) -> Engine {
     {
         let ctx = context.clone();
         engine.register_fn("grab_at_joint", move |id: &str, joint: &str| {
-            ctx.lock()
-                .unwrap()
-                .commands
-                .push(EngineCommand::GrabAtJoint {
-                    id: id.to_string(),
-                    joint: joint.to_string(),
-                });
+            let mut ctx = ctx.lock().unwrap();
+            let player = ctx.current_player;
+            ctx.commands.push(EngineCommand::GrabAtJoint {
+                id: id.to_string(),
+                joint: joint.to_string(),
+                point: None,
+                player,
+            });
         });
     }
 
     {
         let ctx = context.clone();
+        engine.register_fn(
+            "grab_at_joint",
+            move |id: &str, joint: &str, point: &str| {
+                let mut ctx = ctx.lock().unwrap();
+                let player = ctx.current_player;
+                ctx.commands.push(EngineCommand::GrabAtJoint {
+                    id: id.to_string(),
+                    joint: joint.to_string(),
+                    point: Some(point.to_string()),
+                    player,
+                });
+            },
+        );
+    }
+
+    {
+        let ctx = context.clone();
         engine.register_fn("detach", move |id: &str| {
-            ctx.lock()
-                .unwrap()
-                .commands
-                .push(EngineCommand::Detach { id: id.to_string() });
+            let mut ctx = ctx.lock().unwrap();
+            let player = ctx.current_player;
+            ctx.commands.push(EngineCommand::Detach {
+                id: id.to_string(),
+                hand: None,
+                player,
+            });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("detach", move |id: &str, hand: &str| {
+            let mut ctx = ctx.lock().unwrap();
+            let player = ctx.current_player;
+            ctx.commands.push(EngineCommand::Detach {
+                id: id.to_string(),
+                hand: Some(parse_hand(hand)),
+                player,
+            });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("grab_at_point", move |id: &str, point: &str, hand: &str| {
-            ctx.lock()
-                .unwrap()
-                .commands
-                .push(EngineCommand::GrabAtPoint {
-                    id: id.to_string(),
-                    point: point.to_string(),
-                    hand: parse_hand(hand),
-                });
+            let mut ctx = ctx.lock().unwrap();
+            let player = ctx.current_player;
+            ctx.commands.push(EngineCommand::GrabAtPoint {
+                id: id.to_string(),
+                point: point.to_string(),
+                hand: parse_hand(hand),
+                player,
+            });
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("release_grip", move |id: &str, hand: &str| {
+            let mut ctx = ctx.lock().unwrap();
+            let player = ctx.current_player;
+            ctx.commands.push(EngineCommand::ReleaseGrip {
+                id: id.to_string(),
+                hand: parse_hand(hand),
+                player,
+            });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("play_sound", move |id: &str| {
             ctx.lock()
                 .unwrap()
                 .commands
-                .push(EngineCommand::ReleaseGrip {
+                .push(EngineCommand::PlaySound { id: id.to_string() });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("stop_sound", move |id: &str| {
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::StopSound { id: id.to_string() });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("set_light_intensity", move |id: &str, intensity: f64| {
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::SetLightIntensity {
                     id: id.to_string(),
-                    hand: parse_hand(hand),
+                    intensity: intensity as f32,
+                });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("set_sound_pitch", move |id: &str, pitch: f64| {
+            ctx.lock()
+                .unwrap()
+                .commands
+                .push(EngineCommand::SetSoundPitch {
+                    id: id.to_string(),
+                    pitch: pitch as f32,
                 });
         });
     }
