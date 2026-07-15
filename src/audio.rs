@@ -255,11 +255,13 @@ impl SoundEngine {
     }
 
     /// Plain-data snapshot of everything conceptually "playing" right now
-    /// (`object_id`, world position, linear volume, pitch, looping) — for a
-    /// server to broadcast as sound-trigger events so each connected client
-    /// can play the clip locally, correctly spatialized against its own
-    /// head, instead of the server trying to be everyone's listener at once.
-    pub fn active_sounds(&self, objects: &[GameObject]) -> Vec<(String, Vec3, f32, f32, bool)> {
+    /// (`object_id`, clip path, world position, linear volume, pitch,
+    /// looping) — for a server to broadcast as sound-trigger events so each
+    /// connected client can play the clip locally, correctly spatialized
+    /// against its own head, instead of the server trying to be everyone's
+    /// listener at once. The clip path is included since a remote client has
+    /// no other way to know which file to load.
+    pub fn active_sounds(&self, objects: &[GameObject]) -> Vec<(String, String, Vec3, f32, f32, bool)> {
         self.active
             .iter()
             .filter_map(|id| {
@@ -267,6 +269,7 @@ impl SoundEngine {
                 let sound = obj.sound.as_ref()?;
                 Some((
                     id.clone(),
+                    sound.clip.clone(),
                     obj.cuboid.position,
                     sound.volume,
                     sound.pitch,

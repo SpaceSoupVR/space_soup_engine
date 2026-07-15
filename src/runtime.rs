@@ -73,6 +73,7 @@ pub struct RenderLight {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundState {
     pub object_id: String,
+    pub clip: String,
     pub position: Vec3,
     pub volume: f32,
     pub pitch: f32,
@@ -259,6 +260,7 @@ impl GameRuntime {
                 .or_insert_with(|| Locomotion::new(LocomotionMode::Smooth));
             let prev_xz = (locomotion.player_offset.x, locomotion.player_offset.z);
             locomotion.update(dt, &frame.locomotion_input, &rig, frame.teleport_target);
+            Self::apply_wall_collision(locomotion, &self.rigid_physics, prev_xz);
             Self::apply_ground_follow(locomotion, &self.rigid_physics, prev_xz);
         }
 
@@ -305,6 +307,44 @@ impl GameRuntime {
         let meshes = self.collect_render_meshes();
         let lights = self.collect_render_lights();
         (cuboids, meshes, lights, self.pending_scene_change.take())
+    }
+
+    /// Stops horizontal movement from clipping through solid geometry: casts a ray from the
+    /// player's previous position toward wherever `locomotion.update` just moved them (at
+    /// roughly chest height, so low curbs/props don't count as walls), and if something solid
+    /// is in the way, clamps movement to just short of it instead of passing through.
+    /// `apply_ground_follow` handles the vertical/slope side of collision; this handles the
+    /// horizontal side — both read the same `prev_xz` captured before `locomotion.update`.
+    fn apply_wall_collision(locomotion: &mut Locomotion, rigid_physics: &PhysicsWorld, prev_xz: (f32, f32)) {
+        if locomotion.mode == LocomotionMode::Disabled {
+            return;
+        }
+
+        const PLAYER_RADIUS: f32 = 0.25;
+        const PROBE_HEIGHT: f32 = 1.0;
+
+        let prev = Vec3::new(prev_xz.0, locomotion.player_offset.y + PROBE_HEIGHT, prev_xz.1);
+        let curr = Vec3::new(
+            locomotion.player_offset.x,
+            locomotion.player_offset.y + PROBE_HEIGHT,
+            locomotion.player_offset.z,
+        );
+        let delta = curr - prev;
+        let dist = delta.length();
+        if dist < 1e-5 {
+            return;
+        }
+        let dir = delta / dist;
+
+        let Some((hit_point, _normal)) = rigid_physics.raycast(prev, dir, dist + PLAYER_RADIUS)
+        else {
+            return;
+        };
+
+        let clear_dist = (prev.distance(hit_point) - PLAYER_RADIUS).max(0.0);
+        let stopped = prev + dir * clear_dist;
+        locomotion.player_offset.x = stopped.x;
+        locomotion.player_offset.z = stopped.z;
     }
 
     /// Snaps the player's height to the ground directly beneath them and blocks horizontal
@@ -824,8 +864,9 @@ impl GameRuntime {
         self.sound_engine
             .active_sounds(&self.scene.objects)
             .into_iter()
-            .map(|(object_id, position, volume, pitch, looping)| SoundState {
+            .map(|(object_id, clip, position, volume, pitch, looping)| SoundState {
                 object_id,
+                clip,
                 position,
                 volume,
                 pitch,
@@ -1409,5 +1450,75 @@ mod rigid_physics_test {
             sounds[0].position
         );
         assert!(sounds[0].looping);
+    }
+
+    #[test]
+    fn wall_collision_blocks_walking_through_solid_geometry() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_wall_collision_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+
+        // A solid wall 2 units in front of the player's spawn (facing -Z).
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "wall",
+                        "cuboid": { "position": [0.0, 1.0, -2.0], "half_size": [3.0, 2.0, 0.2] },
+                        "rigid_body": { "mode": "Static", "shape": "Box" }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let player = PlayerId::new();
+        let mut rig = PlayerRig::new();
+        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+
+        let locomotion_input = LocomotionInput {
+            move_stick: (0.0, 1.0),
+            ..LocomotionInput::default()
+        };
+
+        // Walk straight ahead for 5 simulated seconds at move_speed=1.6 —
+        // enough to cover 8 units, four times the 2-unit gap to the wall, if
+        // nothing stopped it.
+        for _ in 0..300 {
+            rt.update(
+                1.0 / 60.0,
+                &one_player(
+                    player,
+                    PlayerFrameInput {
+                        rig: rig.clone(),
+                        input: InputFrame::default(),
+                        locomotion_input: locomotion_input.clone(),
+                        teleport_target: None,
+                    },
+                ),
+            );
+        }
+
+        let z = rt.locomotions[&player].player_offset.z;
+        assert!(
+            z > -2.0,
+            "player should have been stopped before reaching the wall at z=-2.0, got z={z}"
+        );
+        assert!(
+            z < -1.0,
+            "player should have walked most of the way to the wall before being stopped, got z={z}"
+        );
     }
 }
