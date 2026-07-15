@@ -189,6 +189,14 @@ fn create_hand_anchor(
         return None;
     };
     actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
+    // Hand anchors are a physics proxy for holding/dragging grabbed objects,
+    // not real world geometry — without this, player-locomotion scene
+    // queries (ground-follow, wall-collision) can raycast straight into the
+    // player's own hand (routinely right in front of their chest) and
+    // mistake it for solid ground/a wall, freezing all movement.
+    for shape in actor.get_shapes_mut() {
+        shape.set_flag(ShapeFlag::SceneQueryShape, false);
+    }
     let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
     scene.add_dynamic_actor(actor);
     materials.push(material);
@@ -750,15 +758,23 @@ impl PhysicsWorld {
     }
 
     pub fn raycast_down(&self, origin: Vec3, max_distance: f32) -> Option<(Vec3, Vec3)> {
+        self.raycast(origin, Vec3::NEG_Y, max_distance)
+    }
+
+    /// General-direction single raycast against every collider in the
+    /// scene (static and dynamic) — `raycast_down` is just this with a
+    /// fixed downward direction; player wall-collision uses this directly
+    /// with a horizontal direction instead.
+    pub fn raycast(&self, origin: Vec3, dir: Vec3, max_distance: f32) -> Option<(Vec3, Vec3)> {
         let origin_px = physx_sys::PxVec3 {
             x: origin.x,
             y: origin.y,
             z: origin.z,
         };
         let dir_px = physx_sys::PxVec3 {
-            x: 0.0,
-            y: -1.0,
-            z: 0.0,
+            x: dir.x,
+            y: dir.y,
+            z: dir.z,
         };
         let mut hit: physx_sys::PxRaycastHit = unsafe { std::mem::zeroed() };
         let hit_flags = physx_sys::PxHitFlags::Position | physx_sys::PxHitFlags::Normal;
