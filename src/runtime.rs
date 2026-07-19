@@ -68,6 +68,37 @@ pub struct RenderLight {
     pub cone_angle_deg: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderParticleEmitter {
+    pub id: String,
+    pub position: Vec3,
+    /// Forward direction (`cuboid.rotation * Vec3::NEG_Z`) — the center of
+    /// the cone particles drift into.
+    pub direction: Vec3,
+    pub particle_size: f32,
+    pub spawn_rate: f32,
+    pub color: Color3,
+    pub lifetime: f32,
+    pub speed: f32,
+    pub spread_deg: f32,
+}
+
+/// A laser beam's authoritative endpoint for this tick — genuinely dynamic
+/// (something can move into the beam's path), so unlike `RenderParticleEmitter`
+/// this is recomputed via a real PhysX raycast every tick, not just static
+/// config re-broadcast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderLaser {
+    pub id: String,
+    pub origin: Vec3,
+    pub direction: Vec3,
+    /// Where the beam visually terminates — a real raycast hit, or
+    /// `origin + direction * max_distance` if nothing was hit.
+    pub end: Vec3,
+    pub color: Color3,
+    pub beam_width: f32,
+}
+
 /// One sound conceptually playing right now (see `SoundEngine::active_sounds`
 /// for why this exists instead of the engine just playing audio itself).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,7 +259,14 @@ impl GameRuntime {
         &mut self,
         dt: f32,
         inputs: &HashMap<PlayerId, PlayerFrameInput>,
-    ) -> (Vec<RenderCuboid>, Vec<RenderMesh>, Vec<RenderLight>, Option<String>) {
+    ) -> (
+        Vec<RenderCuboid>,
+        Vec<RenderMesh>,
+        Vec<RenderLight>,
+        Vec<RenderParticleEmitter>,
+        Vec<RenderLaser>,
+        Option<String>,
+    ) {
         self.pending_scene_change = None;
 
         // Anyone tracked from a previous tick but missing from this one has
@@ -306,7 +344,16 @@ impl GameRuntime {
         let cuboids = self.collect_render_cuboids();
         let meshes = self.collect_render_meshes();
         let lights = self.collect_render_lights();
-        (cuboids, meshes, lights, self.pending_scene_change.take())
+        let particle_emitters = self.collect_render_particle_emitters();
+        let lasers = self.collect_render_lasers();
+        (
+            cuboids,
+            meshes,
+            lights,
+            particle_emitters,
+            lasers,
+            self.pending_scene_change.take(),
+        )
     }
 
     /// Stops horizontal movement from clipping through solid geometry: casts a ray from the
@@ -846,6 +893,57 @@ impl GameRuntime {
                     intensity: light.intensity,
                     range: light.range,
                     cone_angle_deg: light.cone_angle_deg,
+                })
+            })
+            .collect()
+    }
+
+    fn collect_render_particle_emitters(&self) -> Vec<RenderParticleEmitter> {
+        // Same rationale as collect_render_lights: hidden only suppresses a
+        // visible body, not a marker's effect.
+        self.scene
+            .objects
+            .iter()
+            .filter_map(|o| {
+                let pe = o.particle_emitter.as_ref()?;
+                Some(RenderParticleEmitter {
+                    id: o.id.clone(),
+                    position: o.cuboid.position,
+                    direction: o.cuboid.rotation * Vec3::NEG_Z,
+                    particle_size: pe.particle_size,
+                    spawn_rate: pe.spawn_rate,
+                    color: pe.color,
+                    lifetime: pe.lifetime,
+                    speed: pe.speed,
+                    spread_deg: pe.spread_deg,
+                })
+            })
+            .collect()
+    }
+
+    /// Casts one PhysX raycast per laser object per tick to find where its
+    /// beam actually terminates — this can't be static config like a light's
+    /// color/range, since whatever's in the beam's path can move.
+    fn collect_render_lasers(&self) -> Vec<RenderLaser> {
+        self.scene
+            .objects
+            .iter()
+            .filter_map(|o| {
+                let laser = o.laser.as_ref()?;
+                let origin = o.cuboid.position;
+                let direction = o.cuboid.rotation * Vec3::NEG_Z;
+                let end = self
+                    .rigid_physics
+                    .raycast(origin, direction, laser.max_distance)
+                    .map(|(hit_point, _normal)| hit_point)
+                    .unwrap_or(origin + direction * laser.max_distance);
+                Some(RenderLaser {
+                    id: o.id.clone(),
+                    origin,
+                    direction,
+                    end,
+                    color: laser.color,
+                    beam_width: laser.beam_width,
                 })
             })
             .collect()
