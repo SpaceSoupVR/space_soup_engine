@@ -161,10 +161,6 @@ impl Transform {
     }
 }
 
-/// Plain, JSON-safe mirror of `PlayerRig` — `serde_json` rejects non-string
-/// map keys, so the wire form is a `Vec` of pairs instead of the enum-keyed
-/// `HashMap`s `PlayerRig` uses internally. `#[serde(into/from)]` below
-/// routes (de)serialization through this automatically.
 #[derive(Serialize, Deserialize)]
 struct PlayerRigWire {
     joints: Vec<(JointId, Transform)>,
@@ -283,3 +279,4 @@ mod wire_test {
         );
     }
 }
+

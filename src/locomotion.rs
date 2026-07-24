@@ -12,11 +12,6 @@ pub enum LocomotionMode {
     Disabled,
 }
 
-/// Turning style, independent of `LocomotionMode` — movement (walk vs.
-/// teleport-hop) and turning (continuous vs. discrete) are different comfort
-/// axes in VR, not one setting. Most players who want smooth walking still
-/// want discrete snap turns (continuous rotation is the single biggest
-/// nausea trigger), so `Snap` is the default regardless of movement mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TurnMode {
     Smooth,
@@ -117,13 +112,7 @@ impl Locomotion {
         if x.abs() < DEADZONE {
             return;
         }
-        // Rescale so the turn rate ramps up smoothly from the deadzone edge
-        // instead of jumping straight to full speed the instant it's cleared.
         let magnitude = (x.abs() - DEADZONE) / (1.0 - DEADZONE);
-        // Negative x (stick left) turns left (positive yaw, matching
-        // apply_to_head's Y-up right-handed rotation convention); positive x
-        // (stick right) turns right — same direction convention
-        // update_snap_turn already used.
         self.player_yaw -= x.signum() * magnitude * self.turn_speed_deg_per_sec.to_radians() * dt;
     }
 
@@ -212,9 +201,6 @@ mod turn_test {
 
     #[test]
     fn snap_turn_moves_by_exactly_snap_turn_deg_regardless_of_movement_mode() {
-        // Smooth walking + snap turning is the default, and the combination
-        // this test exists to protect: turning must not silently fall back
-        // to continuous rotation just because movement mode is "Smooth".
         let mut loco = Locomotion::new(LocomotionMode::Smooth);
         assert_eq!(loco.turn_mode, TurnMode::Snap);
         let rig = PlayerRig::new();
@@ -226,9 +212,6 @@ mod turn_test {
             loco.player_yaw.to_degrees()
         );
 
-        // Holding the stick past the initial flick shouldn't keep adding
-        // more snaps — it only re-triggers once the stick returns past the
-        // threshold and is pushed again (edge-triggered, see update_snap_turn).
         for _ in 0..30 {
             loco.update(1.0 / 90.0, &turn_input(1.0), &rig, None);
         }
@@ -268,9 +251,6 @@ mod turn_test {
         let mut snap = Locomotion::new(LocomotionMode::Teleport);
         snap.update(1.0 / 90.0, &turn_input(1.0), &rig, None);
 
-        // Both should turn the same direction (same sign of yaw change) for
-        // the same stick input — smooth turning is a continuous version of
-        // the same convention snap-turn already used, not a reversed one.
         assert!(smooth.player_yaw < 0.0, "stick right should turn right (negative yaw), got {}", smooth.player_yaw);
         assert!(snap.player_yaw < 0.0, "stick right should turn right (negative yaw), got {}", snap.player_yaw);
     }
@@ -283,3 +263,4 @@ mod turn_test {
         assert_eq!(loco.player_yaw, 0.0, "deflection inside the deadzone shouldn't turn at all");
     }
 }
+
