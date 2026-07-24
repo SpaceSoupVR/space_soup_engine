@@ -142,10 +142,6 @@ pub struct PhysicsWorld {
     dynamic: HashMap<String, DynamicActor>,
     kinematic: HashMap<String, *mut PxRigidDynamic>,
 
-    /// One kinematic anchor per (player, hand), created lazily on first
-    /// sight of that player via `ensure_player` rather than eagerly for a
-    /// fixed player count — this is what lets N simultaneous players each
-    /// grab things with PhysX instead of just one.
     hand_anchors: HashMap<(PlayerId, Hand), *mut PxRigidDynamic>,
     grabs: HashMap<(PlayerId, String, Hand), GrabState>,
     scratch: ScratchBuffer,
@@ -189,11 +185,6 @@ fn create_hand_anchor(
         return None;
     };
     actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
-    // Hand anchors are a physics proxy for holding/dragging grabbed objects,
-    // not real world geometry — without this, player-locomotion scene
-    // queries (ground-follow, wall-collision) can raycast straight into the
-    // player's own hand (routinely right in front of their chest) and
-    // mistake it for solid ground/a wall, freezing all movement.
     for shape in actor.get_shapes_mut() {
         shape.set_flag(ShapeFlag::SceneQueryShape, false);
     }
@@ -203,8 +194,6 @@ fn create_hand_anchor(
     Some(ptr)
 }
 
-/// Walks a glTF node tree collecting `(mesh_index, world_matrix)` for every node with a mesh
-/// whose name starts with `node_filter` (all mesh nodes, if `node_filter` is `None`).
 fn collect_terrain_instances(doc: &gltf::Document, node_filter: Option<&str>) -> Vec<(usize, Mat4)> {
     fn walk(node: gltf::Node, parent: Mat4, filter: Option<&str>, out: &mut Vec<(usize, Mat4)>) {
         let local = Mat4::from_cols_array_2d(&node.transform().matrix());
@@ -234,8 +223,6 @@ fn collect_terrain_instances(doc: &gltf::Document, node_filter: Option<&str>) ->
     out
 }
 
-/// Reads a mesh's raw local-space (untransformed) positions and triangle indices, concatenated
-/// across all of its primitives.
 fn read_mesh_geometry(mesh: &gltf::Mesh, buffers: &[gltf::buffer::Data]) -> (Vec<PxVec3>, Vec<u32>) {
     let mut points = Vec::new();
     let mut indices = Vec::new();
@@ -262,8 +249,6 @@ fn read_mesh_geometry(mesh: &gltf::Mesh, buffers: &[gltf::buffer::Data]) -> (Vec
     (points, indices)
 }
 
-/// Cooks a static triangle mesh from raw local-space geometry, ready to be instanced by any
-/// number of `PxTriangleMeshGeometry` shapes with per-instance position/rotation/scale.
 fn cook_triangle_mesh(
     foundation: &mut PxFoundation,
     points: &[PxVec3],
@@ -304,9 +289,6 @@ impl PhysicsWorld {
         }
     }
 
-    /// Ensures `player` has PhysX kinematic hand anchors, creating them on
-    /// first sight. Idempotent — safe to call every tick for every active
-    /// player (`GameRuntime::update` does exactly that).
     pub fn ensure_player(&mut self, player: PlayerId) {
         for hand in [Hand::Left, Hand::Right] {
             if self.hand_anchors.contains_key(&(player, hand)) {
@@ -324,10 +306,6 @@ impl PhysicsWorld {
         }
     }
 
-    /// Tears down `player`'s hand anchors (and releases any grab they were
-    /// holding first, so we don't leave a joint referencing a freed actor) —
-    /// call this when a player disconnects, or their anchors/joints just sit
-    /// in the scene forever wasting memory.
     pub fn remove_player(&mut self, player: PlayerId) {
         let held_by_player: Vec<(PlayerId, String, Hand)> = self
             .grabs
@@ -348,9 +326,6 @@ impl PhysicsWorld {
             if ptr.is_null() {
                 continue;
             }
-            // Detach from the scene, then release the actor itself — PhysX's
-            // `removeActor` only unregisters it from simulation, it doesn't
-            // free the object.
             unsafe {
                 self.scene.remove_actor(&mut *ptr, false);
                 physx_sys::PxActor_release_mut(ptr as *mut physx_sys::PxActor);
@@ -761,10 +736,6 @@ impl PhysicsWorld {
         self.raycast(origin, Vec3::NEG_Y, max_distance)
     }
 
-    /// General-direction single raycast against every collider in the
-    /// scene (static and dynamic) — `raycast_down` is just this with a
-    /// fixed downward direction; player wall-collision uses this directly
-    /// with a horizontal direction instead.
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_distance: f32) -> Option<(Vec3, Vec3)> {
         let origin_px = physx_sys::PxVec3 {
             x: origin.x,
@@ -778,8 +749,6 @@ impl PhysicsWorld {
         };
         let mut hit: physx_sys::PxRaycastHit = unsafe { std::mem::zeroed() };
         let hit_flags = physx_sys::PxHitFlags::Position | physx_sys::PxHitFlags::Normal;
-        // filterData is taken by reference (never null) in the C++ API — a real default-
-        // constructed value must be passed, unlike filterCall/cache which tolerate null.
         let filter_data = unsafe { physx_sys::PxQueryFilterData_new() };
         let found = unsafe {
             physx_sys::PxSceneQueryExt_raycastSingle(
@@ -805,9 +774,6 @@ impl PhysicsWorld {
     pub fn grab(&mut self, player: PlayerId, object_id: &str, hand: Hand, point: &GripPointDef) {
         self.release(player, object_id, hand);
 
-        // Blocks a second hand from grabbing the same spot on the same
-        // object — whether that's this player's other hand (as before
-        // multiplayer) or a different player's hand entirely.
         if self.grabs.iter().any(|((p, id, h), state)| {
             id == object_id && !(*p == player && *h == hand) && state.point_name == point.name
         }) {
@@ -1053,3 +1019,4 @@ impl Default for PhysicsWorld {
         Self::new()
     }
 }
+

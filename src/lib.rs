@@ -7,6 +7,7 @@ pub mod locomotion;
 pub mod manifest;
 pub mod physics;
 pub mod rig;
+pub mod rig_profile;
 pub mod rigid_physics;
 pub mod runtime;
 pub mod scene;
@@ -21,6 +22,9 @@ pub use events::{ButtonPress, Hand, InputFrame};
 pub use locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget, TurnMode};
 pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
+pub use rig_profile::{
+    BoneAssignment, DeviceOffsetDef, HeightCalibrationDef, JointConstraintDef, RigProfileDef,
+};
 pub use runtime::{
     GameRuntime, PlayerFrameInput, RenderCuboid, RenderLaser, RenderLight, RenderMesh,
     RenderParticleEmitter, SoundState,
@@ -31,3 +35,4 @@ pub use scene::{
     LightDef, LightKind, MeshRef, ParticleEmitterDef, PlayMode, RigAttachmentDef, RigidBodyDef,
     Scene, SliderJointDef, SoundSourceDef, BINDING_BUTTONS,
 };
+

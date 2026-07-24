@@ -47,3 +47,4 @@ impl Default for Manifest {
         }
     }
 }
+

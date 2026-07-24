@@ -21,12 +21,6 @@ use crate::scene::{
 };
 use crate::script::{EngineCommand, ScriptHost};
 
-/// One connected player's per-tick input: their current rig (head/hand/
-/// finger transforms), controller/grab events, and locomotion input. A
-/// server aggregates one of these per connected player each tick; a single-
-/// player host (the desktop editor's preview, or quest_app before it's
-/// wired up to a remote server) just supplies one entry keyed by
-/// `PlayerId::local()`.
 #[derive(Debug, Clone)]
 pub struct PlayerFrameInput {
     pub rig: PlayerRig,
@@ -59,7 +53,6 @@ pub struct RenderMesh {
 pub struct RenderLight {
     pub id: String,
     pub position: Vec3,
-    /// Aim direction for `Spot` lights (derived from `cuboid.rotation`); unused for `Point`.
     pub direction: Vec3,
     pub kind: LightKind,
     pub color: Color3,
@@ -72,8 +65,6 @@ pub struct RenderLight {
 pub struct RenderParticleEmitter {
     pub id: String,
     pub position: Vec3,
-    /// Forward direction (`cuboid.rotation * Vec3::NEG_Z`) — the center of
-    /// the cone particles drift into.
     pub direction: Vec3,
     pub particle_size: f32,
     pub spawn_rate: f32,
@@ -83,24 +74,16 @@ pub struct RenderParticleEmitter {
     pub spread_deg: f32,
 }
 
-/// A laser beam's authoritative endpoint for this tick — genuinely dynamic
-/// (something can move into the beam's path), so unlike `RenderParticleEmitter`
-/// this is recomputed via a real PhysX raycast every tick, not just static
-/// config re-broadcast.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderLaser {
     pub id: String,
     pub origin: Vec3,
     pub direction: Vec3,
-    /// Where the beam visually terminates — a real raycast hit, or
-    /// `origin + direction * max_distance` if nothing was hit.
     pub end: Vec3,
     pub color: Color3,
     pub beam_width: f32,
 }
 
-/// One sound conceptually playing right now (see `SoundEngine::active_sounds`
-/// for why this exists instead of the engine just playing audio itself).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundState {
     pub object_id: String,
@@ -118,8 +101,6 @@ pub struct GameRuntime {
 
     script_host: ScriptHost,
     players: HashMap<String, AnimationPlayer>,
-    /// Sequential-mode animations waiting per object; the front entry starts
-    /// when the object's current animation finishes.
     anim_queues: HashMap<String, Vec<String>>,
     collisions: CollisionTracker,
     rigid_physics: PhysicsWorld,
@@ -198,11 +179,6 @@ impl GameRuntime {
                     } else {
                         Attachment::with_offset(joint_id, offset_vec, Quat::IDENTITY)
                     };
-                    // Scene-authored (non-grab) attachments aren't tied to
-                    // any one connecting player; bind them to the fixed
-                    // local placeholder id. Revisit if these ever need to
-                    // be instanced per-player (e.g. a decoration each player
-                    // sees on their own hand) rather than shared/singular.
                     self.attachments.attach(&obj_id, PlayerId::local(), att);
                     info!("setup_scene_attachments: '{obj_id}' → '{joint_name}'");
                 }
@@ -252,9 +228,6 @@ impl GameRuntime {
         &self.game_dir
     }
 
-    /// Advances the whole simulation by one tick given every connected
-    /// player's current input. A single-player host just passes a
-    /// one-entry map (see `PlayerFrameInput`'s doc comment).
     pub fn update(
         &mut self,
         dt: f32,
@@ -269,9 +242,6 @@ impl GameRuntime {
     ) {
         self.pending_scene_change = None;
 
-        // Anyone tracked from a previous tick but missing from this one has
-        // disconnected — tear down their hand anchors/grabs/attachments
-        // rather than leaking them forever.
         let disconnected: Vec<PlayerId> = self
             .rigs
             .keys()
@@ -318,15 +288,6 @@ impl GameRuntime {
 
         self.rigid_physics.step(dt, &mut self.scene, &self.rigs);
 
-        // A real kira listener only makes sense with exactly one player —
-        // the single-player case (quest_app/editor) behaves exactly as
-        // before. With zero or several simultaneous players there's no one
-        // "correct" listener position, so skip real device driving entirely
-        // (rather than arbitrarily picking one player, which would be
-        // actively wrong — everyone else's sounds would be positioned
-        // relative to the wrong head); play/stop/`active` bookkeeping still
-        // runs regardless, via `SoundEngine::active_sounds`, for a future
-        // per-player sound-trigger broadcast to consume.
         let listener = match inputs.len() {
             1 => inputs.keys().next().map(|&p| self.world_head_transform(p)),
             _ => None,
@@ -356,12 +317,6 @@ impl GameRuntime {
         )
     }
 
-    /// Stops horizontal movement from clipping through solid geometry: casts a ray from the
-    /// player's previous position toward wherever `locomotion.update` just moved them (at
-    /// roughly chest height, so low curbs/props don't count as walls), and if something solid
-    /// is in the way, clamps movement to just short of it instead of passing through.
-    /// `apply_ground_follow` handles the vertical/slope side of collision; this handles the
-    /// horizontal side — both read the same `prev_xz` captured before `locomotion.update`.
     fn apply_wall_collision(locomotion: &mut Locomotion, rigid_physics: &PhysicsWorld, prev_xz: (f32, f32)) {
         if locomotion.mode == LocomotionMode::Disabled {
             return;
@@ -394,8 +349,6 @@ impl GameRuntime {
         locomotion.player_offset.z = stopped.z;
     }
 
-    /// Snaps the player's height to the ground directly beneath them and blocks horizontal
-    /// movement into slopes steeper than `Locomotion::max_climb_angle_deg`.
     fn apply_ground_follow(locomotion: &mut Locomotion, rigid_physics: &PhysicsWorld, prev_xz: (f32, f32)) {
         if locomotion.mode == LocomotionMode::Disabled {
             return;
@@ -468,7 +421,6 @@ impl GameRuntime {
 
         for id in finished {
             self.players.remove(&id);
-            // Sequential bindings: start the next queued animation, if any.
             let next = self
                 .anim_queues
                 .get_mut(&id)
@@ -504,13 +456,6 @@ impl GameRuntime {
         }
     }
 
-    /// Publishes `player`'s rig positions under the legacy unprefixed script
-    /// keys (`"head"`, `"left_grip"`, ...), transiently, immediately before
-    /// dispatching that same player's input — so a script reacting to "my
-    /// own" hand during its own dispatch pass keeps working unchanged. Not
-    /// player-scoped/namespaced yet: if two players' scripts ever need to
-    /// read each other's rig positions this needs real per-player keys
-    /// (e.g. `p{uuid}_head`) instead, deferred until something needs it.
     fn update_rig_position_cache(&self, player: PlayerId) {
         let Some(rig) = self.rigs.get(&player) else {
             return;
@@ -614,9 +559,6 @@ impl GameRuntime {
         self.dispatch_animation_bindings(input);
     }
 
-    /// Fires `animation_bindings` matching this frame's button presses.
-    /// Contextual bindings require the press to carry the bound object's id
-    /// (i.e. the player is holding it); global bindings fire from anywhere.
     fn dispatch_animation_bindings(&mut self, input: &InputFrame) {
         let mut to_play: Vec<(String, String, PlayMode)> = Vec::new();
         for press in &input.button_presses {
@@ -727,9 +669,6 @@ impl GameRuntime {
                         self.scene.find_object(&id),
                     ) {
                         (Some(joint_tf), Some(obj)) => {
-                            // Prefer the authored grip point (as edited in the Grab Pose Editor)
-                            // so the object snaps into a consistent grip; fall back to freezing
-                            // the live relative pose for objects with no matching grip point.
                             let matched_point = point.as_deref().and_then(|p| obj.grip_point(p));
                             if let Some(g) = matched_point {
                                 if self
@@ -830,9 +769,6 @@ impl GameRuntime {
             }
         }
 
-        // Kinematic holds (grab_at_joint) also carry a grip point name when
-        // one was authored, so the held hand mesh can snap to the same point
-        // the object itself is attached at rather than a stale separate pose.
         let (id, point_name) = self
             .attachments
             .grip_point_at_joint(player, JointId::HandGrip(hand))?;
@@ -877,8 +813,6 @@ impl GameRuntime {
     }
 
     fn collect_render_lights(&self) -> Vec<RenderLight> {
-        // Unlike cuboids/meshes, `hidden` only suppresses a visible body —
-        // a light marker object still shines even though it draws nothing.
         self.scene
             .objects
             .iter()
@@ -899,8 +833,6 @@ impl GameRuntime {
     }
 
     fn collect_render_particle_emitters(&self) -> Vec<RenderParticleEmitter> {
-        // Same rationale as collect_render_lights: hidden only suppresses a
-        // visible body, not a marker's effect.
         self.scene
             .objects
             .iter()
@@ -921,9 +853,6 @@ impl GameRuntime {
             .collect()
     }
 
-    /// Casts one PhysX raycast per laser object per tick to find where its
-    /// beam actually terminates — this can't be static config like a light's
-    /// color/range, since whatever's in the beam's path can move.
     fn collect_render_lasers(&self) -> Vec<RenderLaser> {
         self.scene
             .objects
@@ -949,15 +878,10 @@ impl GameRuntime {
             .collect()
     }
 
-    /// One-off, non-spatial playback for editor authoring — hear a clip at a
-    /// given volume/pitch immediately, without needing a listener or play-mode.
     pub fn preview_sound(&mut self, clip: &str, volume: f32, pitch: f32) {
         self.sound_engine.preview(&self.game_dir, clip, volume, pitch);
     }
 
-    /// Everything conceptually playing right now — for a server to
-    /// broadcast as sound-trigger events instead of trying to be everyone's
-    /// listener at once (see `SoundEngine::active_sounds`).
     pub fn active_sounds(&self) -> Vec<SoundState> {
         self.sound_engine
             .active_sounds(&self.scene.objects)
@@ -986,13 +910,6 @@ mod rigid_physics_test {
     use super::*;
     use std::sync::Mutex;
 
-    // PhysX's `PxFoundation` is a process-wide singleton (its C++ side
-    // asserts `mRefCount == 0` on teardown) — it isn't safe for two tests'
-    // `GameRuntime`s to exist concurrently in the same process. Rust's test
-    // harness runs `#[test]`s in parallel by default, so every test in this
-    // module that creates a `GameRuntime` (and therefore a `PhysicsWorld`)
-    // must hold this lock for its whole body to force them to run one at a
-    // time instead of tripping that assertion.
     static PHYSX_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn frame(rig: PlayerRig, input: InputFrame) -> PlayerFrameInput {
@@ -1190,10 +1107,6 @@ mod rigid_physics_test {
         );
     }
 
-    /// Proves `AttachmentTable`'s `(String, PlayerId, JointId)` keying
-    /// actually disambiguates two different players' identical
-    /// `JointId::HandGrip(Hand::Right)` — not just that it compiles, but
-    /// that each object tracks *its own* player's hand and nothing else's.
     #[test]
     fn two_players_grab_different_objects_via_attachments() {
         let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1234,7 +1147,6 @@ mod rigid_physics_test {
         let player_a = PlayerId::new();
         let player_b = PlayerId::new();
 
-        // Both players grab their own gun in the same tick.
         let mut rig_a = PlayerRig::new();
         rig_a.set_hand_grip(Hand::Right, Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY);
         let mut grab_a = InputFrame::default();
@@ -1254,8 +1166,6 @@ mod rigid_physics_test {
         inputs.insert(player_b, frame(rig_b, grab_b));
         rt.update(dt, &inputs);
 
-        // Now move each player's hand to a distinct new position, in the
-        // same tick, with no new grab/release events.
         let mut rig_a = PlayerRig::new();
         rig_a.set_hand_grip(Hand::Right, Vec3::new(0.0, 2.0, 0.0), Quat::IDENTITY);
         let mut rig_b = PlayerRig::new();
@@ -1283,9 +1193,6 @@ mod rigid_physics_test {
         );
     }
 
-    /// Proves the PhysX `hand_anchors`/`grabs` rework in `rigid_physics.rs`
-    /// actually drives two different players' hand anchors independently —
-    /// the highest-risk part of the multi-player refactor.
     #[test]
     fn two_players_hand_anchors_drive_independently() {
         let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1353,8 +1260,6 @@ mod rigid_physics_test {
         inputs.insert(player_b, frame(rig_b, grab_b));
         rt.update(dt, &inputs);
 
-        // Move only player A's hand downward over many ticks; keep player
-        // B's hand fixed at box_b's original spawn position.
         for i in 1..=30 {
             let mut rig_a = PlayerRig::new();
             rig_a.set_hand_grip(
@@ -1384,12 +1289,6 @@ mod rigid_physics_test {
         );
     }
 
-    /// Proves a disconnected player's PhysX hand anchors/grabs are torn down
-    /// cleanly (`PhysicsWorld::remove_player`) rather than corrupting the
-    /// scene — the real risk with manual PhysX actor removal. If this were
-    /// wrong (e.g. a dangling joint left referencing a freed actor, or a
-    /// double-release), it would show up as a crash (PhysX assertion/SIGABRT)
-    /// somewhere in this test, not a normal assertion failure.
     #[test]
     fn disconnected_player_is_cleaned_up_without_corrupting_the_scene() {
         let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1444,8 +1343,6 @@ mod rigid_physics_test {
             .push(("box_a".to_string(), Hand::Right, "handle".to_string()));
         rt.update(dt, &one_player(player_a, frame(rig_a, grab_a)));
 
-        // Let the driven joint settle (it's a spring-damper, not an instant
-        // snap) before reading a "currently held" baseline height.
         for _ in 0..10 {
             let mut rig_a = PlayerRig::new();
             rig_a.set_hand_grip(Hand::Right, Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY);
@@ -1457,8 +1354,6 @@ mod rigid_physics_test {
             "expected box_a to be held near y=3.0 once settled, got {held_y}"
         );
 
-        // Player A vanishes (absent from the next tick's inputs) — this
-        // should tear down their hand anchor and release box_a's joint.
         for _ in 0..30 {
             rt.update(dt, &HashMap::new());
         }
@@ -1468,8 +1363,6 @@ mod rigid_physics_test {
             "expected box_a to fall freely once its holder disconnected and the grab joint was released, went from {held_y} to {after_drop_y}"
         );
 
-        // A brand new player joins afterward and grabs a different object —
-        // proves the scene wasn't left in a broken state by the removal.
         let player_c = PlayerId::new();
         let mut rig_c = PlayerRig::new();
         rig_c.set_hand_grip(Hand::Right, Vec3::new(10.0, 3.0, 0.0), Quat::IDENTITY);
@@ -1495,11 +1388,6 @@ mod rigid_physics_test {
         );
     }
 
-    /// Proves sound-trigger bookkeeping (`active_sounds`) works even with
-    /// zero connected players and no real audio device — the whole point
-    /// of decoupling it from kira's device-gated playback, so a headless
-    /// server can still report "this should be playing" for clients to play
-    /// locally against their own head later.
     #[test]
     fn active_sounds_tracked_without_a_listener() {
         let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1531,8 +1419,6 @@ mod rigid_physics_test {
         let mut rt = GameRuntime::load(&dir).unwrap();
         std::fs::remove_dir_all(&dir).ok();
 
-        // Zero connected players this tick — proves this doesn't depend on
-        // having a listener at all.
         rt.update(1.0 / 60.0, &HashMap::new());
 
         let sounds = rt.active_sounds();
@@ -1563,7 +1449,6 @@ mod rigid_physics_test {
         )
         .unwrap();
 
-        // A solid wall 2 units in front of the player's spawn (facing -Z).
         std::fs::write(
             scenes_dir.join("test.json"),
             r#"{
@@ -1591,9 +1476,6 @@ mod rigid_physics_test {
             ..LocomotionInput::default()
         };
 
-        // Walk straight ahead for 5 simulated seconds at move_speed=1.6 —
-        // enough to cover 8 units, four times the 2-unit gap to the wall, if
-        // nothing stopped it.
         for _ in 0..300 {
             rt.update(
                 1.0 / 60.0,
@@ -1620,3 +1502,4 @@ mod rigid_physics_test {
         );
     }
 }
+

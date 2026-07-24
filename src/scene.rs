@@ -137,13 +137,9 @@ impl Animation {
     }
 }
 
-/// How a bound animation is started relative to whatever is already playing
-/// on the object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayMode {
-    /// Fire immediately, replacing the object's current animation.
     Simultaneous,
-    /// Queue behind the currently playing animation; starts when it finishes.
     Sequential,
 }
 
@@ -153,12 +149,9 @@ impl Default for PlayMode {
     }
 }
 
-/// When a controller-button binding is allowed to trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BindingScope {
-    /// Only while the player is holding this object.
     ContextualHold,
-    /// Anywhere, regardless of what (if anything) is held.
     GlobalAnywhere,
 }
 
@@ -168,15 +161,11 @@ impl Default for BindingScope {
     }
 }
 
-/// Canonical controller button identifiers used by `AnimationBinding::button`.
 pub const BINDING_BUTTONS: [&str; 6] = ["btn_a", "btn_b", "btn_x", "btn_y", "trigger", "grip"];
 
-/// Maps a controller button press to an animation on the owning `GameObject`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnimationBinding {
-    /// "btn_a", "btn_b", "btn_x", "btn_y", "trigger", "grip", ...
     pub button: String,
-    /// Name of the animation (in the same object's `animations`) to play.
     pub animation: String,
     #[serde(default)]
     pub play_mode: PlayMode,
@@ -242,10 +231,6 @@ pub struct GripPointDef {
     pub name: String,
     #[serde(default)]
     pub kind: GripKind,
-    /// Which hand this point is authored for; only that hand grabs it in-game,
-    /// so a left-hand pose is never applied to the right hand. Defaults to
-    /// Right (`Hand`'s default) — points from before this field existed were
-    /// all authored right-handed.
     #[serde(default)]
     pub hand: crate::events::Hand,
     #[serde(default)]
@@ -257,10 +242,6 @@ pub struct GripPointDef {
     pub hand_offset_scale: [f32; 3],
     #[serde(default)]
     pub finger_curl: HashMap<String, f32>,
-    /// Overrides the client's default grab-detection proximity radius
-    /// (meters) for this grip point specifically — a small fiddly grip and a
-    /// large one plausibly want different tolerances. `None` keeps the
-    /// client's global default.
     #[serde(default)]
     pub grab_range: Option<f32>,
 }
@@ -408,7 +389,6 @@ pub struct LightDef {
     pub intensity: f32,
     #[serde(default = "default_light_range")]
     pub range: f32,
-    /// Full cone angle in degrees; only meaningful when `kind == Spot`.
     #[serde(default = "default_cone_angle")]
     pub cone_angle_deg: f32,
 }
@@ -440,30 +420,21 @@ fn default_max_distance() -> f32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundSourceDef {
-    /// Path relative to the game dir, e.g. "sound/activate.mp3".
     pub clip: String,
     #[serde(default = "default_volume")]
     pub volume: f32,
-    /// Playback speed multiplier; also shifts pitch. 1.0 = normal.
     #[serde(default = "default_pitch")]
     pub pitch: f32,
-    /// Full volume within this radius of the listener.
     #[serde(default = "default_min_distance")]
     pub min_distance: f32,
-    /// Silent beyond this radius of the listener.
     #[serde(default = "default_max_distance")]
     pub max_distance: f32,
     #[serde(default)]
     pub looping: bool,
-    /// Starts playing as soon as the scene loads, instead of waiting for a
-    /// script's `play_sound(id)` call.
     #[serde(default)]
     pub autoplay: bool,
-    /// If true, emission is a cone aimed along the object's `cuboid.rotation`
-    /// forward axis instead of omnidirectional.
     #[serde(default)]
     pub directional: bool,
-    /// Full cone angle in degrees; only meaningful when `directional`.
     #[serde(default = "default_cone_angle")]
     pub cone_angle_deg: f32,
 }
@@ -499,8 +470,6 @@ pub struct ParticleEmitterDef {
     pub lifetime: f32,
     #[serde(default = "default_particle_speed")]
     pub speed: f32,
-    /// Half-angle (degrees) of the random cone around the object's forward
-    /// direction (`cuboid.rotation * Vec3::NEG_Z`) each particle drifts into.
     #[serde(default = "default_spread_deg")]
     pub spread_deg: f32,
 }
@@ -680,15 +649,6 @@ impl Scene {
     }
 }
 
-/// Guarantees every object's `id` is unique, renaming later duplicates —
-/// `find_object`/`find_object_mut` return only the *first* match by id, so a
-/// scene with a duplicate id doesn't just mis-render (mesh_cache and every
-/// other id-keyed lookup silently collapse onto that one object too); this
-/// closes off the whole class rather than special-casing rendering.
-/// Authored scene JSON isn't only ever produced by the editor's own
-/// duplicate/place-model flows (which already assign fresh ids) — hand
-/// edits and external tooling can introduce a collision, so this is
-/// enforced at load time instead of trusted from the source.
 fn dedupe_object_ids(objects: &mut [GameObject], source: &str) {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for obj in objects.iter_mut() {
@@ -785,9 +745,6 @@ mod dedupe_object_ids_test {
         let ids: Vec<&str> = scene.objects.iter().map(|o| o.id.as_str()).collect();
         assert_eq!(ids, vec!["cloud", "cloud_2", "cloud_3"]);
 
-        // Every renamed object must still be independently addressable by
-        // its new id — the whole point is that no object silently
-        // collapses onto another id-keyed lookup.
         for id in &ids {
             assert!(scene.find_object(id).is_some());
         }
@@ -838,3 +795,4 @@ mod particle_and_laser_scene_test {
         assert!(red.laser.is_some());
     }
 }
+
