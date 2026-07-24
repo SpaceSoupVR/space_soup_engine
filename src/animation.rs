@@ -119,3 +119,4 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
         .round()
         .clamp(0.0, 255.0) as u8
 }
+

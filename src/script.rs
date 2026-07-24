@@ -107,11 +107,6 @@ pub struct ScriptContext {
     pub vars: HashMap<String, Dynamic>,
     pub object_positions: HashMap<String, (f32, f32, f32)>,
     pub rig_positions: HashMap<String, (f32, f32, f32)>,
-    /// Whichever player's turn is currently being dispatched this tick (see
-    /// `GameRuntime::update`, which processes each connected player's input
-    /// sequentially and sets this immediately beforehand) — grab/attach
-    /// Rhai bindings stamp it onto the `EngineCommand`s they push, since a
-    /// script itself has no notion of "which player" triggered it.
     pub current_player: PlayerId,
 }
 
@@ -557,3 +552,4 @@ fn build_engine(context: SharedContext) -> Engine {
 
     engine
 }
+

@@ -15,35 +15,15 @@ struct ActiveSound {
     handle: StaticSoundHandle,
 }
 
-/// Drives positional sound playback for the scene. Distance-based volume
-/// falloff and stereo panning are handled by kira's spatial tracks; the
-/// forward-cone attenuation for `directional` sources is computed here and
-/// layered on top as an extra volume multiplier.
 pub struct SoundEngine {
     manager: Option<AudioManager>,
     listener: Option<ListenerHandle>,
     clips: HashMap<String, StaticSoundData>,
     playing: HashMap<String, ActiveSound>,
     autostarted: HashSet<String>,
-    /// Device-independent "this object's sound should conceptually be
-    /// playing" bookkeeping, tracked even with no audio device at all (e.g.
-    /// a headless multiplayer server) — `kira`'s `AudioManager` is a single
-    /// local audio device, so a shared server process can never correctly
-    /// be *the* listener for several independent remote players at once.
-    /// This is what a server-side broadcast of sound-trigger events (each
-    /// client then playing the clip locally, spatialized against its own
-    /// head) would read from instead — see `active_sounds`. One known gap:
-    /// a one-shot (non-looping) sound only leaves this set when we detect
-    /// real kira playback finishing, so on a headless server (no `playing`
-    /// entry ever created) it stays "active" until explicitly stopped or an
-    /// autoplay loop restarts it, rather than auto-expiring after its clip's
-    /// natural duration.
     active: HashSet<String>,
 }
 
-// `kira` depends on a different semver-major of `glam` than the rest of this
-// workspace, so its `From<glam::Vec3>` conversions don't apply to our `Vec3`.
-// Convert through `mint` explicitly instead of bumping `glam` workspace-wide.
 fn to_mint_vec3(v: Vec3) -> mint::Vector3<f32> {
     mint::Vector3 { x: v.x, y: v.y, z: v.z }
 }
@@ -63,10 +43,6 @@ fn linear_to_decibels(linear: f32) -> Decibels {
     }
 }
 
-/// Smooth cone falloff: full volume through most of the cone's interior
-/// (inside the inner 70% of its half-angle), easing down to a quiet-but-
-/// audible floor by the outer edge, rather than clicking on/off at the
-/// boundary.
 fn cone_attenuation(forward: Vec3, to_listener: Vec3, cone_angle_deg: f32) -> f32 {
     const OFF_AXIS_FLOOR: f32 = 0.15;
     const INNER_FRACTION: f32 = 0.7;
@@ -175,11 +151,6 @@ impl SoundEngine {
         self.playing.insert(obj.id.clone(), ActiveSound { track, handle });
     }
 
-    /// `listener` is `None` when there's no single correct listener position
-    /// this tick (zero players, or more than one — see the type's doc
-    /// comment): play/stop/`active` bookkeeping still runs unconditionally,
-    /// but real kira device driving (positioning, volume, cone attenuation)
-    /// is skipped since there's nothing sensible to position it relative to.
     pub fn update(
         &mut self,
         game_dir: &Path,
@@ -212,8 +183,6 @@ impl SoundEngine {
                     self.autostarted.insert(obj.id.clone());
                 }
                 self.active.insert(obj.id.clone());
-                // Dropping any previous handles tears down their track/sound,
-                // so a re-trigger while already playing just restarts cleanly.
                 self.playing.remove(&obj.id);
                 self.start(game_dir, obj);
             }
@@ -254,13 +223,6 @@ impl SoundEngine {
         }
     }
 
-    /// Plain-data snapshot of everything conceptually "playing" right now
-    /// (`object_id`, clip path, world position, linear volume, pitch,
-    /// looping) — for a server to broadcast as sound-trigger events so each
-    /// connected client can play the clip locally, correctly spatialized
-    /// against its own head, instead of the server trying to be everyone's
-    /// listener at once. The clip path is included since a remote client has
-    /// no other way to know which file to load.
     pub fn active_sounds(&self, objects: &[GameObject]) -> Vec<(String, String, Vec3, f32, f32, bool)> {
         self.active
             .iter()
@@ -279,8 +241,6 @@ impl SoundEngine {
             .collect()
     }
 
-    /// One-off, non-spatial playback for editor authoring — hear pitch/volume
-    /// changes immediately without needing a listener or play-mode.
     pub fn preview(&mut self, game_dir: &Path, clip: &str, volume: f32, pitch: f32) {
         let Some(data) = self.load_clip(game_dir, clip) else {
             return;
@@ -324,8 +284,6 @@ mod falloff_test {
 
     #[test]
     fn cone_attenuation_eases_smoothly_across_the_edge() {
-        // Just inside the inner cone vs. just past the outer edge shouldn't
-        // jump straight from full volume to the floor.
         let half_angle_deg: f32 = 30.0;
         let just_inside = Quat::from_rotation_y((half_angle_deg * 0.6).to_radians()) * Vec3::NEG_Z;
         let just_outside = Quat::from_rotation_y((half_angle_deg * 0.9).to_radians()) * Vec3::NEG_Z;
@@ -353,3 +311,4 @@ mod falloff_test {
         assert!(loud.0 > quiet.0, "louder linear volume should be more decibels");
     }
 }
+
