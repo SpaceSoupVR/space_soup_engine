@@ -371,6 +371,10 @@ impl Default for RigidBodyDef {
 pub enum LightKind {
     Point,
     Spot,
+    /// Infinitely-distant parallel light (the sun). Position is ignored; the
+    /// beam travels along the object's forward axis (`cuboid.rotation * -Z`),
+    /// so there is no distance attenuation and `range` is unused.
+    Directional,
 }
 
 impl Default for LightKind {
