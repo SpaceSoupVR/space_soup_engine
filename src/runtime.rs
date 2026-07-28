@@ -38,6 +38,7 @@ pub struct RenderCuboid {
     pub color: Color3,
     pub wire_color: Color3,
     pub style: CuboidStyle,
+    pub reflectivity: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +73,7 @@ pub struct RenderParticleEmitter {
     pub lifetime: f32,
     pub speed: f32,
     pub spread_deg: f32,
+    pub size_growth: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -790,6 +792,7 @@ impl GameRuntime {
                 color: o.cuboid.color,
                 wire_color: o.cuboid.wire_color,
                 style: o.cuboid.style,
+                reflectivity: o.cuboid.reflectivity,
             })
             .collect()
     }
@@ -848,6 +851,7 @@ impl GameRuntime {
                     lifetime: pe.lifetime,
                     speed: pe.speed,
                     spread_deg: pe.spread_deg,
+                    size_growth: pe.size_growth,
                 })
             })
             .collect()
