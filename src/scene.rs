@@ -42,6 +42,12 @@ pub struct CuboidDef {
     pub wire_color: Color3,
     #[serde(default)]
     pub style: CuboidStyle,
+    /// 0.0 = not reflective, 1.0 = fully mirror-blended. Approximated via
+    /// screen-space reflections (see space_soup/src/renderer/ssr.rs) -- only
+    /// cuboid objects support this (mesh/GLB objects already use all 4 of
+    /// wgpu's default max bind groups).
+    #[serde(default)]
+    pub reflectivity: f32,
 }
 
 fn default_half_size() -> Vec3 {
@@ -60,6 +66,7 @@ impl Default for CuboidDef {
             color: Color3::default(),
             wire_color: Color3(200, 200, 255, 255),
             style: CuboidStyle::default(),
+            reflectivity: 0.0,
         }
     }
 }
@@ -378,6 +385,69 @@ fn default_light_range() -> f32 {
 fn default_cone_angle() -> f32 {
     45.0
 }
+fn default_glow_range() -> f32 {
+    // A real light bulb's own housing and immediate surroundings should
+    // read as lit even outside a spotlight's narrow cone -- 0.6 barely
+    // cleared the fixture itself (confirmed by screenshotting the rendered
+    // result: nearby geometry stayed dark), so this needs to reach a couple
+    // meters out to actually brighten neighboring objects/floor.
+    2.5
+}
+fn default_glow_intensity() -> f32 {
+    // 90 gave a strong, clearly visible bleed onto surfaces ~1.5m away, but
+    // also blew the fixture's own nearby geometry (e.g. the crossbar between
+    // the two work_light_stand lamp heads, mere centimeters from the light)
+    // out to solid white -- an omnidirectional point light's falloff scales
+    // with 1/distance^2, so any intensity strong enough to read clearly at
+    // range will overexpose anything sitting right next to it. Pixel-swept
+    // this down until the near-field blowout was gone (confirmed via
+    // screenshot: 0 fully-white-saturated pixels on that crossbar, down from
+    // ~10% of the sampled region at 90) -- the medium-range bleed is more
+    // modest as a result, but not blowing out the fixture itself matters more.
+    8.0
+}
+fn default_glare_spread() -> f32 {
+    0.15
+}
+fn default_true() -> bool {
+    true
+}
+
+/// Which of the 6 directions (relative to the light's own facing --
+/// front/back along its aim, the rest perpendicular to that) show a small
+/// bulb-icon marker in the editor/preview viewport. All default to visible
+/// (so the fixture reads as an obvious lit bulb from any angle); toggling
+/// one off is how you say e.g. "no marker visible from directly behind this
+/// fixture". Purely a web-editor visual concern, like glare_spread below --
+/// not read by collect_render_lights or by quest_app/space_soup at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlareFacesDef {
+    #[serde(default = "default_true")]
+    pub front: bool,
+    #[serde(default = "default_true")]
+    pub back: bool,
+    #[serde(default = "default_true")]
+    pub left: bool,
+    #[serde(default = "default_true")]
+    pub right: bool,
+    #[serde(default = "default_true")]
+    pub top: bool,
+    #[serde(default = "default_true")]
+    pub bottom: bool,
+}
+
+impl Default for GlareFacesDef {
+    fn default() -> Self {
+        Self {
+            front: true,
+            back: true,
+            left: true,
+            right: true,
+            top: true,
+            bottom: true,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightDef {
@@ -391,6 +461,39 @@ pub struct LightDef {
     pub range: f32,
     #[serde(default = "default_cone_angle")]
     pub cone_angle_deg: f32,
+    /// A real light bulb bleeds a soft glow onto its own housing and
+    /// immediate surroundings in every direction, not just down whatever
+    /// narrow beam/cone it's aimed at -- a spotlight alone leaves the
+    /// fixture itself and anything near it looking unlit. This is the range
+    /// (meters) of a small omnidirectional fill light created alongside the
+    /// main one to cover that -- real light hitting nearby geometry, not a
+    /// visible glow sprite (see glare_faces/glare_spread below for the
+    /// actual bulb-icon markers).
+    #[serde(default = "default_glow_range")]
+    pub glow_range: f32,
+    /// Intensity (same WGSL-pipeline units as `intensity`) of that local
+    /// fill light.
+    #[serde(default = "default_glow_intensity")]
+    pub glow_intensity: f32,
+    /// Whether the local fill light (glow_range/glow_intensity) is on at
+    /// all -- like glare_faces/glare_spread, this is a web-editor-only
+    /// preview concern (not read by collect_render_lights or by
+    /// quest_app/space_soup), so a fixture can be previewed with just its
+    /// spot/point beam and no near-field bleed.
+    #[serde(default = "default_true")]
+    pub glow_enabled: bool,
+    /// Which of the 6 directions show a bulb-icon marker -- see
+    /// GlareFacesDef.
+    #[serde(default)]
+    pub glare_faces: GlareFacesDef,
+    /// How far (meters) each enabled marker sits from the light's own
+    /// position, along its own direction -- clears the fixture's own opaque
+    /// housing mesh (a marker sitting exactly at the light's position gets
+    /// depth-occluded by it, confirmed by screenshotting the rendered
+    /// result) and is what actually spreads the 6 markers into visually
+    /// separate icons instead of one at the center.
+    #[serde(default = "default_glare_spread")]
+    pub glare_spread: f32,
 }
 
 impl Default for LightDef {
@@ -401,6 +504,11 @@ impl Default for LightDef {
             intensity: default_light_intensity(),
             range: default_light_range(),
             cone_angle_deg: default_cone_angle(),
+            glow_range: default_glow_range(),
+            glow_intensity: default_glow_intensity(),
+            glow_enabled: default_true(),
+            glare_faces: GlareFacesDef::default(),
+            glare_spread: default_glare_spread(),
         }
     }
 }
@@ -457,6 +565,9 @@ fn default_particle_speed() -> f32 {
 fn default_spread_deg() -> f32 {
     15.0
 }
+fn default_size_growth() -> f32 {
+    0.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticleEmitterDef {
@@ -472,6 +583,13 @@ pub struct ParticleEmitterDef {
     pub speed: f32,
     #[serde(default = "default_spread_deg")]
     pub spread_deg: f32,
+    /// How much a particle grows over its life: final_size = particle_size
+    /// * (1 + size_growth) at the end of its lifetime (0.0 = constant size,
+    /// 1.0 = doubles, 2.0 = triples) -- real smoke/dust expands as it
+    /// disperses; a flat particle size reads as rain/embers instead.
+    /// Defaults to 0 so every existing emitter's look is unchanged.
+    #[serde(default = "default_size_growth")]
+    pub size_growth: f32,
 }
 
 impl Default for ParticleEmitterDef {
@@ -483,6 +601,7 @@ impl Default for ParticleEmitterDef {
             lifetime: default_particle_lifetime(),
             speed: default_particle_speed(),
             spread_deg: default_spread_deg(),
+            size_growth: default_size_growth(),
         }
     }
 }
@@ -778,15 +897,10 @@ mod particle_and_laser_scene_test {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/scenes/lobby.json");
         let scene = Scene::load(&path).expect("lobby.json should parse");
 
-        let dust = scene
-            .find_object("dust_emitter_block")
-            .expect("dust_emitter_block exists");
-        assert!(dust.particle_emitter.is_some());
-
-        let big = scene
-            .find_object("big_emitter_block")
-            .expect("big_emitter_block exists");
-        assert!(big.particle_emitter.is_some());
+        let smoke = scene
+            .find_object("smoke_grenade")
+            .expect("smoke_grenade exists");
+        assert!(smoke.particle_emitter.is_some());
 
         let green = scene.find_object("laser_green").expect("laser_green exists");
         assert!(green.laser.is_some());
@@ -795,4 +909,3 @@ mod particle_and_laser_scene_test {
         assert!(red.laser.is_some());
     }
 }
-
