@@ -148,35 +148,91 @@ pub fn ocular_screen_fraction(
     (2.0 * angular_radius / eye_fov_y_rad).clamp(0.0, 1.0)
 }
 
+/// Default time to travel the optic's whole magnification range when power is
+/// changed by a button or script. A physical ring or wheel does NOT use this --
+/// its magnification follows the player's hand directly, because that is what
+/// the hand is physically doing.
+pub const DEFAULT_MAGNIFICATION_BLEND_S: f32 = 0.18;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MagnificationBlend {
+    from: f32,
+    to: f32,
+    elapsed_s: f32,
+    duration_s: f32,
+}
+
 /// Current magnification, and the rules for changing it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MagnificationState {
     current: f32,
+    blend: Option<MagnificationBlend>,
 }
 
 impl MagnificationState {
     pub fn new(def: &MagnificationDef) -> Self {
-        Self { current: def.min().max(1.0) }
+        Self { current: def.min().max(1.0), blend: None }
     }
 
     pub fn current(&self) -> f32 {
         self.current
     }
 
-    /// Set an absolute magnification, clamped to what the optic supports. For a
-    /// stepped optic this snaps to the nearest detent, because a variable optic
-    /// with detents cannot sit between them.
+    /// Whether a power change is still in flight.
+    pub fn is_blending(&self) -> bool {
+        self.blend.is_some()
+    }
+
+    /// Change power over `duration_s` instead of snapping. Used for button and
+    /// script changes, where an instant jump between (say) 1x and 6x reads as a
+    /// glitch rather than as glass moving.
+    pub fn set_over(&mut self, def: &MagnificationDef, value: f32, duration_s: f32) {
+        let resolved = resolve_magnification(def, value);
+        if duration_s <= 0.0 || (resolved - self.current).abs() < 1e-6 {
+            self.current = resolved;
+            self.blend = None;
+            return;
+        }
+        self.blend = Some(MagnificationBlend {
+            from: self.current,
+            to: resolved,
+            elapsed_s: 0.0,
+            duration_s,
+        });
+    }
+
+    /// Advance any in-flight power change. Safe to call every frame.
+    pub fn advance(&mut self, dt_s: f32) {
+        let Some(mut b) = self.blend else { return };
+        b.elapsed_s += dt_s.max(0.0);
+        if b.elapsed_s >= b.duration_s {
+            self.current = b.to;
+            self.blend = None;
+            return;
+        }
+        // Smoothstep: eases in and out with no overshoot, so the image never
+        // magnifies past the level the player asked for and settles back.
+        let t = (b.elapsed_s / b.duration_s).clamp(0.0, 1.0);
+        let eased = t * t * (3.0 - 2.0 * t);
+        self.current = b.from + (b.to - b.from) * eased;
+        self.blend = Some(b);
+    }
+
+    /// Set an absolute magnification immediately, clamped to what the optic
+    /// supports. For a stepped optic this snaps to the nearest detent, because a
+    /// variable optic with detents cannot sit between them.
+    ///
+    /// This is the path a physical ring or wheel uses: the glass is wherever the
+    /// player's hand has put it, with no easing in between.
     pub fn set(&mut self, def: &MagnificationDef, value: f32) {
-        self.current = match def {
-            MagnificationDef::Fixed(m) => *m,
-            MagnificationDef::Stepped { steps } => nearest_step(steps, value),
-            MagnificationDef::Continuous { min, max } => value.clamp(*min, *max),
-        };
+        self.current = resolve_magnification(def, value);
+        self.blend = None;
     }
 
     /// Move by whole detents (stepped) or by a magnification delta (continuous).
     /// `wrap` only applies to stepped optics.
     pub fn step(&mut self, def: &MagnificationDef, delta: i32, wrap: bool) {
+        self.blend = None;
         match def {
             MagnificationDef::Fixed(m) => self.current = *m,
             MagnificationDef::Stepped { steps } if !steps.is_empty() => {
@@ -199,6 +255,14 @@ impl MagnificationState {
                 self.current = (self.current + delta as f32).clamp(*min, *max);
             }
         }
+    }
+}
+
+fn resolve_magnification(def: &MagnificationDef, value: f32) -> f32 {
+    match def {
+        MagnificationDef::Fixed(m) => *m,
+        MagnificationDef::Stepped { steps } => nearest_step(steps, value),
+        MagnificationDef::Continuous { min, max } => value.clamp(*min, *max),
     }
 }
 
@@ -278,12 +342,38 @@ impl OpticController {
         self.magnification.current()
     }
 
+    /// Snap power immediately. This is the physical-control path (ring/wheel):
+    /// the glass is wherever the hand put it.
     pub fn set_magnification(&mut self, def: &OpticDef, value: f32) {
         self.magnification.set(&def.magnification, value);
     }
 
+    /// Change power over time. Use for button/axis/script changes, where an
+    /// instant jump reads as a glitch rather than as glass moving.
+    pub fn set_magnification_smooth(&mut self, def: &OpticDef, value: f32, duration_s: f32) {
+        self.magnification.set_over(&def.magnification, value, duration_s);
+    }
+
     pub fn step_magnification(&mut self, def: &OpticDef, delta: i32, wrap: bool) {
         self.magnification.step(&def.magnification, delta, wrap);
+    }
+
+    /// Step to the next detent, easing rather than snapping.
+    pub fn step_magnification_smooth(&mut self, def: &OpticDef, delta: i32, wrap: bool) {
+        let mut probe = self.magnification;
+        probe.step(&def.magnification, delta, wrap);
+        let target = probe.current();
+        self.magnification
+            .set_over(&def.magnification, target, DEFAULT_MAGNIFICATION_BLEND_S);
+    }
+
+    /// Advance any in-flight power change. Call once per frame.
+    pub fn advance(&mut self, dt_s: f32) {
+        self.magnification.advance(dt_s);
+    }
+
+    pub fn is_changing_magnification(&self) -> bool {
+        self.magnification.is_blending()
     }
 
     pub fn last_fire_solution(&self) -> Option<FireSolutionState> {
@@ -587,6 +677,91 @@ mod tests {
         assert_eq!(ctrl.magnification(), 25.0);
         ctrl.set_magnification(&def, 0.1);
         assert_eq!(ctrl.magnification(), 5.0);
+    }
+
+    /// A button/script power change should travel, not teleport -- an instant
+    /// jump from 1x to 6x reads as a glitch rather than as glass moving.
+    #[test]
+    fn a_smooth_power_change_travels_and_lands_exactly() {
+        let def = OpticDef {
+            magnification: MagnificationDef::Continuous { min: 1.0, max: 6.0 },
+            ..OpticDef::default()
+        };
+        let mut ctrl = OpticController::new(&def);
+        assert_eq!(ctrl.magnification(), 1.0);
+
+        ctrl.set_magnification_smooth(&def, 6.0, 0.2);
+        assert_eq!(ctrl.magnification(), 1.0, "no jump on the frame it is requested");
+        assert!(ctrl.is_changing_magnification());
+
+        ctrl.advance(0.1);
+        let mid = ctrl.magnification();
+        assert!(mid > 1.0 && mid < 6.0, "should be partway through, got {mid}");
+
+        ctrl.advance(0.1);
+        assert_eq!(ctrl.magnification(), 6.0, "lands exactly on target");
+        assert!(!ctrl.is_changing_magnification());
+    }
+
+    /// Easing must never overshoot: magnifying past the requested power and
+    /// settling back would look like the optic breathing.
+    #[test]
+    fn a_smooth_power_change_never_overshoots_or_reverses() {
+        let def = OpticDef {
+            magnification: MagnificationDef::Continuous { min: 1.0, max: 8.0 },
+            ..OpticDef::default()
+        };
+        let mut ctrl = OpticController::new(&def);
+        ctrl.set_magnification_smooth(&def, 8.0, 0.25);
+
+        let mut prev = ctrl.magnification();
+        for _ in 0..30 {
+            ctrl.advance(0.01);
+            let now = ctrl.magnification();
+            assert!(now >= prev - 1e-6, "magnification must not reverse: {prev} -> {now}");
+            assert!(now <= 8.0 + 1e-6, "must not overshoot the target: {now}");
+            prev = now;
+        }
+    }
+
+    /// A physical ring or wheel is the player's hand on the glass -- it must
+    /// track exactly, with no easing lag between hand and image.
+    #[test]
+    fn a_physical_control_snaps_and_cancels_any_in_flight_blend() {
+        let def = OpticDef {
+            magnification: MagnificationDef::Continuous { min: 1.0, max: 6.0 },
+            ..OpticDef::default()
+        };
+        let mut ctrl = OpticController::new(&def);
+        ctrl.set_magnification_smooth(&def, 6.0, 0.3);
+        ctrl.advance(0.05);
+        assert!(ctrl.is_changing_magnification());
+
+        // Hand grabs the ring mid-transition.
+        ctrl.set_magnification(&def, 3.0);
+        assert_eq!(ctrl.magnification(), 3.0, "ring position wins immediately");
+        assert!(!ctrl.is_changing_magnification(), "blend is abandoned, not resumed");
+
+        ctrl.advance(1.0);
+        assert_eq!(ctrl.magnification(), 3.0, "and stays where the hand put it");
+    }
+
+    #[test]
+    fn a_smooth_step_eases_toward_the_next_detent() {
+        let def = OpticDef {
+            magnification: MagnificationDef::Stepped { steps: vec![1.0, 4.0, 8.0] },
+            ..OpticDef::default()
+        };
+        let mut ctrl = OpticController::new(&def);
+        ctrl.step_magnification_smooth(&def, 1, false);
+        assert_eq!(ctrl.magnification(), 1.0, "starts from where it was");
+
+        ctrl.advance(DEFAULT_MAGNIFICATION_BLEND_S * 0.5);
+        let mid = ctrl.magnification();
+        assert!(mid > 1.0 && mid < 4.0, "eases between detents, got {mid}");
+
+        ctrl.advance(DEFAULT_MAGNIFICATION_BLEND_S);
+        assert_eq!(ctrl.magnification(), 4.0, "settles exactly on the detent");
     }
 
     /// The shot must record the weapon's basis and how good the sight picture
