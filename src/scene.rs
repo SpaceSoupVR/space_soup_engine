@@ -636,6 +636,387 @@ impl Default for LaserDef {
     }
 }
 
+/// Optic family. Selecting a family is how an author gets sane physical numbers
+/// without knowing optics -- a red dot has an enormous eye box and no
+/// magnification, a precision scope has a tiny one. Speed of target acquisition
+/// is meant to fall out of these physical differences rather than out of any
+/// assist curve, so the family is the main gameplay lever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpticClass {
+    ReflexRedDot,
+    Holographic,
+    Lpvo,
+    FixedPrism,
+    PrecisionScope,
+    Binocular,
+}
+
+impl Default for OpticClass {
+    fn default() -> Self {
+        Self::ReflexRedDot
+    }
+}
+
+/// How much the optic magnifies. `Stepped` carries the detent values a variable
+/// optic clicks through; `Continuous` sweeps freely between the bounds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MagnificationDef {
+    Fixed(f32),
+    Stepped { steps: Vec<f32> },
+    Continuous { min: f32, max: f32 },
+}
+
+impl Default for MagnificationDef {
+    fn default() -> Self {
+        Self::Fixed(1.0)
+    }
+}
+
+impl MagnificationDef {
+    /// Lowest magnification this optic can be set to.
+    pub fn min(&self) -> f32 {
+        match self {
+            Self::Fixed(m) => *m,
+            Self::Stepped { steps } => steps.iter().copied().fold(f32::INFINITY, f32::min),
+            Self::Continuous { min, .. } => *min,
+        }
+    }
+
+    /// Highest magnification this optic can be set to. Drives the worst-case
+    /// exit pupil, which is what makes a high-power optic physically demanding.
+    pub fn max(&self) -> f32 {
+        match self {
+            Self::Fixed(m) => *m,
+            Self::Stepped { steps } => steps.iter().copied().fold(0.0_f32, f32::max),
+            Self::Continuous { max, .. } => *max,
+        }
+    }
+
+    pub fn is_variable(&self) -> bool {
+        !matches!(self, Self::Fixed(_))
+    }
+}
+
+/// How the player changes magnification. Authored per optic because the right
+/// ergonomics differ per game and per device: a hunting scope, an LPVO throw
+/// lever and a pair of binoculars all want different controls.
+///
+/// `PhysicalRing`/`PhysicalWheel` are driven by the existing grab/grip
+/// interaction system against a named node on the mesh, so they add no new
+/// interaction machinery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MagnificationControlDef {
+    /// Fixed optic, or magnification is not player-controllable.
+    None,
+    /// Cycle through the authored steps with a button.
+    ButtonStep { button: String, wrap: bool },
+    /// Continuous control from an analog axis.
+    Axis { source: String, sensitivity: f32 },
+    /// Off-hand grabs the magnification ring on the weapon and rotates it.
+    PhysicalRing {
+        ring_node: String,
+        rotation_axis: [f32; 3],
+        angle_range_deg: f32,
+        detents: bool,
+    },
+    /// Centre focus/zoom wheel, the pattern binoculars actually use.
+    PhysicalWheel {
+        wheel_node: String,
+        rotation_axis: [f32; 3],
+        turns: f32,
+    },
+    /// Driven only by game script.
+    ScriptOnly,
+}
+
+impl Default for MagnificationControlDef {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Shape the magnified image is clipped to inside the ocular.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LensClipShape {
+    Circle,
+    Ellipse,
+    MeshMask,
+}
+
+impl Default for LensClipShape {
+    fn default() -> Self {
+        Self::Circle
+    }
+}
+
+/// One optical path through the device: an objective that gathers the image and
+/// an ocular the player looks into. A rifle scope has exactly one; binoculars
+/// have two, separated by the interpupillary distance, which is what produces
+/// genuine stereo magnification rather than a flat magnified image shown to
+/// both eyes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpticalPathDef {
+    /// Mesh node marking the front (objective) lens. The scope camera is
+    /// anchored here -- NOT at the eye -- because that is where the image is
+    /// actually formed, and it is why the view stays correct as the head moves.
+    pub objective_node: String,
+    /// Mesh node marking the rear (ocular) lens the player looks into. The
+    /// magnified image is masked to this node's projected area.
+    pub ocular_node: String,
+    #[serde(default)]
+    pub clip_shape: LensClipShape,
+    #[serde(default = "default_edge_feather_px")]
+    pub edge_feather_px: f32,
+}
+
+fn default_edge_feather_px() -> f32 {
+    2.0
+}
+
+impl Default for OpticalPathDef {
+    fn default() -> Self {
+        Self {
+            objective_node: String::new(),
+            ocular_node: String::new(),
+            clip_shape: LensClipShape::default(),
+            edge_feather_px: default_edge_feather_px(),
+        }
+    }
+}
+
+/// The device's optical paths. Kept as an enum rather than a bare `Vec` so the
+/// renderer can tell "one path shared by both eyes" from "one path per eye"
+/// without inspecting lengths -- those are different compositing rules, not
+/// different counts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OpticalPathsDef {
+    /// Single path. Because a parallax-free optic is collimated, its image is
+    /// view-independent, so ONE render serves both eyes; eye position only
+    /// affects the eye-box vignette.
+    Monocular { path: OpticalPathDef },
+    /// Two paths, one per eye. Requires two renders and yields real magnified
+    /// depth.
+    Binocular {
+        left: OpticalPathDef,
+        right: OpticalPathDef,
+        ipd_mm: f32,
+    },
+}
+
+impl Default for OpticalPathsDef {
+    fn default() -> Self {
+        Self::Monocular { path: OpticalPathDef::default() }
+    }
+}
+
+impl OpticalPathsDef {
+    /// Number of scope renders this device costs per frame.
+    pub fn render_count(&self) -> usize {
+        match self {
+            Self::Monocular { .. } => 1,
+            Self::Binocular { .. } => 2,
+        }
+    }
+}
+
+/// Which focal plane the reticle lives in. First focal plane scales with
+/// magnification so subtensions stay valid at any power; second focal plane
+/// keeps a constant apparent size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReticleFocalPlane {
+    First,
+    Second,
+}
+
+impl Default for ReticleFocalPlane {
+    fn default() -> Self {
+        Self::Second
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReticleDef {
+    /// Named reticle style, resolved to art by the renderer.
+    #[serde(default)]
+    pub style: String,
+    #[serde(default)]
+    pub focal_plane: ReticleFocalPlane,
+    #[serde(default = "default_reticle_color")]
+    pub color: Color3,
+    #[serde(default = "default_reticle_brightness")]
+    pub brightness: f32,
+}
+
+fn default_reticle_color() -> Color3 {
+    Color3(255, 40, 40, 255)
+}
+fn default_reticle_brightness() -> f32 {
+    1.0
+}
+
+impl Default for ReticleDef {
+    fn default() -> Self {
+        Self {
+            style: String::new(),
+            focal_plane: ReticleFocalPlane::default(),
+            color: default_reticle_color(),
+            brightness: default_reticle_brightness(),
+        }
+    }
+}
+
+/// Ballistic zero. Height-over-bore matters because the optic sits above the
+/// barrel, so the sight line and the projectile path cross at the zero distance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZeroDef {
+    #[serde(default = "default_zero_distance_m")]
+    pub distance_m: f32,
+    #[serde(default = "default_height_over_bore_mm")]
+    pub height_over_bore_mm: f32,
+}
+
+fn default_zero_distance_m() -> f32 {
+    100.0
+}
+fn default_height_over_bore_mm() -> f32 {
+    38.0
+}
+
+impl Default for ZeroDef {
+    fn default() -> Self {
+        Self {
+            distance_m: default_zero_distance_m(),
+            height_over_bore_mm: default_height_over_bore_mm(),
+        }
+    }
+}
+
+/// Render quality tier for the scope pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpticQualityTier {
+    Low,
+    Balanced,
+    Ultra,
+}
+
+impl Default for OpticQualityTier {
+    fn default() -> Self {
+        Self::Balanced
+    }
+}
+
+impl OpticQualityTier {
+    /// Preferred square edge length of the scope render target.
+    pub fn target_resolution(&self) -> u32 {
+        match self {
+            Self::Low => 512,
+            Self::Balanced => 768,
+            Self::Ultra => 1024,
+        }
+    }
+}
+
+/// A magnifying optic: weapon sight, scope, or binoculars.
+///
+/// Authored fields are the physical numbers a real spec sheet carries. Everything
+/// the renderer needs beyond that -- exit pupil, eye-box size, apparent field,
+/// scope-camera FOV -- is DERIVED (see the `derived_*` methods), deliberately not
+/// authored. Hand-dialled optical constants were how the previous rig
+/// calibration ended up over 30 degrees wrong.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpticDef {
+    #[serde(default)]
+    pub class: OpticClass,
+    #[serde(default)]
+    pub magnification: MagnificationDef,
+    #[serde(default)]
+    pub magnification_control: MagnificationControlDef,
+    /// Front lens diameter. With magnification this sets the exit pupil, and
+    /// therefore how forgiving the optic is to get behind.
+    #[serde(default = "default_objective_diameter_mm")]
+    pub objective_diameter_mm: f32,
+    /// True (world) field of view at 1x. Apparent field = this * magnification.
+    #[serde(default = "default_true_fov_deg")]
+    pub true_fov_deg_at_1x: f32,
+    /// Distance behind the ocular where the full image is visible. Real scopes
+    /// need at least ~50mm to clear recoil.
+    #[serde(default = "default_eye_relief_mm")]
+    pub eye_relief_mm: f32,
+    #[serde(default)]
+    pub paths: OpticalPathsDef,
+    #[serde(default)]
+    pub reticle: Option<ReticleDef>,
+    #[serde(default)]
+    pub zero: Option<ZeroDef>,
+    #[serde(default)]
+    pub quality: OpticQualityTier,
+}
+
+fn default_objective_diameter_mm() -> f32 {
+    40.0
+}
+fn default_true_fov_deg() -> f32 {
+    24.0
+}
+fn default_eye_relief_mm() -> f32 {
+    90.0
+}
+
+impl Default for OpticDef {
+    fn default() -> Self {
+        Self {
+            class: OpticClass::default(),
+            magnification: MagnificationDef::default(),
+            magnification_control: MagnificationControlDef::default(),
+            objective_diameter_mm: default_objective_diameter_mm(),
+            true_fov_deg_at_1x: default_true_fov_deg(),
+            eye_relief_mm: default_eye_relief_mm(),
+            paths: OpticalPathsDef::default(),
+            reticle: None,
+            zero: None,
+            quality: OpticQualityTier::default(),
+        }
+    }
+}
+
+impl OpticDef {
+    /// Exit pupil diameter = objective / magnification. This IS the eye-box
+    /// diameter, which is why a 4x40 optic is easy to get behind (10mm) and a
+    /// 16x40 is not (2.5mm). Derived, never authored.
+    pub fn derived_exit_pupil_mm(&self, magnification: f32) -> f32 {
+        if magnification <= f32::EPSILON {
+            return self.objective_diameter_mm;
+        }
+        self.objective_diameter_mm / magnification
+    }
+
+    /// Tightest eye box this optic will ever present (at maximum power).
+    pub fn derived_min_exit_pupil_mm(&self) -> f32 {
+        self.derived_exit_pupil_mm(self.magnification.max())
+    }
+
+    /// World field of view at a given magnification -- this is the FOV the scope
+    /// camera renders with.
+    pub fn derived_true_fov_deg(&self, magnification: f32) -> f32 {
+        if magnification <= f32::EPSILON {
+            return self.true_fov_deg_at_1x;
+        }
+        self.true_fov_deg_at_1x / magnification
+    }
+
+    /// Field of view the image appears to fill for the player. Stays roughly
+    /// constant across magnification, which is why higher power shows less world
+    /// through the same apparent circle.
+    pub fn derived_apparent_fov_deg(&self) -> f32 {
+        self.true_fov_deg_at_1x
+    }
+
+    /// Scope renders required per frame for this device.
+    pub fn render_count(&self) -> usize {
+        self.paths.render_count()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameObject {
     pub id: String,
@@ -696,6 +1077,9 @@ pub struct GameObject {
 
     #[serde(default)]
     pub laser: Option<LaserDef>,
+
+    #[serde(default)]
+    pub optic: Option<OpticDef>,
 }
 
 impl GameObject {
@@ -907,5 +1291,119 @@ mod particle_and_laser_scene_test {
 
         let red = scene.find_object("laser_red").expect("laser_red exists");
         assert!(red.laser.is_some());
+    }
+}
+
+#[cfg(test)]
+mod optic_tests {
+    use super::*;
+
+    /// The whole point of the optional-component pattern: existing scenes with no
+    /// `optic` field must keep loading, and must not gain one on save.
+    #[test]
+    fn a_scene_without_an_optic_round_trips_unchanged() {
+        let json = r#"{"id":"m4a1"}"#;
+        let obj: GameObject = serde_json::from_str(json).expect("legacy object should load");
+        assert!(obj.optic.is_none(), "absent optic must stay absent");
+
+        let out = serde_json::to_string(&obj).unwrap();
+        let back: GameObject = serde_json::from_str(&out).unwrap();
+        assert!(back.optic.is_none());
+    }
+
+    #[test]
+    fn an_authored_optic_round_trips() {
+        let optic = OpticDef {
+            class: OpticClass::PrecisionScope,
+            magnification: MagnificationDef::Continuous { min: 5.0, max: 25.0 },
+            objective_diameter_mm: 56.0,
+            true_fov_deg_at_1x: 22.0,
+            ..OpticDef::default()
+        };
+        let obj = GameObject {
+            optic: Some(optic),
+            ..serde_json::from_str::<GameObject>(r#"{"id":"awp"}"#).unwrap()
+        };
+
+        let json = serde_json::to_string(&obj).unwrap();
+        let back: GameObject = serde_json::from_str(&json).unwrap();
+        let back_optic = back.optic.expect("optic should survive the round trip");
+        assert_eq!(back_optic.class, OpticClass::PrecisionScope);
+        assert_eq!(back_optic.magnification.max(), 25.0);
+        assert_eq!(back_optic.objective_diameter_mm, 56.0);
+    }
+
+    /// Exit pupil is the eye box. Deriving it is what makes a new optic correct
+    /// by construction instead of needing hand-dialled eye-box radii.
+    #[test]
+    fn exit_pupil_is_objective_over_magnification() {
+        let optic = OpticDef { objective_diameter_mm: 40.0, ..OpticDef::default() };
+        assert_eq!(optic.derived_exit_pupil_mm(4.0), 10.0);
+        assert_eq!(optic.derived_exit_pupil_mm(16.0), 2.5);
+    }
+
+    /// A red dot should be far easier to get behind than a high-power scope, and
+    /// that difference must come out of the physics rather than a tuning slider --
+    /// it is the mechanism that makes optic choice a real gameplay tradeoff.
+    #[test]
+    fn a_red_dot_has_a_much_larger_eye_box_than_a_precision_scope() {
+        let red_dot = OpticDef {
+            class: OpticClass::ReflexRedDot,
+            magnification: MagnificationDef::Fixed(1.0),
+            objective_diameter_mm: 25.0,
+            ..OpticDef::default()
+        };
+        let sniper = OpticDef {
+            class: OpticClass::PrecisionScope,
+            magnification: MagnificationDef::Continuous { min: 5.0, max: 25.0 },
+            objective_diameter_mm: 56.0,
+            ..OpticDef::default()
+        };
+        assert!(
+            red_dot.derived_min_exit_pupil_mm() > sniper.derived_min_exit_pupil_mm() * 5.0,
+            "red dot eye box {} should dwarf the sniper's {}",
+            red_dot.derived_min_exit_pupil_mm(),
+            sniper.derived_min_exit_pupil_mm()
+        );
+    }
+
+    /// Higher magnification shows less of the world -- this is the value the scope
+    /// camera renders with, so getting it wrong shows up as the wrong zoom.
+    #[test]
+    fn true_field_of_view_narrows_with_magnification() {
+        let optic = OpticDef { true_fov_deg_at_1x: 24.0, ..OpticDef::default() };
+        assert_eq!(optic.derived_true_fov_deg(1.0), 24.0);
+        assert_eq!(optic.derived_true_fov_deg(8.0), 3.0);
+        assert!(optic.derived_true_fov_deg(8.0) < optic.derived_true_fov_deg(4.0));
+    }
+
+    /// Monocular optics cost one render because a collimated image is
+    /// view-independent; binoculars genuinely need one per eye for stereo depth.
+    #[test]
+    fn render_count_follows_the_optical_path_count() {
+        let scope = OpticDef::default();
+        assert_eq!(scope.render_count(), 1);
+
+        let binos = OpticDef {
+            class: OpticClass::Binocular,
+            paths: OpticalPathsDef::Binocular {
+                left: OpticalPathDef::default(),
+                right: OpticalPathDef::default(),
+                ipd_mm: 64.0,
+            },
+            ..OpticDef::default()
+        };
+        assert_eq!(binos.render_count(), 2);
+    }
+
+    #[test]
+    fn magnification_bounds_are_correct_for_each_form() {
+        assert_eq!(MagnificationDef::Fixed(1.0).max(), 1.0);
+        assert!(!MagnificationDef::Fixed(1.0).is_variable());
+
+        let stepped = MagnificationDef::Stepped { steps: vec![1.0, 4.0, 8.0] };
+        assert_eq!(stepped.min(), 1.0);
+        assert_eq!(stepped.max(), 8.0);
+        assert!(stepped.is_variable());
     }
 }
