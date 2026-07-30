@@ -759,10 +759,27 @@ pub struct OpticalPathDef {
     /// Mesh node marking the front (objective) lens. The scope camera is
     /// anchored here -- NOT at the eye -- because that is where the image is
     /// actually formed, and it is why the view stays correct as the head moves.
+    ///
+    /// Optional: many weapon models carry no named lens nodes (ours does not),
+    /// in which case `objective_offset` is used instead.
+    #[serde(default)]
     pub objective_node: String,
     /// Mesh node marking the rear (ocular) lens the player looks into. The
     /// magnified image is masked to this node's projected area.
+    #[serde(default)]
     pub ocular_node: String,
+    /// Objective position in object-local metres, used when `objective_node` is
+    /// empty. Lets an author place an optic on a model with no lens geometry
+    /// rather than blocking on new art.
+    #[serde(default)]
+    pub objective_offset: [f32; 3],
+    /// Ocular position in object-local metres, used when `ocular_node` is empty.
+    #[serde(default)]
+    pub ocular_offset: [f32; 3],
+    /// Radius of the ocular glass in metres. Drives both the on-screen mask and
+    /// the coverage gating that skips the scope pass when it is a speck.
+    #[serde(default = "default_ocular_radius_m")]
+    pub ocular_radius_m: f32,
     #[serde(default)]
     pub clip_shape: LensClipShape,
     #[serde(default = "default_edge_feather_px")]
@@ -772,15 +789,37 @@ pub struct OpticalPathDef {
 fn default_edge_feather_px() -> f32 {
     2.0
 }
+fn default_ocular_radius_m() -> f32 {
+    0.018
+}
 
 impl Default for OpticalPathDef {
     fn default() -> Self {
         Self {
             objective_node: String::new(),
             ocular_node: String::new(),
+            objective_offset: [0.0, 0.0, 0.0],
+            ocular_offset: [0.0, 0.0, 0.0],
+            ocular_radius_m: default_ocular_radius_m(),
             clip_shape: LensClipShape::default(),
             edge_feather_px: default_edge_feather_px(),
         }
+    }
+}
+
+impl OpticalPathDef {
+    /// True when this path is positioned by authored offsets rather than by
+    /// named mesh nodes.
+    pub fn uses_offsets(&self) -> bool {
+        self.objective_node.is_empty() || self.ocular_node.is_empty()
+    }
+
+    /// Distance from ocular to objective in metres -- the physical length of the
+    /// optic, used to derive its axis when placed by offsets.
+    pub fn body_length_m(&self) -> f32 {
+        let o = Vec3::from_array(self.objective_offset);
+        let e = Vec3::from_array(self.ocular_offset);
+        (o - e).length()
     }
 }
 
@@ -1394,6 +1433,48 @@ mod optic_tests {
             ..OpticDef::default()
         };
         assert_eq!(binos.render_count(), 2);
+    }
+
+    /// Schema-parity guard: the web editor writes optic JSON in JavaScript while
+    /// Rust reads it here, and two implementations of one format is exactly how
+    /// the avatar rig ended up with the editor and the runtime disagreeing.
+    /// This loads the REAL checked-in scene and insists Rust understands what
+    /// the editor produced.
+    #[test]
+    fn the_checked_in_lobby_scene_optic_deserializes_in_rust() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../game/scenes/lobby.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            eprintln!("skipping: {} not present", path.display());
+            return;
+        };
+        let scene: serde_json::Value = serde_json::from_str(&text).expect("lobby.json is valid json");
+        let objects = scene["objects"].as_array().expect("objects array");
+        let m4 = objects
+            .iter()
+            .find(|o| o["id"] == "m4a1")
+            .expect("lobby has an m4a1");
+
+        let obj: GameObject =
+            serde_json::from_value(m4.clone()).expect("m4a1 should deserialize as a GameObject");
+        let optic = obj.optic.expect("the m4a1 fixture carries an optic");
+
+        assert_eq!(optic.class, OpticClass::Lpvo);
+        assert_eq!(optic.magnification.min(), 1.0);
+        assert_eq!(optic.magnification.max(), 6.0);
+        assert!(optic.magnification.is_variable());
+        // A 24mm objective at 6x leaves a 4mm exit pupil -- demanding but usable,
+        // which is the point of putting a magnified optic on the test fixture.
+        assert_eq!(optic.derived_exit_pupil_mm(6.0), 4.0);
+        assert!((optic.derived_true_fov_deg(6.0) - 26.0 / 6.0).abs() < 1e-4);
+
+        // The optic must be placeable even though m4a1.glb has no lens geometry.
+        let OpticalPathsDef::Monocular { path } = &optic.paths else {
+            panic!("fixture should be monocular");
+        };
+        assert!(path.uses_offsets(), "m4a1 has no lens nodes, so offsets must position it");
+        assert!(path.body_length_m() > 0.05, "optic needs real length to have an axis");
+        assert!(path.ocular_radius_m > 0.0);
     }
 
     #[test]
