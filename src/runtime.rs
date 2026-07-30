@@ -16,7 +16,8 @@ use crate::physics::{Aabb, CollisionEvent, CollisionTracker};
 use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
 use crate::scene::{
-    BindingScope, Color3, CuboidStyle, GameObject, GripPointDef, LightKind, MeshRef, PlayMode,
+    BindingScope, Color3, CuboidStyle, GameObject, GripPointDef, LightKind, MeshRef, OpticDef,
+    PlayMode,
     Scene,
 };
 use crate::script::{EngineCommand, ScriptHost};
@@ -758,6 +759,32 @@ impl GameRuntime {
                 }
             }
         }
+    }
+
+    /// The optic on whatever this hand is holding, if it has one.
+    ///
+    /// Optics are resolved from held-object context rather than from any aim
+    /// mode: if you are holding a scoped rifle, the scope exists whether or not
+    /// you have raised it. Whether you can actually *see* through it is decided
+    /// per eye by [`crate::optic::sample_eye_box`], not here.
+    pub fn held_optic(&self, player: PlayerId, hand: Hand) -> Option<(&GameObject, &OpticDef)> {
+        let (obj, _) = self.held_grip_point(player, hand)?;
+        let optic = obj.optic.as_ref()?;
+        Some((obj, optic))
+    }
+
+    /// Every optic this player is currently holding, across both hands.
+    ///
+    /// Returns both hands' optics because a player can legitimately hold a
+    /// scoped weapon in one hand and binoculars in the other; the renderer
+    /// decides which are worth drawing from their on-screen size.
+    pub fn held_optics(&self, player: PlayerId) -> Vec<(Hand, &GameObject, &OpticDef)> {
+        [Hand::Left, Hand::Right]
+            .into_iter()
+            .filter_map(|hand| {
+                self.held_optic(player, hand).map(|(obj, optic)| (hand, obj, optic))
+            })
+            .collect()
     }
 
     pub fn held_grip_point(&self, player: PlayerId, hand: Hand) -> Option<(&GameObject, &GripPointDef)> {

@@ -5,6 +5,7 @@ pub mod debug_protocol;
 pub mod events;
 pub mod locomotion;
 pub mod manifest;
+pub mod optic;
 pub mod physics;
 pub mod rig;
 pub mod rig_profile;
