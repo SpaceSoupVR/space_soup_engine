@@ -12,12 +12,12 @@ use crate::audio::SoundEngine;
 use crate::events::{Hand, InputFrame};
 use crate::locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget};
 use crate::manifest::Manifest;
-use crate::physics::{Aabb, CollisionEvent, CollisionTracker};
+use crate::physics::{ray_intersect_obb, Aabb, CollisionEvent, CollisionTracker};
 use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
 use crate::scene::{
-    BindingScope, Color3, CuboidStyle, GameObject, GripPointDef, LightKind, MeshRef, PlayMode,
-    Scene,
+    BindingScope, Color3, CuboidShape, CuboidStyle, GameObject, GripPointDef, LightKind, MeshRef,
+    PlayMode, Scene,
 };
 use crate::script::{EngineCommand, ScriptHost};
 
@@ -39,6 +39,7 @@ pub struct RenderCuboid {
     pub wire_color: Color3,
     pub style: CuboidStyle,
     pub reflectivity: f32,
+    pub shape: CuboidShape,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +88,28 @@ pub struct RenderLaser {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderUiPanel {
+    pub id: String,
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub width: f32,
+    pub height: f32,
+    pub background_color: Color3,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderUiButton {
+    pub id: String,
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub half_size: Vec3,
+    pub color: Color3,
+    pub text_color: Color3,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundState {
     pub object_id: String,
     pub clip: String,
@@ -94,6 +117,8 @@ pub struct SoundState {
     pub volume: f32,
     pub pitch: f32,
     pub looping: bool,
+    pub min_distance: f32,
+    pub max_distance: f32,
 }
 
 pub struct GameRuntime {
@@ -105,6 +130,8 @@ pub struct GameRuntime {
     players: HashMap<String, AnimationPlayer>,
     anim_queues: HashMap<String, Vec<String>>,
     collisions: CollisionTracker,
+    teleport_collisions: CollisionTracker,
+    teleport_disarmed: HashSet<(PlayerId, String)>,
     rigid_physics: PhysicsWorld,
     sound_engine: SoundEngine,
 
@@ -131,6 +158,8 @@ impl GameRuntime {
             players: HashMap::new(),
             anim_queues: HashMap::new(),
             collisions: CollisionTracker::new(),
+            teleport_collisions: CollisionTracker::new(),
+            teleport_disarmed: HashSet::new(),
             rigid_physics: PhysicsWorld::new(),
             sound_engine: SoundEngine::new(),
             rigs: HashMap::new(),
@@ -209,11 +238,20 @@ impl GameRuntime {
         self.players = HashMap::new();
         self.anim_queues = HashMap::new();
         self.collisions = CollisionTracker::new();
+        self.teleport_collisions = CollisionTracker::new();
+        self.teleport_disarmed = HashSet::new();
         self.attachments = AttachmentTable::new();
         self.script_host = ScriptHost::new();
         self.compile_scripts();
         self.setup_scene_attachments();
         self.rigid_physics.rebuild(&self.scene, &self.game_dir);
+
+        if let Some((position, yaw)) = self.find_spawn_point() {
+            for locomotion in self.locomotions.values_mut() {
+                locomotion.player_offset = position;
+                locomotion.player_yaw = yaw;
+            }
+        }
 
         info!("GameRuntime: switched to scene '{scene_name}'");
         Ok(())
@@ -240,6 +278,8 @@ impl GameRuntime {
         Vec<RenderLight>,
         Vec<RenderParticleEmitter>,
         Vec<RenderLaser>,
+        Vec<RenderUiPanel>,
+        Vec<RenderUiButton>,
         Option<String>,
     ) {
         self.pending_scene_change = None;
@@ -255,6 +295,7 @@ impl GameRuntime {
             self.attachments.remove_player(player);
             self.rigs.remove(&player);
             self.locomotions.remove(&player);
+            self.teleport_disarmed.retain(|(p, _)| *p != player);
         }
 
         for (&player, frame) in inputs {
@@ -262,12 +303,14 @@ impl GameRuntime {
             self.rigid_physics.ensure_player(player);
         }
 
+        let spawn = self.find_spawn_point();
+
         for (&player, frame) in inputs {
             let rig = self.rigs[&player].clone();
             let locomotion = self
                 .locomotions
                 .entry(player)
-                .or_insert_with(|| Locomotion::new(LocomotionMode::Smooth));
+                .or_insert_with(|| Self::new_locomotion_at(spawn));
             let prev_xz = (locomotion.player_offset.x, locomotion.player_offset.z);
             locomotion.update(dt, &frame.locomotion_input, &rig, frame.teleport_target);
             Self::apply_wall_collision(locomotion, &self.rigid_physics, prev_xz);
@@ -278,6 +321,8 @@ impl GameRuntime {
         self.update_object_position_cache();
         self.apply_attachments();
         self.dispatch_collisions();
+        self.dispatch_teleportals();
+        let ui_pointer_lasers = self.dispatch_ui_pointer(inputs);
 
         for (&player, frame) in inputs {
             self.update_rig_position_cache(player);
@@ -308,13 +353,18 @@ impl GameRuntime {
         let meshes = self.collect_render_meshes();
         let lights = self.collect_render_lights();
         let particle_emitters = self.collect_render_particle_emitters();
-        let lasers = self.collect_render_lasers();
+        let mut lasers = self.collect_render_lasers();
+        lasers.extend(ui_pointer_lasers);
+        let ui_panels = self.collect_render_ui_panels();
+        let ui_buttons = self.collect_render_ui_buttons();
         (
             cuboids,
             meshes,
             lights,
             particle_emitters,
             lasers,
+            ui_panels,
+            ui_buttons,
             self.pending_scene_change.take(),
         )
     }
@@ -535,6 +585,178 @@ impl GameRuntime {
         }
     }
 
+    fn find_spawn_point(&self) -> Option<(Vec3, f32)> {
+        let obj = self.scene.objects.iter().find(|o| o.spawn_point.is_some())?;
+        Some((
+            obj.cuboid.position,
+            Self::yaw_from_forward(obj.cuboid.rotation * Vec3::NEG_Z),
+        ))
+    }
+
+    fn new_locomotion_at(spawn: Option<(Vec3, f32)>) -> Locomotion {
+        let mut locomotion = Locomotion::new(LocomotionMode::Smooth);
+        if let Some((position, yaw)) = spawn {
+            locomotion.player_offset = position;
+            locomotion.player_yaw = yaw;
+        }
+        locomotion
+    }
+
+    fn yaw_from_forward(fwd: Vec3) -> f32 {
+        (-fwd.x).atan2(-fwd.z)
+    }
+
+    fn player_body_id(player: PlayerId) -> String {
+        format!("__player_{}", player.0)
+    }
+
+    fn classify_teleport_pair(
+        a: &str,
+        b: &str,
+        player_ids: &HashMap<String, PlayerId>,
+    ) -> Option<(PlayerId, String)> {
+        match (player_ids.get(a), player_ids.get(b)) {
+            (Some(&p), None) => Some((p, b.to_string())),
+            (None, Some(&p)) => Some((p, a.to_string())),
+            _ => None,
+        }
+    }
+
+    fn dispatch_teleportals(&mut self) {
+        const PLAYER_HALF_XZ: f32 = 0.25;
+        const PLAYER_HALF_Y: f32 = 0.15;
+
+        let mut player_ids: HashMap<String, PlayerId> = HashMap::new();
+        let mut bodies: Vec<(String, Aabb)> = Vec::new();
+
+        for (&player, locomotion) in &self.locomotions {
+            let body_id = Self::player_body_id(player);
+            let center = locomotion.player_offset + Vec3::new(0.0, PLAYER_HALF_Y, 0.0);
+            let half = Vec3::new(PLAYER_HALF_XZ, PLAYER_HALF_Y, PLAYER_HALF_XZ);
+            bodies.push((body_id.clone(), Aabb::from_center_half(center, half)));
+            player_ids.insert(body_id, player);
+        }
+
+        for o in &self.scene.objects {
+            if o.teleportal.is_some() {
+                let aabb = Aabb::from_center_half(o.cuboid.position, o.cuboid.half_size);
+                bodies.push((o.id.clone(), aabb));
+            }
+        }
+
+        let events = self.teleport_collisions.update(&bodies);
+
+        for event in events {
+            match event {
+                CollisionEvent::Enter(a, b) => {
+                    let Some((player, pad_id)) = Self::classify_teleport_pair(&a, &b, &player_ids)
+                    else {
+                        continue;
+                    };
+                    if self.teleport_disarmed.contains(&(player, pad_id.clone())) {
+                        continue;
+                    }
+                    let Some(pad) = self.scene.find_object(&pad_id) else {
+                        continue;
+                    };
+                    let Some(teleportal) = pad.teleportal.as_ref() else {
+                        continue;
+                    };
+
+                    if let Some(target_scene) = teleportal.target_scene.clone() {
+                        self.pending_scene_change = Some(target_scene);
+                        continue;
+                    }
+
+                    let Some(target_id) = teleportal.target_id.clone() else {
+                        continue;
+                    };
+                    let Some(target) = self.scene.find_object(&target_id) else {
+                        continue;
+                    };
+                    if target.teleportal.is_none() {
+                        continue;
+                    }
+                    let target_position = target.cuboid.position;
+                    let target_yaw = Self::yaw_from_forward(target.cuboid.rotation * Vec3::NEG_Z);
+                    let target_id = target.id.clone();
+
+                    if let Some(locomotion) = self.locomotions.get_mut(&player) {
+                        locomotion.player_offset = target_position;
+                        locomotion.player_yaw = target_yaw;
+                    }
+                    self.teleport_disarmed.insert((player, target_id));
+                }
+                CollisionEvent::Exit(a, b) => {
+                    if let Some((player, pad_id)) = Self::classify_teleport_pair(&a, &b, &player_ids) {
+                        self.teleport_disarmed.remove(&(player, pad_id));
+                    }
+                }
+            }
+        }
+    }
+
+    fn dispatch_ui_pointer(&mut self, inputs: &HashMap<PlayerId, PlayerFrameInput>) -> Vec<RenderLaser> {
+        const UI_POINTER_MAX_DIST: f32 = 8.0;
+        const UI_POINTER_COLOR: Color3 = Color3(120, 190, 255, 255);
+        const UI_POINTER_BEAM_WIDTH: f32 = 0.006;
+
+        let mut lasers = Vec::new();
+
+        for (&player, frame) in inputs {
+            let Some(rig) = self.rigs.get(&player) else {
+                continue;
+            };
+            let trigger_pressed = frame.input.button_presses.iter().any(|b| b.button == "trigger");
+
+            for hand in [Hand::Left, Hand::Right] {
+                let aim = rig.hand_aim(hand);
+                let origin = aim.position;
+                let direction = aim.rotation * Vec3::NEG_Z;
+
+                let mut nearest_hit: Option<(String, f32)> = None;
+                for obj in &self.scene.objects {
+                    if obj.ui_button.is_none() {
+                        continue;
+                    }
+                    let Some(dist) = ray_intersect_obb(
+                        origin,
+                        direction,
+                        obj.cuboid.position,
+                        obj.cuboid.half_size,
+                        obj.cuboid.rotation,
+                        UI_POINTER_MAX_DIST,
+                    ) else {
+                        continue;
+                    };
+                    if nearest_hit.as_ref().is_none_or(|(_, d)| dist < *d) {
+                        nearest_hit = Some((obj.id.clone(), dist));
+                    }
+                }
+
+                let Some((button_id, dist)) = nearest_hit else {
+                    continue;
+                };
+                let end = origin + direction * dist;
+                lasers.push(RenderLaser {
+                    id: format!("__ui_pointer_{}_{}", player.0, hand.as_str()),
+                    origin,
+                    direction,
+                    end,
+                    color: UI_POINTER_COLOR,
+                    beam_width: UI_POINTER_BEAM_WIDTH,
+                });
+
+                if trigger_pressed {
+                    self.script_host.set_current_player(player);
+                    let _ = self.script_host.call(&button_id, "on_press", ("ui_click".to_string(),));
+                }
+            }
+        }
+
+        lasers
+    }
+
     fn dispatch_input(&mut self, input: &InputFrame) {
         for (id, hand) in &input.pointed {
             let _ = self
@@ -744,7 +966,7 @@ impl GameRuntime {
                 }
                 EngineCommand::SetLightIntensity { id, intensity } => {
                     if let Some(o) = self.scene.find_object_mut(&id) {
-                        if let Some(light) = o.light.as_mut() {
+                        for light in o.lights.iter_mut() {
                             light.intensity = intensity;
                         }
                     }
@@ -793,6 +1015,11 @@ impl GameRuntime {
                 wire_color: o.cuboid.wire_color,
                 style: o.cuboid.style,
                 reflectivity: o.cuboid.reflectivity,
+                shape: if o.teleportal.is_some() {
+                    CuboidShape::Cylinder
+                } else {
+                    CuboidShape::Box
+                },
             })
             .collect()
     }
@@ -819,10 +1046,9 @@ impl GameRuntime {
         self.scene
             .objects
             .iter()
-            .filter_map(|o| {
-                let light = o.light.as_ref()?;
-                Some(RenderLight {
-                    id: o.id.clone(),
+            .flat_map(|o| {
+                o.lights.iter().enumerate().map(move |(i, light)| RenderLight {
+                    id: format!("{}#{i}", o.id),
                     position: o.cuboid.position,
                     direction: o.cuboid.rotation * Vec3::NEG_Z,
                     kind: light.kind,
@@ -882,6 +1108,44 @@ impl GameRuntime {
             .collect()
     }
 
+    fn collect_render_ui_panels(&self) -> Vec<RenderUiPanel> {
+        self.scene
+            .objects
+            .iter()
+            .filter_map(|o| {
+                let panel = o.ui_panel.as_ref()?;
+                Some(RenderUiPanel {
+                    id: o.id.clone(),
+                    position: o.cuboid.position,
+                    rotation: o.cuboid.rotation,
+                    width: panel.width,
+                    height: panel.height,
+                    background_color: panel.background_color,
+                    title: panel.title.clone(),
+                })
+            })
+            .collect()
+    }
+
+    fn collect_render_ui_buttons(&self) -> Vec<RenderUiButton> {
+        self.scene
+            .objects
+            .iter()
+            .filter_map(|o| {
+                let button = o.ui_button.as_ref()?;
+                Some(RenderUiButton {
+                    id: o.id.clone(),
+                    position: o.cuboid.position,
+                    rotation: o.cuboid.rotation,
+                    half_size: o.cuboid.half_size,
+                    color: button.color,
+                    text_color: button.text_color,
+                    label: button.label.clone(),
+                })
+            })
+            .collect()
+    }
+
     pub fn preview_sound(&mut self, clip: &str, volume: f32, pitch: f32) {
         self.sound_engine.preview(&self.game_dir, clip, volume, pitch);
     }
@@ -890,13 +1154,15 @@ impl GameRuntime {
         self.sound_engine
             .active_sounds(&self.scene.objects)
             .into_iter()
-            .map(|(object_id, clip, position, volume, pitch, looping)| SoundState {
+            .map(|(object_id, clip, position, volume, pitch, looping, min_distance, max_distance)| SoundState {
                 object_id,
                 clip,
                 position,
                 volume,
                 pitch,
                 looping,
+                min_distance,
+                max_distance,
             })
             .collect()
     }
@@ -912,6 +1178,7 @@ impl GameRuntime {
 #[cfg(test)]
 mod rigid_physics_test {
     use super::*;
+    use crate::events::ButtonPress;
     use std::sync::Mutex;
 
     static PHYSX_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -1503,6 +1770,323 @@ mod rigid_physics_test {
         assert!(
             z < -1.0,
             "player should have walked most of the way to the wall before being stopped, got z={z}"
+        );
+    }
+
+    #[test]
+    fn yaw_from_forward_round_trips_with_apply_to_heads_convention() {
+        for tenths in -30..=30 {
+            let yaw = tenths as f32 / 10.0;
+            let fwd = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
+            let recovered = GameRuntime::yaw_from_forward(fwd);
+            assert!(
+                (recovered - yaw).abs() < 1e-4,
+                "yaw {yaw} -> forward {fwd:?} -> recovered {recovered}, expected round trip"
+            );
+        }
+    }
+
+    fn empty_scene_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn spawn_point_seeds_a_fresh_players_position_and_yaw() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = empty_scene_dir("space_soup_engine_spawn_point_test");
+        std::fs::write(
+            dir.join("scenes/test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "start",
+                        "cuboid": { "position": [3.0, 0.0, 4.0], "rotation": [0.0, 1.0, 0.0, 0.0] },
+                        "spawn_point": {}
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let player = PlayerId::new();
+        let mut rig = PlayerRig::new();
+        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
+
+        let locomotion = &rt.locomotions[&player];
+        assert!(
+            locomotion.player_offset.distance(Vec3::new(3.0, 0.0, 4.0)) < 1e-4,
+            "expected the player to spawn at the spawn_point's position, got {:?}",
+            locomotion.player_offset
+        );
+        let expected_yaw = GameRuntime::yaw_from_forward(Quat::from_xyzw(0.0, 1.0, 0.0, 0.0) * Vec3::NEG_Z);
+        assert!(
+            (locomotion.player_yaw - expected_yaw).abs() < 1e-4,
+            "expected the player's yaw to match the spawn_point's own facing direction"
+        );
+    }
+
+    #[test]
+    fn no_spawn_point_falls_back_to_origin() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = empty_scene_dir("space_soup_engine_no_spawn_point_test");
+        std::fs::write(
+            dir.join("scenes/test.json"),
+            r#"{ "name": "test", "objects": [] }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let player = PlayerId::new();
+        let mut rig = PlayerRig::new();
+        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
+
+        assert_eq!(rt.locomotions[&player].player_offset, Vec3::ZERO);
+    }
+
+    #[test]
+    fn teleport_disarms_until_the_player_walks_off_the_destination_pad() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = empty_scene_dir("space_soup_engine_teleportal_test");
+        std::fs::write(
+            dir.join("scenes/test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "pad_a",
+                        "cuboid": { "position": [0.0, 0.0, 0.0], "half_size": [1.0, 1.0, 1.0] },
+                        "teleportal": { "target_id": "pad_b" }
+                    },
+                    {
+                        "id": "pad_b",
+                        "cuboid": { "position": [10.0, 0.0, 0.0], "half_size": [1.0, 1.0, 1.0] },
+                        "teleportal": { "target_id": "pad_a" }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let player = PlayerId::new();
+        let mut rig = PlayerRig::new();
+        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+        let tick = |rt: &mut GameRuntime| {
+            rt.update(1.0 / 60.0, &one_player(player, frame(rig.clone(), InputFrame::default())));
+        };
+
+        tick(&mut rt);
+        assert!(
+            rt.locomotions[&player].player_offset.distance(Vec3::new(10.0, 0.0, 0.0)) < 1e-4,
+            "expected the player to be teleported onto pad_b, got {:?}",
+            rt.locomotions[&player].player_offset
+        );
+
+        tick(&mut rt);
+        assert!(
+            rt.locomotions[&player].player_offset.distance(Vec3::new(10.0, 0.0, 0.0)) < 1e-4,
+            "expected pad_b to stay disarmed while the player is still standing on it, got {:?}",
+            rt.locomotions[&player].player_offset
+        );
+
+        rt.locomotions.get_mut(&player).unwrap().player_offset = Vec3::new(5.0, 0.0, 0.0);
+        tick(&mut rt);
+        assert!(
+            rt.locomotions[&player].player_offset.distance(Vec3::new(5.0, 0.0, 0.0)) < 1e-4,
+            "player standing on neither pad should not be teleported"
+        );
+
+        rt.locomotions.get_mut(&player).unwrap().player_offset = Vec3::new(10.0, 0.0, 0.0);
+        tick(&mut rt);
+        assert!(
+            rt.locomotions[&player].player_offset.distance(Vec3::new(0.0, 0.0, 0.0)) < 1e-4,
+            "expected re-entering pad_b after fully walking off to teleport again, got {:?}",
+            rt.locomotions[&player].player_offset
+        );
+    }
+
+    #[test]
+    fn ui_button_click_fires_on_press_only_while_aimed_and_pressed() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = empty_scene_dir("space_soup_engine_ui_pointer_test");
+        std::fs::write(
+            dir.join("scenes/test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "click_me",
+                        "cuboid": { "position": [0.0, 1.5, -3.0], "half_size": [0.3, 0.3, 0.05] },
+                        "ui_button": { "label": "Click Me" },
+                        "script": "fn on_press(button) { if button == \"ui_click\" { move_object(\"marker\", 1.0, 2.0, 3.0); } }"
+                    },
+                    {
+                        "id": "marker",
+                        "cuboid": { "position": [0.0, 0.0, 0.0] }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let player = PlayerId::new();
+        let mut rig = PlayerRig::new();
+        rig.set_hand_aim(Hand::Right, Vec3::new(0.0, 1.5, 0.0), Quat::IDENTITY);
+
+        let (_, _, _, _, lasers, _, _, _) = rt.update(
+            1.0 / 60.0,
+            &one_player(player, frame(rig.clone(), InputFrame::default())),
+        );
+        assert!(
+            lasers.iter().any(|l| l.id.contains("__ui_pointer_")),
+            "expected a pointer laser while aimed at the button"
+        );
+        assert_eq!(
+            rt.scene().find_object("marker").unwrap().cuboid.position,
+            Vec3::ZERO,
+            "button shouldn't fire without a trigger press"
+        );
+
+        let mut click_input = InputFrame::default();
+        click_input.button_presses.push(ButtonPress {
+            button: "trigger".to_string(),
+            object_id: None,
+        });
+        rt.update(
+            1.0 / 60.0,
+            &one_player(
+                player,
+                PlayerFrameInput {
+                    rig: rig.clone(),
+                    input: click_input,
+                    locomotion_input: LocomotionInput::default(),
+                    teleport_target: None,
+                },
+            ),
+        );
+        let marker_pos = rt.scene().find_object("marker").unwrap().cuboid.position;
+        assert!(
+            marker_pos.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-4,
+            "expected the button's on_press to move the marker, got {marker_pos:?}"
+        );
+
+        rig.set_hand_aim(Hand::Right, Vec3::new(0.0, 1.5, 0.0), Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
+        let marker_pos = rt.scene().find_object("marker").unwrap().cuboid.position;
+        assert!(
+            marker_pos.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-4,
+            "marker shouldn't move again once aim leaves the button, got {marker_pos:?}"
+        );
+    }
+
+    fn write_two_scene_game(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test_a","scenes":["test_a","test_b"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("scenes/test_a.json"),
+            r#"{
+                "name": "test_a",
+                "objects": [
+                    {
+                        "id": "portal",
+                        "cuboid": { "position": [0.0, 0.0, 0.0], "half_size": [1.0, 1.0, 1.0] },
+                        "teleportal": { "target_scene": "test_b" }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("scenes/test_b.json"),
+            r#"{
+                "name": "test_b",
+                "objects": [
+                    {
+                        "id": "arrival",
+                        "cuboid": { "position": [5.0, 0.0, 7.0] },
+                        "spawn_point": {}
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn cross_scene_teleportal_switches_scenes_and_repositions_the_player() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_cross_scene_teleport_test");
+        write_two_scene_game(&dir);
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        assert_eq!(rt.scene_name(), "test_a");
+
+        let player = PlayerId::new();
+        let mut rig = PlayerRig::new();
+        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+
+        let (_, _, _, _, _, _, _, scene_change) = rt.update(
+            1.0 / 60.0,
+            &one_player(player, frame(rig, InputFrame::default())),
+        );
+        let next_scene = scene_change.expect("expected the portal to request a scene change");
+        rt.load_scene(&next_scene).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(rt.scene_name(), "test_b");
+        assert!(
+            rt.locomotions[&player].player_offset.distance(Vec3::new(5.0, 0.0, 7.0)) < 1e-4,
+            "expected the player to land on test_b's own spawn point, got {:?}",
+            rt.locomotions[&player].player_offset
+        );
+    }
+
+    #[test]
+    fn load_scene_repositions_already_connected_players_to_the_new_spawn_point() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_load_scene_reposition_test");
+        write_two_scene_game(&dir);
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+
+        let player = PlayerId::new();
+        let mut rig = PlayerRig::new();
+        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
+
+        rt.locomotions.get_mut(&player).unwrap().player_offset = Vec3::new(99.0, 0.0, 99.0);
+
+        rt.load_scene("test_b").unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            rt.locomotions[&player].player_offset.distance(Vec3::new(5.0, 0.0, 7.0)) < 1e-4,
+            "expected load_scene to reposition the already-connected player to the new scene's spawn point, got {:?}",
+            rt.locomotions[&player].player_offset
         );
     }
 }

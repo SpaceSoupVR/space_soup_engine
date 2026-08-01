@@ -223,7 +223,11 @@ impl SoundEngine {
         }
     }
 
-    pub fn active_sounds(&self, objects: &[GameObject]) -> Vec<(String, String, Vec3, f32, f32, bool)> {
+    #[allow(clippy::type_complexity)]
+    pub fn active_sounds(
+        &self,
+        objects: &[GameObject],
+    ) -> Vec<(String, String, Vec3, f32, f32, bool, f32, f32)> {
         self.active
             .iter()
             .filter_map(|id| {
@@ -236,6 +240,8 @@ impl SoundEngine {
                     sound.volume,
                     sound.pitch,
                     sound.looping,
+                    sound.min_distance,
+                    sound.max_distance,
                 ))
             })
             .collect()

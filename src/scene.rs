@@ -28,6 +28,18 @@ impl Default for CuboidStyle {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum CuboidShape {
+    Box,
+    Cylinder,
+}
+
+impl Default for CuboidShape {
+    fn default() -> Self {
+        Self::Box
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CuboidDef {
     #[serde(default)]
@@ -42,10 +54,6 @@ pub struct CuboidDef {
     pub wire_color: Color3,
     #[serde(default)]
     pub style: CuboidStyle,
-    /// 0.0 = not reflective, 1.0 = fully mirror-blended. Approximated via
-    /// screen-space reflections (see space_soup/src/renderer/ssr.rs) -- only
-    /// cuboid objects support this (mesh/GLB objects already use all 4 of
-    /// wgpu's default max bind groups).
     #[serde(default)]
     pub reflectivity: f32,
 }
@@ -386,24 +394,9 @@ fn default_cone_angle() -> f32 {
     45.0
 }
 fn default_glow_range() -> f32 {
-    // A real light bulb's own housing and immediate surroundings should
-    // read as lit even outside a spotlight's narrow cone -- 0.6 barely
-    // cleared the fixture itself (confirmed by screenshotting the rendered
-    // result: nearby geometry stayed dark), so this needs to reach a couple
-    // meters out to actually brighten neighboring objects/floor.
     2.5
 }
 fn default_glow_intensity() -> f32 {
-    // 90 gave a strong, clearly visible bleed onto surfaces ~1.5m away, but
-    // also blew the fixture's own nearby geometry (e.g. the crossbar between
-    // the two work_light_stand lamp heads, mere centimeters from the light)
-    // out to solid white -- an omnidirectional point light's falloff scales
-    // with 1/distance^2, so any intensity strong enough to read clearly at
-    // range will overexpose anything sitting right next to it. Pixel-swept
-    // this down until the near-field blowout was gone (confirmed via
-    // screenshot: 0 fully-white-saturated pixels on that crossbar, down from
-    // ~10% of the sampled region at 90) -- the medium-range bleed is more
-    // modest as a result, but not blowing out the fixture itself matters more.
     8.0
 }
 fn default_glare_spread() -> f32 {
@@ -413,13 +406,6 @@ fn default_true() -> bool {
     true
 }
 
-/// Which of the 6 directions (relative to the light's own facing --
-/// front/back along its aim, the rest perpendicular to that) show a small
-/// bulb-icon marker in the editor/preview viewport. All default to visible
-/// (so the fixture reads as an obvious lit bulb from any angle); toggling
-/// one off is how you say e.g. "no marker visible from directly behind this
-/// fixture". Purely a web-editor visual concern, like glare_spread below --
-/// not read by collect_render_lights or by quest_app/space_soup at all.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlareFacesDef {
     #[serde(default = "default_true")]
@@ -461,37 +447,14 @@ pub struct LightDef {
     pub range: f32,
     #[serde(default = "default_cone_angle")]
     pub cone_angle_deg: f32,
-    /// A real light bulb bleeds a soft glow onto its own housing and
-    /// immediate surroundings in every direction, not just down whatever
-    /// narrow beam/cone it's aimed at -- a spotlight alone leaves the
-    /// fixture itself and anything near it looking unlit. This is the range
-    /// (meters) of a small omnidirectional fill light created alongside the
-    /// main one to cover that -- real light hitting nearby geometry, not a
-    /// visible glow sprite (see glare_faces/glare_spread below for the
-    /// actual bulb-icon markers).
     #[serde(default = "default_glow_range")]
     pub glow_range: f32,
-    /// Intensity (same WGSL-pipeline units as `intensity`) of that local
-    /// fill light.
     #[serde(default = "default_glow_intensity")]
     pub glow_intensity: f32,
-    /// Whether the local fill light (glow_range/glow_intensity) is on at
-    /// all -- like glare_faces/glare_spread, this is a web-editor-only
-    /// preview concern (not read by collect_render_lights or by
-    /// quest_app/space_soup), so a fixture can be previewed with just its
-    /// spot/point beam and no near-field bleed.
     #[serde(default = "default_true")]
     pub glow_enabled: bool,
-    /// Which of the 6 directions show a bulb-icon marker -- see
-    /// GlareFacesDef.
     #[serde(default)]
     pub glare_faces: GlareFacesDef,
-    /// How far (meters) each enabled marker sits from the light's own
-    /// position, along its own direction -- clears the fixture's own opaque
-    /// housing mesh (a marker sitting exactly at the light's position gets
-    /// depth-occluded by it, confirmed by screenshotting the rendered
-    /// result) and is what actually spreads the 6 markers into visually
-    /// separate icons instead of one at the center.
     #[serde(default = "default_glare_spread")]
     pub glare_spread: f32,
 }
@@ -547,6 +510,17 @@ pub struct SoundSourceDef {
     pub cone_angle_deg: f32,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SpawnPointDef {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeleportalDef {
+    #[serde(default)]
+    pub target_id: Option<String>,
+    #[serde(default)]
+    pub target_scene: Option<String>,
+}
+
 fn default_particle_size() -> f32 {
     0.03
 }
@@ -583,11 +557,6 @@ pub struct ParticleEmitterDef {
     pub speed: f32,
     #[serde(default = "default_spread_deg")]
     pub spread_deg: f32,
-    /// How much a particle grows over its life: final_size = particle_size
-    /// * (1 + size_growth) at the end of its lifetime (0.0 = constant size,
-    /// 1.0 = doubles, 2.0 = triples) -- real smoke/dust expands as it
-    /// disperses; a flat particle size reads as rain/embers instead.
-    /// Defaults to 0 so every existing emitter's look is unchanged.
     #[serde(default = "default_size_growth")]
     pub size_growth: f32,
 }
@@ -632,6 +601,68 @@ impl Default for LaserDef {
             color: default_laser_color(),
             max_distance: default_laser_max_distance(),
             beam_width: default_beam_width(),
+        }
+    }
+}
+
+fn default_panel_width() -> f32 {
+    0.6
+}
+fn default_panel_height() -> f32 {
+    0.4
+}
+fn default_panel_bg_color() -> Color3 {
+    Color3(30, 30, 36, 230)
+}
+fn default_panel_title() -> String {
+    String::new()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPanelDef {
+    #[serde(default = "default_panel_width")]
+    pub width: f32,
+    #[serde(default = "default_panel_height")]
+    pub height: f32,
+    #[serde(default = "default_panel_bg_color")]
+    pub background_color: Color3,
+    #[serde(default = "default_panel_title")]
+    pub title: String,
+}
+
+impl Default for UiPanelDef {
+    fn default() -> Self {
+        Self {
+            width: default_panel_width(),
+            height: default_panel_height(),
+            background_color: default_panel_bg_color(),
+            title: default_panel_title(),
+        }
+    }
+}
+
+fn default_button_color() -> Color3 {
+    Color3(70, 90, 140, 255)
+}
+fn default_button_text_color() -> Color3 {
+    Color3(255, 255, 255, 255)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiButtonDef {
+    pub label: String,
+    #[serde(default = "default_button_color")]
+    pub color: Color3,
+    #[serde(default = "default_button_text_color")]
+    pub text_color: Color3,
+}
+
+impl Default for UiButtonDef {
+    fn default() -> Self {
+        Self {
+            label: String::new(),
+            color: default_button_color(),
+            text_color: default_button_text_color(),
         }
     }
 }
@@ -686,7 +717,7 @@ pub struct GameObject {
     pub terrain_collider: Option<TerrainColliderDef>,
 
     #[serde(default)]
-    pub light: Option<LightDef>,
+    pub lights: Vec<LightDef>,
 
     #[serde(default)]
     pub sound: Option<SoundSourceDef>,
@@ -696,6 +727,18 @@ pub struct GameObject {
 
     #[serde(default)]
     pub laser: Option<LaserDef>,
+
+    #[serde(default)]
+    pub spawn_point: Option<SpawnPointDef>,
+
+    #[serde(default)]
+    pub teleportal: Option<TeleportalDef>,
+
+    #[serde(default)]
+    pub ui_panel: Option<UiPanelDef>,
+
+    #[serde(default)]
+    pub ui_button: Option<UiButtonDef>,
 }
 
 impl GameObject {
