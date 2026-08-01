@@ -134,6 +134,8 @@ pub struct Keyframe {
     pub rotation: Option<Quat>,
     pub scale: Option<Vec3>,
     pub color: Option<Color3>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub easing: Option<Easing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -150,6 +152,29 @@ impl Animation {
     pub fn duration(&self) -> f32 {
         self.keyframes.iter().map(|k| k.t).fold(0.0_f32, f32::max)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PartDriver {
+    HoldTrigger,
+    HoldGrip,
+    HandPull,
+    Manual,
+}
+
+impl Default for PartDriver {
+    fn default() -> Self {
+        Self::Manual
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PartAnimationDef {
+    pub clip: String,
+    #[serde(default)]
+    pub driver: PartDriver,
+    #[serde(default)]
+    pub easing: Easing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,7 +299,7 @@ fn default_slider_damping() -> f32 {
     20.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SliderJointDef {
     pub parent: String,
 
@@ -605,69 +630,7 @@ impl Default for LaserDef {
     }
 }
 
-fn default_panel_width() -> f32 {
-    0.6
-}
-fn default_panel_height() -> f32 {
-    0.4
-}
-fn default_panel_bg_color() -> Color3 {
-    Color3(30, 30, 36, 230)
-}
-fn default_panel_title() -> String {
-    String::new()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiPanelDef {
-    #[serde(default = "default_panel_width")]
-    pub width: f32,
-    #[serde(default = "default_panel_height")]
-    pub height: f32,
-    #[serde(default = "default_panel_bg_color")]
-    pub background_color: Color3,
-    #[serde(default = "default_panel_title")]
-    pub title: String,
-}
-
-impl Default for UiPanelDef {
-    fn default() -> Self {
-        Self {
-            width: default_panel_width(),
-            height: default_panel_height(),
-            background_color: default_panel_bg_color(),
-            title: default_panel_title(),
-        }
-    }
-}
-
-fn default_button_color() -> Color3 {
-    Color3(70, 90, 140, 255)
-}
-fn default_button_text_color() -> Color3 {
-    Color3(255, 255, 255, 255)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiButtonDef {
-    pub label: String,
-    #[serde(default = "default_button_color")]
-    pub color: Color3,
-    #[serde(default = "default_button_text_color")]
-    pub text_color: Color3,
-}
-
-impl Default for UiButtonDef {
-    fn default() -> Self {
-        Self {
-            label: String::new(),
-            color: default_button_color(),
-            text_color: default_button_text_color(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GameObject {
     pub id: String,
 
@@ -691,6 +654,9 @@ pub struct GameObject {
 
     #[serde(default)]
     pub animation_bindings: Vec<AnimationBinding>,
+
+    #[serde(default)]
+    pub part_animations: Vec<PartAnimationDef>,
 
     #[serde(default)]
     pub rig_attachment: Option<RigAttachmentDef>,
@@ -882,6 +848,115 @@ mod grip_pose_migration_test {
         assert!(saved.contains("grip_pose_left"));
         assert!(saved.contains("grip_pose_right"));
         assert!(!saved.contains("\"grip_pose\":"));
+    }
+}
+
+#[cfg(test)]
+mod grip_points_authoring_test {
+    use super::*;
+    use crate::events::Hand;
+
+    #[test]
+    fn authored_grip_points_deserialize_with_their_values() {
+        let json = r#"{
+            "name": "test",
+            "objects": [{
+                "id": "m4a1",
+                "grip_points": [
+                    {
+                        "name": "trigger_hand",
+                        "kind": "Snap",
+                        "hand": "right",
+                        "local_pos": [0.0, -0.02, 0.11],
+                        "local_rot": [0.0, 0.0, 0.0, 1.0],
+                        "hand_offset_scale": [1.0, 1.0, 1.0],
+                        "finger_curl": {},
+                        "grab_range": 0.12
+                    },
+                    {
+                        "name": "foregrip",
+                        "kind": "Pinch",
+                        "hand": "left",
+                        "local_pos": [0.0, -0.03, -0.14],
+                        "grab_range": null
+                    }
+                ]
+            }]
+        }"#;
+        let tmp = std::env::temp_dir().join("grip_points_authoring_test.json");
+        std::fs::write(&tmp, json).unwrap();
+        let scene = Scene::load(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+
+        let obj = &scene.objects[0];
+        assert_eq!(obj.grip_points.len(), 2);
+
+        let right = obj.grip_point("trigger_hand").expect("right-hand point");
+        assert_eq!(right.kind, GripKind::Snap);
+        assert_eq!(right.hand, Hand::Right);
+        assert_eq!(right.local_pos, [0.0, -0.02, 0.11]);
+        assert_eq!(right.grab_range, Some(0.12));
+
+        let left = obj.grip_point("foregrip").expect("left-hand point");
+        assert_eq!(left.kind, GripKind::Pinch);
+        assert_eq!(left.hand, Hand::Left);
+        assert_eq!(left.grab_range, None);
+        assert_eq!(left.local_rot, [0.0, 0.0, 0.0, 1.0]);
+
+        let out = std::env::temp_dir().join("grip_points_authoring_test_out.json");
+        scene.save(&out).unwrap();
+        let reloaded = Scene::load(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(reloaded.objects[0].grip_points, obj.grip_points);
+    }
+}
+
+#[cfg(test)]
+mod slider_joint_authoring_test {
+    use super::*;
+
+    #[test]
+    fn authored_slider_joint_deserializes_with_its_values() {
+        let json = r#"{
+            "name": "test",
+            "objects": [{
+                "id": "sliding_door",
+                "slider_joint": {
+                    "parent": "door_frame",
+                    "axis": [0.0, 1.0, 0.0],
+                    "travel": 1.2,
+                    "spring_stiffness": 250.0,
+                    "spring_damping": 15.0
+                }
+            }, {
+                "id": "defaults_only",
+                "slider_joint": { "parent": "rail" }
+            }]
+        }"#;
+        let tmp = std::env::temp_dir().join("slider_joint_authoring_test.json");
+        std::fs::write(&tmp, json).unwrap();
+        let scene = Scene::load(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+
+        let door = scene.objects[0].slider_joint.as_ref().expect("slider present");
+        assert_eq!(door.parent, "door_frame");
+        assert_eq!(door.axis, [0.0, 1.0, 0.0]);
+        assert_eq!(door.travel, 1.2);
+        assert_eq!(door.spring_stiffness, 250.0);
+        assert_eq!(door.spring_damping, 15.0);
+
+        let defs = scene.objects[1].slider_joint.as_ref().expect("slider present");
+        assert_eq!(defs.parent, "rail");
+        assert_eq!(defs.axis, [1.0, 0.0, 0.0]);
+        assert_eq!(defs.travel, 0.02);
+        assert_eq!(defs.spring_stiffness, 400.0);
+        assert_eq!(defs.spring_damping, 20.0);
+
+        let out = std::env::temp_dir().join("slider_joint_authoring_test_out.json");
+        scene.save(&out).unwrap();
+        let reloaded = Scene::load(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(reloaded.objects[0].slider_joint, scene.objects[0].slider_joint);
     }
 }
 

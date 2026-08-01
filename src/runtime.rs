@@ -21,7 +21,7 @@ use crate::scene::{
 };
 use crate::script::{EngineCommand, ScriptHost};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PlayerFrameInput {
     pub rig: PlayerRig,
     pub input: InputFrame,
@@ -313,6 +313,19 @@ impl GameRuntime {
                 .or_insert_with(|| Self::new_locomotion_at(spawn));
             let prev_xz = (locomotion.player_offset.x, locomotion.player_offset.z);
             locomotion.update(dt, &frame.locomotion_input, &rig, frame.teleport_target);
+            // SRV LOCO DIAGNOSTIC: what the SERVER received from the client + the raw
+            // result of locomotion.update (BEFORE wall/ground physics). recv~0 while the
+            // client pushes => wire/deserialize loss; recv nonzero but off/yaw unchanged
+            // => update logic; off moves here but broadcast is 0 => wall/ground reverts it.
+            let li = &frame.locomotion_input;
+            if li.move_stick.0.abs() > 0.1 || li.move_stick.1.abs() > 0.1 || li.turn_stick_x.abs() > 0.1 {
+                log::info!(
+                    "SRV LOCO: recv move=({:.2},{:.2}) turn={:.2} dt={:.4} -> raw off=({:.2},{:.2},{:.2}) yaw={:.1}",
+                    li.move_stick.0, li.move_stick.1, li.turn_stick_x, dt,
+                    locomotion.player_offset.x, locomotion.player_offset.y, locomotion.player_offset.z,
+                    locomotion.player_yaw.to_degrees()
+                );
+            }
             Self::apply_wall_collision(locomotion, &self.rigid_physics, prev_xz);
             Self::apply_ground_follow(locomotion, &self.rigid_physics, prev_xz);
         }
