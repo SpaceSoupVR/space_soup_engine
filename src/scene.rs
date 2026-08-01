@@ -42,10 +42,6 @@ pub struct CuboidDef {
     pub wire_color: Color3,
     #[serde(default)]
     pub style: CuboidStyle,
-    /// 0.0 = not reflective, 1.0 = fully mirror-blended. Approximated via
-    /// screen-space reflections (see space_soup/src/renderer/ssr.rs) -- only
-    /// cuboid objects support this (mesh/GLB objects already use all 4 of
-    /// wgpu's default max bind groups).
     #[serde(default)]
     pub reflectivity: f32,
 }
@@ -126,6 +122,8 @@ pub struct Keyframe {
     pub rotation: Option<Quat>,
     pub scale: Option<Vec3>,
     pub color: Option<Color3>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub easing: Option<Easing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -142,6 +140,29 @@ impl Animation {
     pub fn duration(&self) -> f32 {
         self.keyframes.iter().map(|k| k.t).fold(0.0_f32, f32::max)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PartDriver {
+    HoldTrigger,
+    HoldGrip,
+    HandPull,
+    Manual,
+}
+
+impl Default for PartDriver {
+    fn default() -> Self {
+        Self::Manual
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PartAnimationDef {
+    pub clip: String,
+    #[serde(default)]
+    pub driver: PartDriver,
+    #[serde(default)]
+    pub easing: Easing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,7 +287,7 @@ fn default_slider_damping() -> f32 {
     20.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SliderJointDef {
     pub parent: String,
 
@@ -386,24 +407,9 @@ fn default_cone_angle() -> f32 {
     45.0
 }
 fn default_glow_range() -> f32 {
-    // A real light bulb's own housing and immediate surroundings should
-    // read as lit even outside a spotlight's narrow cone -- 0.6 barely
-    // cleared the fixture itself (confirmed by screenshotting the rendered
-    // result: nearby geometry stayed dark), so this needs to reach a couple
-    // meters out to actually brighten neighboring objects/floor.
     2.5
 }
 fn default_glow_intensity() -> f32 {
-    // 90 gave a strong, clearly visible bleed onto surfaces ~1.5m away, but
-    // also blew the fixture's own nearby geometry (e.g. the crossbar between
-    // the two work_light_stand lamp heads, mere centimeters from the light)
-    // out to solid white -- an omnidirectional point light's falloff scales
-    // with 1/distance^2, so any intensity strong enough to read clearly at
-    // range will overexpose anything sitting right next to it. Pixel-swept
-    // this down until the near-field blowout was gone (confirmed via
-    // screenshot: 0 fully-white-saturated pixels on that crossbar, down from
-    // ~10% of the sampled region at 90) -- the medium-range bleed is more
-    // modest as a result, but not blowing out the fixture itself matters more.
     8.0
 }
 fn default_glare_spread() -> f32 {
@@ -413,13 +419,6 @@ fn default_true() -> bool {
     true
 }
 
-/// Which of the 6 directions (relative to the light's own facing --
-/// front/back along its aim, the rest perpendicular to that) show a small
-/// bulb-icon marker in the editor/preview viewport. All default to visible
-/// (so the fixture reads as an obvious lit bulb from any angle); toggling
-/// one off is how you say e.g. "no marker visible from directly behind this
-/// fixture". Purely a web-editor visual concern, like glare_spread below --
-/// not read by collect_render_lights or by quest_app/space_soup at all.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlareFacesDef {
     #[serde(default = "default_true")]
@@ -461,37 +460,14 @@ pub struct LightDef {
     pub range: f32,
     #[serde(default = "default_cone_angle")]
     pub cone_angle_deg: f32,
-    /// A real light bulb bleeds a soft glow onto its own housing and
-    /// immediate surroundings in every direction, not just down whatever
-    /// narrow beam/cone it's aimed at -- a spotlight alone leaves the
-    /// fixture itself and anything near it looking unlit. This is the range
-    /// (meters) of a small omnidirectional fill light created alongside the
-    /// main one to cover that -- real light hitting nearby geometry, not a
-    /// visible glow sprite (see glare_faces/glare_spread below for the
-    /// actual bulb-icon markers).
     #[serde(default = "default_glow_range")]
     pub glow_range: f32,
-    /// Intensity (same WGSL-pipeline units as `intensity`) of that local
-    /// fill light.
     #[serde(default = "default_glow_intensity")]
     pub glow_intensity: f32,
-    /// Whether the local fill light (glow_range/glow_intensity) is on at
-    /// all -- like glare_faces/glare_spread, this is a web-editor-only
-    /// preview concern (not read by collect_render_lights or by
-    /// quest_app/space_soup), so a fixture can be previewed with just its
-    /// spot/point beam and no near-field bleed.
     #[serde(default = "default_true")]
     pub glow_enabled: bool,
-    /// Which of the 6 directions show a bulb-icon marker -- see
-    /// GlareFacesDef.
     #[serde(default)]
     pub glare_faces: GlareFacesDef,
-    /// How far (meters) each enabled marker sits from the light's own
-    /// position, along its own direction -- clears the fixture's own opaque
-    /// housing mesh (a marker sitting exactly at the light's position gets
-    /// depth-occluded by it, confirmed by screenshotting the rendered
-    /// result) and is what actually spreads the 6 markers into visually
-    /// separate icons instead of one at the center.
     #[serde(default = "default_glare_spread")]
     pub glare_spread: f32,
 }
@@ -583,11 +559,6 @@ pub struct ParticleEmitterDef {
     pub speed: f32,
     #[serde(default = "default_spread_deg")]
     pub spread_deg: f32,
-    /// How much a particle grows over its life: final_size = particle_size
-    /// * (1 + size_growth) at the end of its lifetime (0.0 = constant size,
-    /// 1.0 = doubles, 2.0 = triples) -- real smoke/dust expands as it
-    /// disperses; a flat particle size reads as rain/embers instead.
-    /// Defaults to 0 so every existing emitter's look is unchanged.
     #[serde(default = "default_size_growth")]
     pub size_growth: f32,
 }
@@ -636,7 +607,7 @@ impl Default for LaserDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GameObject {
     pub id: String,
 
@@ -660,6 +631,9 @@ pub struct GameObject {
 
     #[serde(default)]
     pub animation_bindings: Vec<AnimationBinding>,
+
+    #[serde(default)]
+    pub part_animations: Vec<PartAnimationDef>,
 
     #[serde(default)]
     pub rig_attachment: Option<RigAttachmentDef>,
@@ -839,6 +813,115 @@ mod grip_pose_migration_test {
         assert!(saved.contains("grip_pose_left"));
         assert!(saved.contains("grip_pose_right"));
         assert!(!saved.contains("\"grip_pose\":"));
+    }
+}
+
+#[cfg(test)]
+mod grip_points_authoring_test {
+    use super::*;
+    use crate::events::Hand;
+
+    #[test]
+    fn authored_grip_points_deserialize_with_their_values() {
+        let json = r#"{
+            "name": "test",
+            "objects": [{
+                "id": "m4a1",
+                "grip_points": [
+                    {
+                        "name": "trigger_hand",
+                        "kind": "Snap",
+                        "hand": "right",
+                        "local_pos": [0.0, -0.02, 0.11],
+                        "local_rot": [0.0, 0.0, 0.0, 1.0],
+                        "hand_offset_scale": [1.0, 1.0, 1.0],
+                        "finger_curl": {},
+                        "grab_range": 0.12
+                    },
+                    {
+                        "name": "foregrip",
+                        "kind": "Pinch",
+                        "hand": "left",
+                        "local_pos": [0.0, -0.03, -0.14],
+                        "grab_range": null
+                    }
+                ]
+            }]
+        }"#;
+        let tmp = std::env::temp_dir().join("grip_points_authoring_test.json");
+        std::fs::write(&tmp, json).unwrap();
+        let scene = Scene::load(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+
+        let obj = &scene.objects[0];
+        assert_eq!(obj.grip_points.len(), 2);
+
+        let right = obj.grip_point("trigger_hand").expect("right-hand point");
+        assert_eq!(right.kind, GripKind::Snap);
+        assert_eq!(right.hand, Hand::Right);
+        assert_eq!(right.local_pos, [0.0, -0.02, 0.11]);
+        assert_eq!(right.grab_range, Some(0.12));
+
+        let left = obj.grip_point("foregrip").expect("left-hand point");
+        assert_eq!(left.kind, GripKind::Pinch);
+        assert_eq!(left.hand, Hand::Left);
+        assert_eq!(left.grab_range, None);
+        assert_eq!(left.local_rot, [0.0, 0.0, 0.0, 1.0]);
+
+        let out = std::env::temp_dir().join("grip_points_authoring_test_out.json");
+        scene.save(&out).unwrap();
+        let reloaded = Scene::load(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(reloaded.objects[0].grip_points, obj.grip_points);
+    }
+}
+
+#[cfg(test)]
+mod slider_joint_authoring_test {
+    use super::*;
+
+    #[test]
+    fn authored_slider_joint_deserializes_with_its_values() {
+        let json = r#"{
+            "name": "test",
+            "objects": [{
+                "id": "sliding_door",
+                "slider_joint": {
+                    "parent": "door_frame",
+                    "axis": [0.0, 1.0, 0.0],
+                    "travel": 1.2,
+                    "spring_stiffness": 250.0,
+                    "spring_damping": 15.0
+                }
+            }, {
+                "id": "defaults_only",
+                "slider_joint": { "parent": "rail" }
+            }]
+        }"#;
+        let tmp = std::env::temp_dir().join("slider_joint_authoring_test.json");
+        std::fs::write(&tmp, json).unwrap();
+        let scene = Scene::load(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+
+        let door = scene.objects[0].slider_joint.as_ref().expect("slider present");
+        assert_eq!(door.parent, "door_frame");
+        assert_eq!(door.axis, [0.0, 1.0, 0.0]);
+        assert_eq!(door.travel, 1.2);
+        assert_eq!(door.spring_stiffness, 250.0);
+        assert_eq!(door.spring_damping, 15.0);
+
+        let defs = scene.objects[1].slider_joint.as_ref().expect("slider present");
+        assert_eq!(defs.parent, "rail");
+        assert_eq!(defs.axis, [1.0, 0.0, 0.0]);
+        assert_eq!(defs.travel, 0.02);
+        assert_eq!(defs.spring_stiffness, 400.0);
+        assert_eq!(defs.spring_damping, 20.0);
+
+        let out = std::env::temp_dir().join("slider_joint_authoring_test_out.json");
+        scene.save(&out).unwrap();
+        let reloaded = Scene::load(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(reloaded.objects[0].slider_joint, scene.objects[0].slider_joint);
     }
 }
 

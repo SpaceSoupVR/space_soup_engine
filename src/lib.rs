@@ -11,6 +11,7 @@ pub mod rig_profile;
 pub mod rigid_physics;
 pub mod runtime;
 pub mod scene;
+pub mod schema;
 pub mod script;
 
 pub use attach::{Attachment, AttachmentTable};
@@ -32,7 +33,7 @@ pub use runtime::{
 pub use scene::{
     Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape, Color3, CuboidDef,
     CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe, LaserDef,
-    LightDef, LightKind, MeshRef, ParticleEmitterDef, PlayMode, RigAttachmentDef, RigidBodyDef,
-    Scene, SliderJointDef, SoundSourceDef, BINDING_BUTTONS,
+    LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver, PlayMode,
+    RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef, BINDING_BUTTONS,
 };
 

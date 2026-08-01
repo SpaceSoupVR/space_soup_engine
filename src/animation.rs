@@ -72,7 +72,7 @@ pub fn sample(anim: &Animation, t: f32) -> Sample {
 
     let span = (next.t - prev.t).max(0.0001);
     let raw_alpha = ((t - prev.t) / span).clamp(0.0, 1.0);
-    let alpha = anim.easing.apply(raw_alpha);
+    let alpha = prev.easing.unwrap_or(anim.easing).apply(raw_alpha);
 
     Sample {
         position: lerp_opt_vec3(prev.position, next.position, alpha),

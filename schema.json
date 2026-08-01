@@ -1,0 +1,153 @@
+{
+  "components": [
+    {
+      "name": "cuboid",
+      "rust_type": "CuboidDef",
+      "cardinality": "required"
+    },
+    {
+      "name": "mesh",
+      "rust_type": "MeshRef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "is_trigger",
+      "rust_type": "bool",
+      "cardinality": "required"
+    },
+    {
+      "name": "hidden",
+      "rust_type": "bool",
+      "cardinality": "required"
+    },
+    {
+      "name": "script",
+      "rust_type": "String",
+      "cardinality": "optional"
+    },
+    {
+      "name": "animations",
+      "rust_type": "Animation",
+      "cardinality": "list"
+    },
+    {
+      "name": "animation_bindings",
+      "rust_type": "AnimationBinding",
+      "cardinality": "list"
+    },
+    {
+      "name": "part_animations",
+      "rust_type": "PartAnimationDef",
+      "cardinality": "list"
+    },
+    {
+      "name": "rig_attachment",
+      "rust_type": "RigAttachmentDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "grip_pose_left",
+      "rust_type": "GripPoseDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "grip_pose_right",
+      "rust_type": "GripPoseDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "rigid_body",
+      "rust_type": "RigidBodyDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "grip_points",
+      "rust_type": "GripPointDef",
+      "cardinality": "list"
+    },
+    {
+      "name": "slider_joint",
+      "rust_type": "SliderJointDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "terrain_collider",
+      "rust_type": "TerrainColliderDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "node_filter",
+          "kind": "text",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "light",
+      "rust_type": "LightDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "sound",
+      "rust_type": "SoundSourceDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "clip",
+          "kind": "text",
+          "optional": false
+        },
+        {
+          "name": "volume",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "pitch",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "min_distance",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "max_distance",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "looping",
+          "kind": "bool",
+          "optional": false
+        },
+        {
+          "name": "autoplay",
+          "kind": "bool",
+          "optional": false
+        },
+        {
+          "name": "directional",
+          "kind": "bool",
+          "optional": false
+        },
+        {
+          "name": "cone_angle_deg",
+          "kind": "number",
+          "optional": false
+        }
+      ]
+    },
+    {
+      "name": "particle_emitter",
+      "rust_type": "ParticleEmitterDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "laser",
+      "rust_type": "LaserDef",
+      "cardinality": "optional"
+    }
+  ]
+}
