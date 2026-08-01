@@ -699,12 +699,6 @@ pub struct GameObject {
 
     #[serde(default)]
     pub teleportal: Option<TeleportalDef>,
-
-    #[serde(default)]
-    pub ui_panel: Option<UiPanelDef>,
-
-    #[serde(default)]
-    pub ui_button: Option<UiButtonDef>,
 }
 
 impl GameObject {

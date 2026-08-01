@@ -12,7 +12,7 @@ use crate::audio::SoundEngine;
 use crate::events::{Hand, InputFrame};
 use crate::locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget};
 use crate::manifest::Manifest;
-use crate::physics::{ray_intersect_obb, Aabb, CollisionEvent, CollisionTracker};
+use crate::physics::{Aabb, CollisionEvent, CollisionTracker};
 use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
 use crate::scene::{
@@ -87,27 +87,6 @@ pub struct RenderLaser {
     pub beam_width: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RenderUiPanel {
-    pub id: String,
-    pub position: Vec3,
-    pub rotation: Quat,
-    pub width: f32,
-    pub height: f32,
-    pub background_color: Color3,
-    pub title: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RenderUiButton {
-    pub id: String,
-    pub position: Vec3,
-    pub rotation: Quat,
-    pub half_size: Vec3,
-    pub color: Color3,
-    pub text_color: Color3,
-    pub label: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundState {
@@ -278,8 +257,6 @@ impl GameRuntime {
         Vec<RenderLight>,
         Vec<RenderParticleEmitter>,
         Vec<RenderLaser>,
-        Vec<RenderUiPanel>,
-        Vec<RenderUiButton>,
         Option<String>,
     ) {
         self.pending_scene_change = None;
@@ -335,7 +312,6 @@ impl GameRuntime {
         self.apply_attachments();
         self.dispatch_collisions();
         self.dispatch_teleportals();
-        let ui_pointer_lasers = self.dispatch_ui_pointer(inputs);
 
         for (&player, frame) in inputs {
             self.update_rig_position_cache(player);
@@ -366,18 +342,13 @@ impl GameRuntime {
         let meshes = self.collect_render_meshes();
         let lights = self.collect_render_lights();
         let particle_emitters = self.collect_render_particle_emitters();
-        let mut lasers = self.collect_render_lasers();
-        lasers.extend(ui_pointer_lasers);
-        let ui_panels = self.collect_render_ui_panels();
-        let ui_buttons = self.collect_render_ui_buttons();
+        let lasers = self.collect_render_lasers();
         (
             cuboids,
             meshes,
             lights,
             particle_emitters,
             lasers,
-            ui_panels,
-            ui_buttons,
             self.pending_scene_change.take(),
         )
     }
@@ -707,67 +678,6 @@ impl GameRuntime {
                 }
             }
         }
-    }
-
-    fn dispatch_ui_pointer(&mut self, inputs: &HashMap<PlayerId, PlayerFrameInput>) -> Vec<RenderLaser> {
-        const UI_POINTER_MAX_DIST: f32 = 8.0;
-        const UI_POINTER_COLOR: Color3 = Color3(120, 190, 255, 255);
-        const UI_POINTER_BEAM_WIDTH: f32 = 0.006;
-
-        let mut lasers = Vec::new();
-
-        for (&player, frame) in inputs {
-            let Some(rig) = self.rigs.get(&player) else {
-                continue;
-            };
-            let trigger_pressed = frame.input.button_presses.iter().any(|b| b.button == "trigger");
-
-            for hand in [Hand::Left, Hand::Right] {
-                let aim = rig.hand_aim(hand);
-                let origin = aim.position;
-                let direction = aim.rotation * Vec3::NEG_Z;
-
-                let mut nearest_hit: Option<(String, f32)> = None;
-                for obj in &self.scene.objects {
-                    if obj.ui_button.is_none() {
-                        continue;
-                    }
-                    let Some(dist) = ray_intersect_obb(
-                        origin,
-                        direction,
-                        obj.cuboid.position,
-                        obj.cuboid.half_size,
-                        obj.cuboid.rotation,
-                        UI_POINTER_MAX_DIST,
-                    ) else {
-                        continue;
-                    };
-                    if nearest_hit.as_ref().is_none_or(|(_, d)| dist < *d) {
-                        nearest_hit = Some((obj.id.clone(), dist));
-                    }
-                }
-
-                let Some((button_id, dist)) = nearest_hit else {
-                    continue;
-                };
-                let end = origin + direction * dist;
-                lasers.push(RenderLaser {
-                    id: format!("__ui_pointer_{}_{}", player.0, hand.as_str()),
-                    origin,
-                    direction,
-                    end,
-                    color: UI_POINTER_COLOR,
-                    beam_width: UI_POINTER_BEAM_WIDTH,
-                });
-
-                if trigger_pressed {
-                    self.script_host.set_current_player(player);
-                    let _ = self.script_host.call(&button_id, "on_press", ("ui_click".to_string(),));
-                }
-            }
-        }
-
-        lasers
     }
 
     fn dispatch_input(&mut self, input: &InputFrame) {
@@ -1116,44 +1026,6 @@ impl GameRuntime {
                     end,
                     color: laser.color,
                     beam_width: laser.beam_width,
-                })
-            })
-            .collect()
-    }
-
-    fn collect_render_ui_panels(&self) -> Vec<RenderUiPanel> {
-        self.scene
-            .objects
-            .iter()
-            .filter_map(|o| {
-                let panel = o.ui_panel.as_ref()?;
-                Some(RenderUiPanel {
-                    id: o.id.clone(),
-                    position: o.cuboid.position,
-                    rotation: o.cuboid.rotation,
-                    width: panel.width,
-                    height: panel.height,
-                    background_color: panel.background_color,
-                    title: panel.title.clone(),
-                })
-            })
-            .collect()
-    }
-
-    fn collect_render_ui_buttons(&self) -> Vec<RenderUiButton> {
-        self.scene
-            .objects
-            .iter()
-            .filter_map(|o| {
-                let button = o.ui_button.as_ref()?;
-                Some(RenderUiButton {
-                    id: o.id.clone(),
-                    position: o.cuboid.position,
-                    rotation: o.cuboid.rotation,
-                    half_size: o.cuboid.half_size,
-                    color: button.color,
-                    text_color: button.text_color,
-                    label: button.label.clone(),
                 })
             })
             .collect()
@@ -1935,83 +1807,6 @@ mod rigid_physics_test {
         );
     }
 
-    #[test]
-    fn ui_button_click_fires_on_press_only_while_aimed_and_pressed() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = empty_scene_dir("space_soup_engine_ui_pointer_test");
-        std::fs::write(
-            dir.join("scenes/test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "click_me",
-                        "cuboid": { "position": [0.0, 1.5, -3.0], "half_size": [0.3, 0.3, 0.05] },
-                        "ui_button": { "label": "Click Me" },
-                        "script": "fn on_press(button) { if button == \"ui_click\" { move_object(\"marker\", 1.0, 2.0, 3.0); } }"
-                    },
-                    {
-                        "id": "marker",
-                        "cuboid": { "position": [0.0, 0.0, 0.0] }
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        let player = PlayerId::new();
-        let mut rig = PlayerRig::new();
-        rig.set_hand_aim(Hand::Right, Vec3::new(0.0, 1.5, 0.0), Quat::IDENTITY);
-
-        let (_, _, _, _, lasers, _, _, _) = rt.update(
-            1.0 / 60.0,
-            &one_player(player, frame(rig.clone(), InputFrame::default())),
-        );
-        assert!(
-            lasers.iter().any(|l| l.id.contains("__ui_pointer_")),
-            "expected a pointer laser while aimed at the button"
-        );
-        assert_eq!(
-            rt.scene().find_object("marker").unwrap().cuboid.position,
-            Vec3::ZERO,
-            "button shouldn't fire without a trigger press"
-        );
-
-        let mut click_input = InputFrame::default();
-        click_input.button_presses.push(ButtonPress {
-            button: "trigger".to_string(),
-            object_id: None,
-        });
-        rt.update(
-            1.0 / 60.0,
-            &one_player(
-                player,
-                PlayerFrameInput {
-                    rig: rig.clone(),
-                    input: click_input,
-                    locomotion_input: LocomotionInput::default(),
-                    teleport_target: None,
-                },
-            ),
-        );
-        let marker_pos = rt.scene().find_object("marker").unwrap().cuboid.position;
-        assert!(
-            marker_pos.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-4,
-            "expected the button's on_press to move the marker, got {marker_pos:?}"
-        );
-
-        rig.set_hand_aim(Hand::Right, Vec3::new(0.0, 1.5, 0.0), Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
-        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
-        let marker_pos = rt.scene().find_object("marker").unwrap().cuboid.position;
-        assert!(
-            marker_pos.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-4,
-            "marker shouldn't move again once aim leaves the button, got {marker_pos:?}"
-        );
-    }
-
     fn write_two_scene_game(dir: &std::path::Path) {
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
         std::fs::write(
@@ -2062,7 +1857,7 @@ mod rigid_physics_test {
         let mut rig = PlayerRig::new();
         rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
 
-        let (_, _, _, _, _, _, _, scene_change) = rt.update(
+        let (_, _, _, _, _, scene_change) = rt.update(
             1.0 / 60.0,
             &one_player(player, frame(rig, InputFrame::default())),
         );

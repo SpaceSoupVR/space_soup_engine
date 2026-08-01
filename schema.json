@@ -83,9 +83,9 @@
       ]
     },
     {
-      "name": "light",
+      "name": "lights",
       "rust_type": "LightDef",
-      "cardinality": "optional"
+      "cardinality": "list"
     },
     {
       "name": "sound",
@@ -147,6 +147,16 @@
     {
       "name": "laser",
       "rust_type": "LaserDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "spawn_point",
+      "rust_type": "SpawnPointDef",
+      "cardinality": "optional"
+    },
+    {
+      "name": "teleportal",
+      "rust_type": "TeleportalDef",
       "cardinality": "optional"
     }
   ]

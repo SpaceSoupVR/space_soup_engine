@@ -105,10 +105,12 @@ pub fn game_object_schema() -> SchemaDescriptor {
                 Optional,
                 terrain_collider_fields()
             ),
-            comp!(light, "LightDef", Optional),
+            comp!(lights, "LightDef", List),
             comp!(sound, "SoundSourceDef", Optional, sound_fields()),
             comp!(particle_emitter, "ParticleEmitterDef", Optional),
             comp!(laser, "LaserDef", Optional),
+            comp!(spawn_point, "SpawnPointDef", Optional),
+            comp!(teleportal, "TeleportalDef", Optional),
         ],
     }
 }
@@ -169,10 +171,12 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         grip_points,
         slider_joint,
         terrain_collider,
-        light,
+        lights,
         sound,
         particle_emitter,
         laser,
+        spawn_point,
+        teleportal,
     } = o;
 }
 
@@ -181,8 +185,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_has_the_nineteen_authorable_components() {
-        assert_eq!(game_object_schema().components.len(), 19);
+    fn schema_has_the_twenty_one_authorable_components() {
+        assert_eq!(game_object_schema().components.len(), 21);
     }
 
     #[test]
@@ -232,7 +236,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 19);
+        assert_eq!(v["components"].as_array().unwrap().len(), 21);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }
