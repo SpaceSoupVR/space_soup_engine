@@ -630,6 +630,341 @@ impl Default for LaserDef {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpticClass {
+    ReflexRedDot,
+    Holographic,
+    Lpvo,
+    FixedPrism,
+    PrecisionScope,
+    Binocular,
+}
+
+impl Default for OpticClass {
+    fn default() -> Self {
+        Self::ReflexRedDot
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MagnificationDef {
+    Fixed(f32),
+    Stepped { steps: Vec<f32> },
+    Continuous { min: f32, max: f32 },
+}
+
+impl Default for MagnificationDef {
+    fn default() -> Self {
+        Self::Fixed(1.0)
+    }
+}
+
+impl MagnificationDef {
+    pub fn min(&self) -> f32 {
+        match self {
+            Self::Fixed(m) => *m,
+            Self::Stepped { steps } => steps.iter().copied().fold(f32::INFINITY, f32::min),
+            Self::Continuous { min, .. } => *min,
+        }
+    }
+
+    pub fn max(&self) -> f32 {
+        match self {
+            Self::Fixed(m) => *m,
+            Self::Stepped { steps } => steps.iter().copied().fold(0.0_f32, f32::max),
+            Self::Continuous { max, .. } => *max,
+        }
+    }
+
+    pub fn is_variable(&self) -> bool {
+        !matches!(self, Self::Fixed(_))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MagnificationControlDef {
+    None,
+    ButtonStep { button: String, wrap: bool },
+    Axis { source: String, sensitivity: f32 },
+    PhysicalRing {
+        ring_node: String,
+        rotation_axis: [f32; 3],
+        angle_range_deg: f32,
+        detents: bool,
+    },
+    PhysicalWheel {
+        wheel_node: String,
+        rotation_axis: [f32; 3],
+        turns: f32,
+    },
+    ScriptOnly,
+}
+
+impl Default for MagnificationControlDef {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LensClipShape {
+    Circle,
+    Ellipse,
+    MeshMask,
+}
+
+impl Default for LensClipShape {
+    fn default() -> Self {
+        Self::Circle
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpticalPathDef {
+    #[serde(default)]
+    pub objective_node: String,
+    #[serde(default)]
+    pub ocular_node: String,
+    #[serde(default)]
+    pub objective_offset: [f32; 3],
+    #[serde(default)]
+    pub ocular_offset: [f32; 3],
+    #[serde(default = "default_ocular_radius_m")]
+    pub ocular_radius_m: f32,
+    #[serde(default)]
+    pub clip_shape: LensClipShape,
+    #[serde(default = "default_edge_feather_px")]
+    pub edge_feather_px: f32,
+}
+
+fn default_edge_feather_px() -> f32 {
+    2.0
+}
+fn default_ocular_radius_m() -> f32 {
+    0.018
+}
+
+impl Default for OpticalPathDef {
+    fn default() -> Self {
+        Self {
+            objective_node: String::new(),
+            ocular_node: String::new(),
+            objective_offset: [0.0, 0.0, 0.0],
+            ocular_offset: [0.0, 0.0, 0.0],
+            ocular_radius_m: default_ocular_radius_m(),
+            clip_shape: LensClipShape::default(),
+            edge_feather_px: default_edge_feather_px(),
+        }
+    }
+}
+
+impl OpticalPathDef {
+    pub fn uses_offsets(&self) -> bool {
+        self.objective_node.is_empty() || self.ocular_node.is_empty()
+    }
+
+    pub fn body_length_m(&self) -> f32 {
+        let o = Vec3::from_array(self.objective_offset);
+        let e = Vec3::from_array(self.ocular_offset);
+        (o - e).length()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OpticalPathsDef {
+    Monocular { path: OpticalPathDef },
+    Binocular {
+        left: OpticalPathDef,
+        right: OpticalPathDef,
+        ipd_mm: f32,
+    },
+}
+
+impl Default for OpticalPathsDef {
+    fn default() -> Self {
+        Self::Monocular {
+            path: OpticalPathDef::default(),
+        }
+    }
+}
+
+impl OpticalPathsDef {
+    pub fn render_count(&self) -> usize {
+        match self {
+            Self::Monocular { .. } => 1,
+            Self::Binocular { .. } => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReticleFocalPlane {
+    First,
+    Second,
+}
+
+impl Default for ReticleFocalPlane {
+    fn default() -> Self {
+        Self::Second
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReticleDef {
+    #[serde(default)]
+    pub style: String,
+    #[serde(default)]
+    pub focal_plane: ReticleFocalPlane,
+    #[serde(default = "default_reticle_color")]
+    pub color: Color3,
+    #[serde(default = "default_reticle_brightness")]
+    pub brightness: f32,
+}
+
+fn default_reticle_color() -> Color3 {
+    Color3(255, 40, 40, 255)
+}
+fn default_reticle_brightness() -> f32 {
+    1.0
+}
+
+impl Default for ReticleDef {
+    fn default() -> Self {
+        Self {
+            style: String::new(),
+            focal_plane: ReticleFocalPlane::default(),
+            color: default_reticle_color(),
+            brightness: default_reticle_brightness(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZeroDef {
+    #[serde(default = "default_zero_distance_m")]
+    pub distance_m: f32,
+    #[serde(default = "default_height_over_bore_mm")]
+    pub height_over_bore_mm: f32,
+}
+
+fn default_zero_distance_m() -> f32 {
+    100.0
+}
+fn default_height_over_bore_mm() -> f32 {
+    38.0
+}
+
+impl Default for ZeroDef {
+    fn default() -> Self {
+        Self {
+            distance_m: default_zero_distance_m(),
+            height_over_bore_mm: default_height_over_bore_mm(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpticQualityTier {
+    Low,
+    Balanced,
+    Ultra,
+}
+
+impl Default for OpticQualityTier {
+    fn default() -> Self {
+        Self::Balanced
+    }
+}
+
+impl OpticQualityTier {
+    pub fn target_resolution(&self) -> u32 {
+        match self {
+            Self::Low => 512,
+            Self::Balanced => 768,
+            Self::Ultra => 1024,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpticDef {
+    #[serde(default)]
+    pub class: OpticClass,
+    #[serde(default)]
+    pub magnification: MagnificationDef,
+    #[serde(default)]
+    pub magnification_control: MagnificationControlDef,
+    #[serde(default = "default_objective_diameter_mm")]
+    pub objective_diameter_mm: f32,
+    #[serde(default = "default_true_fov_deg")]
+    pub true_fov_deg_at_1x: f32,
+    #[serde(default = "default_eye_relief_mm")]
+    pub eye_relief_mm: f32,
+    #[serde(default)]
+    pub paths: OpticalPathsDef,
+    #[serde(default)]
+    pub reticle: Option<ReticleDef>,
+    #[serde(default)]
+    pub zero: Option<ZeroDef>,
+    #[serde(default)]
+    pub quality: OpticQualityTier,
+}
+
+fn default_objective_diameter_mm() -> f32 {
+    40.0
+}
+fn default_true_fov_deg() -> f32 {
+    24.0
+}
+fn default_eye_relief_mm() -> f32 {
+    90.0
+}
+
+impl Default for OpticDef {
+    fn default() -> Self {
+        Self {
+            class: OpticClass::default(),
+            magnification: MagnificationDef::default(),
+            magnification_control: MagnificationControlDef::default(),
+            objective_diameter_mm: default_objective_diameter_mm(),
+            true_fov_deg_at_1x: default_true_fov_deg(),
+            eye_relief_mm: default_eye_relief_mm(),
+            paths: OpticalPathsDef::default(),
+            reticle: None,
+            zero: None,
+            quality: OpticQualityTier::default(),
+        }
+    }
+}
+
+impl OpticDef {
+    pub fn derived_exit_pupil_mm(&self, magnification: f32) -> f32 {
+        if magnification <= f32::EPSILON {
+            return self.objective_diameter_mm;
+        }
+        self.objective_diameter_mm / magnification
+    }
+
+    pub fn derived_min_exit_pupil_mm(&self) -> f32 {
+        self.derived_exit_pupil_mm(self.magnification.max())
+    }
+
+    pub fn derived_true_fov_deg(&self, magnification: f32) -> f32 {
+        if magnification <= f32::EPSILON {
+            return self.true_fov_deg_at_1x;
+        }
+        self.true_fov_deg_at_1x / magnification
+    }
+
+    pub fn derived_apparent_fov_deg(&self) -> f32 {
+        self.true_fov_deg_at_1x
+    }
+
+    pub fn render_count(&self) -> usize {
+        self.paths.render_count()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GameObject {
     pub id: String,
@@ -693,6 +1028,9 @@ pub struct GameObject {
 
     #[serde(default)]
     pub laser: Option<LaserDef>,
+
+    #[serde(default)]
+    pub optic: Option<OpticDef>,
 
     #[serde(default)]
     pub spawn_point: Option<SpawnPointDef>,

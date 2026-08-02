@@ -17,7 +17,7 @@ use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
 use crate::scene::{
     BindingScope, Color3, CuboidShape, CuboidStyle, GameObject, GripPointDef, LightKind, MeshRef,
-    PlayMode, Scene,
+    OpticDef, PlayMode, Scene,
 };
 use crate::script::{EngineCommand, ScriptHost};
 
@@ -922,6 +922,22 @@ impl GameRuntime {
         let obj = self.scene.find_object(id)?;
         let point = obj.grip_point(point_name)?;
         Some((obj, point))
+    }
+
+    pub fn held_optic(&self, player: PlayerId, hand: Hand) -> Option<(&GameObject, &OpticDef)> {
+        let (obj, _) = self.held_grip_point(player, hand)?;
+        let optic = obj.optic.as_ref()?;
+        Some((obj, optic))
+    }
+
+    pub fn held_optics(&self, player: PlayerId) -> Vec<(Hand, &GameObject, &OpticDef)> {
+        [Hand::Left, Hand::Right]
+            .into_iter()
+            .filter_map(|hand| {
+                self.held_optic(player, hand)
+                    .map(|(obj, optic)| (hand, obj, optic))
+            })
+            .collect()
     }
 
     fn collect_render_cuboids(&self) -> Vec<RenderCuboid> {

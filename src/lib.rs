@@ -5,6 +5,7 @@ pub mod debug_protocol;
 pub mod events;
 pub mod locomotion;
 pub mod manifest;
+pub mod optic;
 pub mod physics;
 pub mod rig;
 pub mod rig_profile;
@@ -33,8 +34,10 @@ pub use runtime::{
 pub use scene::{
     Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape, Color3, CuboidDef,
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
-    LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
-    PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
+    LaserDef, LensClipShape, LightDef, LightKind, MagnificationControlDef, MagnificationDef,
+    MeshRef, OpticalPathDef, OpticalPathsDef, OpticClass, OpticDef, OpticQualityTier,
+    ParticleEmitterDef, PartAnimationDef, PartDriver, PlayMode, ReticleDef, ReticleFocalPlane,
+    RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef, ZeroDef,
     BINDING_BUTTONS,
 };
 
