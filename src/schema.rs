@@ -109,10 +109,55 @@ pub fn game_object_schema() -> SchemaDescriptor {
             comp!(sound, "SoundSourceDef", Optional, sound_fields()),
             comp!(particle_emitter, "ParticleEmitterDef", Optional),
             comp!(laser, "LaserDef", Optional),
+            comp!(optic, "OpticDef", Optional, optic_fields()),
             comp!(spawn_point, "SpawnPointDef", Optional),
             comp!(teleportal, "TeleportalDef", Optional),
         ],
     }
+}
+
+/// Leaf fields of `OpticDef`.
+///
+/// Only the scalars and plain enums are described. `magnification`,
+/// `magnification_control`, `paths`, `reticle` and `zero` are nested structures
+/// with no `FieldKind` to map onto, so Layer 0 cannot render them — `OpticCard`
+/// is the Layer 1 surface that owns those, and it is the one authors should use.
+/// The exhaustive destructure below still covers **every** field, so adding one
+/// to `OpticDef` breaks this build rather than silently escaping the schema.
+fn optic_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(o: crate::scene::OpticDef) {
+        let crate::scene::OpticDef {
+            class,
+            magnification,
+            magnification_control,
+            objective_diameter_mm,
+            true_fov_deg_at_1x,
+            eye_relief_mm,
+            paths,
+            reticle,
+            zero,
+            quality,
+        } = o;
+    }
+    vec![
+        field!(
+            class,
+            Enum,
+            [
+                "ReflexRedDot",
+                "Holographic",
+                "Lpvo",
+                "FixedPrism",
+                "PrecisionScope",
+                "Binocular",
+            ]
+        ),
+        field!(objective_diameter_mm, Number),
+        field!(true_fov_deg_at_1x, Number),
+        field!(eye_relief_mm, Number),
+        field!(quality, Enum, ["Low", "Balanced", "Ultra"]),
+    ]
 }
 
 fn sound_fields() -> Vec<FieldDescriptor> {
@@ -175,6 +220,7 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         sound,
         particle_emitter,
         laser,
+        optic,
         spawn_point,
         teleportal,
     } = o;
@@ -185,8 +231,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_has_the_twenty_one_authorable_components() {
-        assert_eq!(game_object_schema().components.len(), 21);
+    fn schema_has_every_authorable_component() {
+        // 22 = the GameObject fields minus `id` (identity) and `grip_pose_legacy`
+        // (deprecated). This count is a coarse guard; the real one is
+        // `schema_exhaustiveness`, which fails to *compile* if a field is added
+        // to GameObject and not described here. That is what caught `optic`.
+        assert_eq!(game_object_schema().components.len(), 22);
     }
 
     #[test]
@@ -207,6 +257,7 @@ mod tests {
             "slider_joint",
             "terrain_collider",
             "sound",
+            "optic",
         ] {
             assert!(names.contains(&must), "schema missing '{must}'");
         }
@@ -236,7 +287,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 21);
+        assert_eq!(v["components"].as_array().unwrap().len(), 22);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }

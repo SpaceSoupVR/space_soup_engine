@@ -1358,4 +1358,36 @@ mod particle_and_laser_scene_test {
         let red = scene.find_object("laser_red").expect("laser_red exists");
         assert!(red.laser.is_some());
     }
+
+    /// The checked-in lobby scene is the scope test fixture, so the engine must
+    /// be able to read the optic an author saved. This is a *parity* test: it
+    /// loads the real file rather than a literal, so it fails if the editor and
+    /// the engine ever disagree about the shape of `OpticDef` — or if the
+    /// content is dropped, which is exactly what happened during the port that
+    /// brought the optic work onto this branch.
+    #[test]
+    fn the_checked_in_lobby_scene_optic_deserializes_in_rust() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/scenes/lobby.json");
+        let scene = Scene::load(&path).expect("lobby.json should parse");
+
+        let m4a1 = scene.find_object("m4a1").expect("m4a1 exists");
+        let optic = m4a1.optic.as_ref().expect("m4a1 carries an optic");
+
+        assert_eq!(optic.class, OpticClass::Lpvo);
+        // A 1-6x on a 24mm objective: the exit pupil at full power is what makes
+        // it demanding to get behind, and it is derived, never authored.
+        let (min_mag, max_mag) = match &optic.magnification {
+            MagnificationDef::Continuous { min, max } => (*min, *max),
+            other => panic!("expected a continuous 1-6x, got {other:?}"),
+        };
+        assert_eq!((min_mag, max_mag), (1.0, 6.0));
+        assert!(
+            (optic.derived_exit_pupil_mm(max_mag) - 4.0).abs() < 0.01,
+            "24mm objective at 6x should give a 4mm exit pupil"
+        );
+
+        // Grip points are what let a player hold the weapon at all; without them
+        // the optic is unreachable in the headset no matter how well it renders.
+        assert_eq!(m4a1.grip_points.len(), 2, "m4a1 needs a grip point per hand");
+    }
 }

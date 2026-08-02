@@ -150,6 +150,51 @@
       "cardinality": "optional"
     },
     {
+      "name": "optic",
+      "rust_type": "OpticDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "class",
+          "kind": "enum",
+          "optional": false,
+          "variants": [
+            "ReflexRedDot",
+            "Holographic",
+            "Lpvo",
+            "FixedPrism",
+            "PrecisionScope",
+            "Binocular"
+          ]
+        },
+        {
+          "name": "objective_diameter_mm",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "true_fov_deg_at_1x",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "eye_relief_mm",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "quality",
+          "kind": "enum",
+          "optional": false,
+          "variants": [
+            "Low",
+            "Balanced",
+            "Ultra"
+          ]
+        }
+      ]
+    },
+    {
       "name": "spawn_point",
       "rust_type": "SpawnPointDef",
       "cardinality": "optional"
