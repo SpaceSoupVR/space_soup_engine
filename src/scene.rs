@@ -284,6 +284,14 @@ pub struct GripPointDef {
     pub finger_curl: HashMap<String, f32>,
     #[serde(default)]
     pub grab_range: Option<f32>,
+
+    // The hand's grip transform, authored independently of the reach anchor (local_pos/
+    // local_rot). When absent, the hand sits on the anchor. Lets the designer place the
+    // reach zone on one spot (e.g. the trigger) while the hand grips a few cm away.
+    #[serde(default)]
+    pub hand_offset_pos: Option<[f32; 3]>,
+    #[serde(default)]
+    pub hand_offset_rot: Option<[f32; 4]>,
 }
 
 fn default_slider_axis() -> [f32; 3] {
@@ -865,7 +873,9 @@ mod grip_points_authoring_test {
                         "local_rot": [0.0, 0.0, 0.0, 1.0],
                         "hand_offset_scale": [1.0, 1.0, 1.0],
                         "finger_curl": {},
-                        "grab_range": 0.12
+                        "grab_range": 0.12,
+                        "hand_offset_pos": [0.0, -0.05, 0.02],
+                        "hand_offset_rot": [0.0, 0.0, 0.0, 1.0]
                     },
                     {
                         "name": "foregrip",
@@ -890,12 +900,15 @@ mod grip_points_authoring_test {
         assert_eq!(right.hand, Hand::Right);
         assert_eq!(right.local_pos, [0.0, -0.02, 0.11]);
         assert_eq!(right.grab_range, Some(0.12));
+        assert_eq!(right.hand_offset_pos, Some([0.0, -0.05, 0.02])); // decoupled hand transform
+        assert_eq!(right.hand_offset_rot, Some([0.0, 0.0, 0.0, 1.0]));
 
         let left = obj.grip_point("foregrip").expect("left-hand point");
         assert_eq!(left.kind, GripKind::Pinch);
         assert_eq!(left.hand, Hand::Left);
         assert_eq!(left.grab_range, None);
         assert_eq!(left.local_rot, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(left.hand_offset_pos, None); // absent -> hand sits on the anchor
 
         let out = std::env::temp_dir().join("grip_points_authoring_test_out.json");
         scene.save(&out).unwrap();
