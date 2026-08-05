@@ -19,9 +19,16 @@ pub struct SoundEngine {
     manager: Option<AudioManager>,
     listener: Option<ListenerHandle>,
     clips: HashMap<String, StaticSoundData>,
+    // Keyed by "voice id", not object id: looping/autoplay sounds get one persistent voice
+    // keyed by the object's own id, but each one-shot play_sound() trigger gets its own
+    // "{id}#voice{n}" voice so rapid retriggers (e.g. a rifle firing fast) layer instead of
+    // cutting each other off. voice_owner maps a voice back to the object that supplies its
+    // clip/volume/pitch/position.
     playing: HashMap<String, ActiveSound>,
     autostarted: HashSet<String>,
     active: HashSet<String>,
+    voice_owner: HashMap<String, String>,
+    next_voice_id: u64,
 }
 
 fn to_mint_vec3(v: Vec3) -> mint::Vector3<f32> {
@@ -85,6 +92,8 @@ impl SoundEngine {
             playing: HashMap::new(),
             autostarted: HashSet::new(),
             active: HashSet::new(),
+            voice_owner: HashMap::new(),
+            next_voice_id: 0,
         }
     }
 
@@ -104,7 +113,7 @@ impl SoundEngine {
         }
     }
 
-    fn start(&mut self, game_dir: &Path, obj: &GameObject) {
+    fn start(&mut self, game_dir: &Path, voice_id: &str, obj: &GameObject) {
         let Some(sound) = obj.sound.clone() else { return };
 
         let Some(clip) = self.load_clip(game_dir, &sound.clip) else {
@@ -148,7 +157,7 @@ impl SoundEngine {
             }
         };
 
-        self.playing.insert(obj.id.clone(), ActiveSound { track, handle });
+        self.playing.insert(voice_id.to_string(), ActiveSound { track, handle });
     }
 
     pub fn update(
@@ -167,33 +176,62 @@ impl SoundEngine {
         }
 
         for id in requested_stop {
-            self.active.remove(id);
-            if let Some(mut active) = self.playing.remove(id) {
-                active.handle.stop(Tween::default());
+            let voices: Vec<String> = self
+                .voice_owner
+                .iter()
+                .filter(|(_, owner)| *owner == id)
+                .map(|(voice, _)| voice.clone())
+                .collect();
+            for voice in voices {
+                self.active.remove(&voice);
+                self.voice_owner.remove(&voice);
+                if let Some(mut active) = self.playing.remove(&voice) {
+                    active.handle.stop(Tween::default());
+                }
             }
         }
 
         for obj in objects {
             let Some(sound) = &obj.sound else { continue };
+            let requested = requested_play.contains(&obj.id);
 
-            let should_start = requested_play.contains(&obj.id)
-                || (sound.autoplay && !self.autostarted.contains(&obj.id));
-            if should_start {
+            if requested && !sound.looping {
+                // One-shot: always a fresh voice, so rapid retriggers layer instead of
+                // cutting off whatever's still playing from the previous trigger.
+                let voice_id = format!("{}#voice{}", obj.id, self.next_voice_id);
+                self.next_voice_id += 1;
+                self.active.insert(voice_id.clone());
+                self.voice_owner.insert(voice_id.clone(), obj.id.clone());
+                self.start(game_dir, &voice_id, obj);
+                continue;
+            }
+
+            let autoplay_now = sound.autoplay && !self.autostarted.contains(&obj.id);
+            if requested || autoplay_now {
                 if sound.autoplay {
                     self.autostarted.insert(obj.id.clone());
                 }
                 self.active.insert(obj.id.clone());
+                self.voice_owner.insert(obj.id.clone(), obj.id.clone());
                 self.playing.remove(&obj.id);
-                self.start(game_dir, obj);
+                self.start(game_dir, &obj.id, obj);
             }
+        }
 
-            let Some(active) = self.playing.get_mut(&obj.id) else {
+        let voice_owner = self.voice_owner.clone();
+        for (voice_id, owner_id) in &voice_owner {
+            let Some(obj) = objects.iter().find(|o| &o.id == owner_id) else {
+                continue;
+            };
+            let Some(sound) = &obj.sound else { continue };
+            let Some(active) = self.playing.get_mut(voice_id) else {
                 continue;
             };
 
             if active.handle.state() == PlaybackState::Stopped {
-                self.playing.remove(&obj.id);
-                self.active.remove(&obj.id);
+                self.playing.remove(voice_id);
+                self.active.remove(voice_id);
+                self.voice_owner.remove(voice_id);
                 continue;
             }
 
@@ -230,11 +268,12 @@ impl SoundEngine {
     ) -> Vec<(String, String, Vec3, f32, f32, bool, f32, f32)> {
         self.active
             .iter()
-            .filter_map(|id| {
-                let obj = objects.iter().find(|o| &o.id == id)?;
+            .filter_map(|voice_id| {
+                let owner_id = self.voice_owner.get(voice_id)?;
+                let obj = objects.iter().find(|o| &o.id == owner_id)?;
                 let sound = obj.sound.as_ref()?;
                 Some((
-                    id.clone(),
+                    voice_id.clone(),
                     sound.clip.clone(),
                     obj.cuboid.position,
                     sound.volume,

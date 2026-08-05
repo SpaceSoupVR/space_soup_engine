@@ -6,20 +6,17 @@ use space_soup_protocol::PlayerId;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::animation::{sample, AnimationPlayer};
+use crate::animation::AnimationPlayer;
 use crate::attach::{Attachment, AttachmentTable};
 use crate::audio::SoundEngine;
-use crate::events::{Hand, InputFrame};
-use crate::locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget};
+use crate::events::InputFrame;
+use crate::locomotion::{Locomotion, LocomotionInput, TeleportTarget};
 use crate::manifest::Manifest;
-use crate::physics::{Aabb, CollisionEvent, CollisionTracker};
+use crate::physics::CollisionTracker;
 use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::PhysicsWorld;
-use crate::scene::{
-    BindingScope, Color3, CuboidShape, CuboidStyle, GameObject, GripPointDef, LightKind, MeshRef,
-    PlayMode, Scene,
-};
-use crate::script::{EngineCommand, ScriptHost};
+use crate::scene::{Color3, CuboidShape, CuboidStyle, LightKind, Scene};
+use crate::script::ScriptHost;
 
 #[derive(Debug, Clone, Default)]
 pub struct PlayerFrameInput {
@@ -27,6 +24,10 @@ pub struct PlayerFrameInput {
     pub input: InputFrame,
     pub locomotion_input: LocomotionInput,
     pub teleport_target: Option<TeleportTarget>,
+    // Client-authoritative player pose (see WireLocomotionInput in space_soup_protocol):
+    // when present, update() adopts it verbatim instead of simulating locomotion.
+    pub client_offset: Option<Vec3>,
+    pub client_yaw: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +50,7 @@ pub struct RenderMesh {
     pub position: Vec3,
     pub rotation: Quat,
     pub scale: Vec3,
+    pub manual_part_blends: HashMap<String, f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +80,36 @@ pub struct RenderParticleEmitter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderParticleBurst {
+    pub id: String,
+    pub position: Vec3,
+    pub direction: Vec3,
+    pub color: Color3,
+    pub count: u32,
+    pub speed: f32,
+    pub spread_deg: f32,
+    pub particle_size: f32,
+    pub lifetime: f32,
+    pub elapsed: f32,
+}
+
+// Fire-and-forget particle event (muzzle flash, impact spark) -- unlike RenderParticleEmitter
+// this has no authored persistent state; it's spawned by a script call, ages out, and is
+// dropped, so the engine has to track `elapsed` itself instead of deriving it from sim_time.
+pub(crate) struct ParticleBurst {
+    pub(crate) id: String,
+    pub(crate) position: Vec3,
+    pub(crate) direction: Vec3,
+    pub(crate) color: Color3,
+    pub(crate) count: u32,
+    pub(crate) speed: f32,
+    pub(crate) spread_deg: f32,
+    pub(crate) particle_size: f32,
+    pub(crate) lifetime: f32,
+    pub(crate) elapsed: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderLaser {
     pub id: String,
     pub origin: Vec3,
@@ -101,26 +133,30 @@ pub struct SoundState {
 }
 
 pub struct GameRuntime {
-    game_dir: PathBuf,
+    pub(crate) game_dir: PathBuf,
     manifest: Manifest,
-    scene: Scene,
+    pub(crate) scene: Scene,
 
-    script_host: ScriptHost,
-    players: HashMap<String, AnimationPlayer>,
-    anim_queues: HashMap<String, Vec<String>>,
-    collisions: CollisionTracker,
-    teleport_collisions: CollisionTracker,
-    teleport_disarmed: HashSet<(PlayerId, String)>,
-    rigid_physics: PhysicsWorld,
-    sound_engine: SoundEngine,
+    pub(crate) script_host: ScriptHost,
+    pub(crate) players: HashMap<String, AnimationPlayer>,
+    pub(crate) anim_queues: HashMap<String, Vec<String>>,
+    pub(crate) collisions: CollisionTracker,
+    pub(crate) teleport_collisions: CollisionTracker,
+    pub(crate) teleport_disarmed: HashSet<(PlayerId, String)>,
+    pub(crate) rigid_physics: PhysicsWorld,
+    pub(crate) sound_engine: SoundEngine,
 
     pub rigs: HashMap<PlayerId, PlayerRig>,
     pub attachments: AttachmentTable,
     pub locomotions: HashMap<PlayerId, Locomotion>,
 
-    pending_scene_change: Option<String>,
-    sound_play_requests: HashSet<String>,
-    sound_stop_requests: HashSet<String>,
+    pub(crate) pending_scene_change: Option<String>,
+    pub(crate) sound_play_requests: HashSet<String>,
+    pub(crate) sound_stop_requests: HashSet<String>,
+    pub(crate) manual_part_blends: HashMap<String, HashMap<String, f32>>,
+    pub(crate) particle_bursts: Vec<ParticleBurst>,
+    pub(crate) next_particle_burst_id: u64,
+    pub(crate) socket_attachments: HashMap<String, (String, String)>,
 }
 
 impl GameRuntime {
@@ -147,6 +183,10 @@ impl GameRuntime {
             pending_scene_change: None,
             sound_play_requests: HashSet::new(),
             sound_stop_requests: HashSet::new(),
+            manual_part_blends: HashMap::new(),
+            particle_bursts: Vec::new(),
+            next_particle_burst_id: 0,
+            socket_attachments: HashMap::new(),
         };
 
         rt.compile_scripts();
@@ -220,6 +260,9 @@ impl GameRuntime {
         self.teleport_collisions = CollisionTracker::new();
         self.teleport_disarmed = HashSet::new();
         self.attachments = AttachmentTable::new();
+        self.manual_part_blends = HashMap::new();
+        self.particle_bursts = Vec::new();
+        self.socket_attachments = HashMap::new();
         self.script_host = ScriptHost::new();
         self.compile_scripts();
         self.setup_scene_attachments();
@@ -256,6 +299,7 @@ impl GameRuntime {
         Vec<RenderMesh>,
         Vec<RenderLight>,
         Vec<RenderParticleEmitter>,
+        Vec<RenderParticleBurst>,
         Vec<RenderLaser>,
         Option<String>,
     ) {
@@ -288,6 +332,18 @@ impl GameRuntime {
                 .locomotions
                 .entry(player)
                 .or_insert_with(|| Self::new_locomotion_at(spawn));
+
+            // Client-authoritative pose: the client already simulated its own movement;
+            // adopt it verbatim so other players see this player where the player sees
+            // themselves. No re-simulation, wall collision, or ground follow -- those
+            // are the client's job now (legacy clients that send no pose still get the
+            // full server-side simulation below).
+            if let (Some(off), Some(yaw)) = (frame.client_offset, frame.client_yaw) {
+                locomotion.player_offset = off;
+                locomotion.player_yaw = yaw;
+                continue;
+            }
+
             let prev_xz = (locomotion.player_offset.x, locomotion.player_offset.z);
             locomotion.update(dt, &frame.locomotion_input, &rig, frame.teleport_target);
             // SRV LOCO DIAGNOSTIC: what the SERVER received from the client + the raw
@@ -303,13 +359,14 @@ impl GameRuntime {
                     locomotion.player_yaw.to_degrees()
                 );
             }
-            Self::apply_wall_collision(locomotion, &self.rigid_physics, prev_xz);
-            Self::apply_ground_follow(locomotion, &self.rigid_physics, prev_xz);
+            locomotion.apply_collision(&self.rigid_physics, prev_xz);
         }
 
         self.update_animations(dt);
+        self.age_particle_bursts(dt);
         self.update_object_position_cache();
         self.apply_attachments();
+        self.apply_socket_attachments();
         self.dispatch_collisions();
         self.dispatch_teleportals();
 
@@ -342,714 +399,17 @@ impl GameRuntime {
         let meshes = self.collect_render_meshes();
         let lights = self.collect_render_lights();
         let particle_emitters = self.collect_render_particle_emitters();
+        let particle_bursts = self.collect_render_particle_bursts();
         let lasers = self.collect_render_lasers();
         (
             cuboids,
             meshes,
             lights,
             particle_emitters,
+            particle_bursts,
             lasers,
             self.pending_scene_change.take(),
         )
-    }
-
-    fn apply_wall_collision(locomotion: &mut Locomotion, rigid_physics: &PhysicsWorld, prev_xz: (f32, f32)) {
-        if locomotion.mode == LocomotionMode::Disabled {
-            return;
-        }
-
-        const PLAYER_RADIUS: f32 = 0.25;
-        const PROBE_HEIGHT: f32 = 1.0;
-
-        let prev = Vec3::new(prev_xz.0, locomotion.player_offset.y + PROBE_HEIGHT, prev_xz.1);
-        let curr = Vec3::new(
-            locomotion.player_offset.x,
-            locomotion.player_offset.y + PROBE_HEIGHT,
-            locomotion.player_offset.z,
-        );
-        let delta = curr - prev;
-        let dist = delta.length();
-        if dist < 1e-5 {
-            return;
-        }
-        let dir = delta / dist;
-
-        let Some((hit_point, _normal)) = rigid_physics.raycast(prev, dir, dist + PLAYER_RADIUS)
-        else {
-            return;
-        };
-
-        let clear_dist = (prev.distance(hit_point) - PLAYER_RADIUS).max(0.0);
-        let stopped = prev + dir * clear_dist;
-        locomotion.player_offset.x = stopped.x;
-        locomotion.player_offset.z = stopped.z;
-    }
-
-    fn apply_ground_follow(locomotion: &mut Locomotion, rigid_physics: &PhysicsWorld, prev_xz: (f32, f32)) {
-        if locomotion.mode == LocomotionMode::Disabled {
-            return;
-        }
-
-        let offset = locomotion.player_offset;
-        let probe_origin = Vec3::new(offset.x, offset.y + 3.0, offset.z);
-        let Some((hit_point, normal)) = rigid_physics.raycast_down(probe_origin, 50.0) else {
-            return;
-        };
-
-        let slope_deg = normal.dot(Vec3::Y).clamp(-1.0, 1.0).acos().to_degrees();
-        if slope_deg <= locomotion.max_climb_angle_deg {
-            locomotion.player_offset.y = hit_point.y;
-        } else {
-            locomotion.player_offset.x = prev_xz.0;
-            locomotion.player_offset.z = prev_xz.1;
-        }
-    }
-
-    pub fn world_head_transform(&self, player: PlayerId) -> (Vec3, Quat) {
-        let head = self.rigs.get(&player).map(|r| r.head()).unwrap_or_default();
-        (head.position, head.rotation)
-    }
-
-    fn update_animations(&mut self, dt: f32) {
-        let mut finished: Vec<String> = Vec::new();
-
-        let Self { scene, players, .. } = self;
-        for (obj_id, player) in players.iter_mut() {
-            let Some(obj) = scene.find_object(obj_id) else {
-                continue;
-            };
-            let Some(anim) = obj.find_animation(&player.anim_name) else {
-                continue;
-            };
-            let duration = anim.duration();
-            player.tick(dt, duration);
-            if player.finished {
-                finished.push(obj_id.clone());
-            }
-        }
-
-        let samples: Vec<(String, crate::animation::Sample)> = self
-            .players
-            .iter()
-            .filter_map(|(obj_id, player)| {
-                let obj = self.scene.find_object(obj_id)?;
-                let anim = obj.find_animation(&player.anim_name)?;
-                Some((obj_id.clone(), sample(anim, player.elapsed)))
-            })
-            .collect();
-
-        for (obj_id, s) in samples {
-            if let Some(obj_mut) = self.scene.find_object_mut(&obj_id) {
-                if let Some(p) = s.position {
-                    obj_mut.cuboid.position = p;
-                }
-                if let Some(r) = s.rotation {
-                    obj_mut.cuboid.rotation = r;
-                }
-                if let Some(sc) = s.scale {
-                    obj_mut.cuboid.half_size = sc;
-                }
-                if let Some(c) = s.color {
-                    obj_mut.cuboid.color = c;
-                }
-            }
-        }
-
-        for id in finished {
-            self.players.remove(&id);
-            let next = self
-                .anim_queues
-                .get_mut(&id)
-                .and_then(|q| (!q.is_empty()).then(|| q.remove(0)));
-            if let Some(anim_name) = next {
-                self.play_animation(&id, &anim_name);
-            }
-        }
-    }
-
-    fn play_animation(&mut self, obj_id: &str, anim_name: &str) {
-        let Some(obj) = self.scene.find_object(obj_id) else {
-            warn!("play_animation: unknown object '{obj_id}'");
-            return;
-        };
-        let Some(anim) = obj.find_animation(anim_name) else {
-            warn!("play_animation: object '{obj_id}' has no animation '{anim_name}'");
-            return;
-        };
-        self.players
-            .insert(obj_id.to_string(), AnimationPlayer::new(anim));
-    }
-
-    fn stop_animation(&mut self, obj_id: &str) {
-        self.players.remove(obj_id);
-        self.anim_queues.remove(obj_id);
-    }
-
-    fn update_object_position_cache(&self) {
-        for obj in &self.scene.objects {
-            let p = obj.cuboid.position;
-            self.script_host.set_object_position(&obj.id, p.x, p.y, p.z);
-        }
-    }
-
-    fn update_rig_position_cache(&self, player: PlayerId) {
-        let Some(rig) = self.rigs.get(&player) else {
-            return;
-        };
-        let head = rig.head();
-        self.script_host.set_rig_position(
-            "head",
-            head.position.x,
-            head.position.y,
-            head.position.z,
-        );
-
-        for hand in [Hand::Left, Hand::Right] {
-            let grip = rig.hand_grip(hand);
-            let aim = rig.hand_aim(hand);
-            let prefix = hand.as_str();
-            self.script_host.set_rig_position(
-                &format!("{prefix}_grip"),
-                grip.position.x,
-                grip.position.y,
-                grip.position.z,
-            );
-            self.script_host.set_rig_position(
-                &format!("{prefix}_aim"),
-                aim.position.x,
-                aim.position.y,
-                aim.position.z,
-            );
-        }
-    }
-
-    fn apply_attachments(&mut self) {
-        let results = self.attachments.resolve_all_with_visibility(&self.rigs);
-        for (obj_id, maybe_tf) in results {
-            if let Some(obj) = self.scene.find_object_mut(&obj_id) {
-                match maybe_tf {
-                    Some(tf) => {
-                        obj.cuboid.position = tf.position;
-                        obj.cuboid.rotation = tf.rotation;
-                    }
-
-                    None => obj.hidden = true,
-                }
-            }
-        }
-    }
-
-    fn dispatch_collisions(&mut self) {
-        let bodies: Vec<(String, Aabb)> = self
-            .scene
-            .objects
-            .iter()
-            .filter(|o| o.rigid_body.is_none())
-            .map(|o| {
-                let aabb = Aabb::from_center_half(o.cuboid.position, o.cuboid.half_size);
-                (o.id.clone(), aabb)
-            })
-            .collect();
-
-        let events = self.collisions.update(&bodies);
-
-        for event in events {
-            match event {
-                CollisionEvent::Enter(a, b) => {
-                    let _ = self
-                        .script_host
-                        .call(&a, "on_collision_enter", (b.clone(),));
-                    let _ = self.script_host.call(&b, "on_collision_enter", (a,));
-                }
-                CollisionEvent::Exit(a, b) => {
-                    let _ = self.script_host.call(&a, "on_collision_exit", (b.clone(),));
-                    let _ = self.script_host.call(&b, "on_collision_exit", (a,));
-                }
-            }
-        }
-    }
-
-    fn find_spawn_point(&self) -> Option<(Vec3, f32)> {
-        let obj = self.scene.objects.iter().find(|o| o.spawn_point.is_some())?;
-        Some((
-            obj.cuboid.position,
-            Self::yaw_from_forward(obj.cuboid.rotation * Vec3::NEG_Z),
-        ))
-    }
-
-    fn new_locomotion_at(spawn: Option<(Vec3, f32)>) -> Locomotion {
-        let mut locomotion = Locomotion::new(LocomotionMode::Smooth);
-        if let Some((position, yaw)) = spawn {
-            locomotion.player_offset = position;
-            locomotion.player_yaw = yaw;
-        }
-        locomotion
-    }
-
-    fn yaw_from_forward(fwd: Vec3) -> f32 {
-        (-fwd.x).atan2(-fwd.z)
-    }
-
-    fn player_body_id(player: PlayerId) -> String {
-        format!("__player_{}", player.0)
-    }
-
-    fn classify_teleport_pair(
-        a: &str,
-        b: &str,
-        player_ids: &HashMap<String, PlayerId>,
-    ) -> Option<(PlayerId, String)> {
-        match (player_ids.get(a), player_ids.get(b)) {
-            (Some(&p), None) => Some((p, b.to_string())),
-            (None, Some(&p)) => Some((p, a.to_string())),
-            _ => None,
-        }
-    }
-
-    fn dispatch_teleportals(&mut self) {
-        const PLAYER_HALF_XZ: f32 = 0.25;
-        const PLAYER_HALF_Y: f32 = 0.15;
-
-        let mut player_ids: HashMap<String, PlayerId> = HashMap::new();
-        let mut bodies: Vec<(String, Aabb)> = Vec::new();
-
-        for (&player, locomotion) in &self.locomotions {
-            let body_id = Self::player_body_id(player);
-            let center = locomotion.player_offset + Vec3::new(0.0, PLAYER_HALF_Y, 0.0);
-            let half = Vec3::new(PLAYER_HALF_XZ, PLAYER_HALF_Y, PLAYER_HALF_XZ);
-            bodies.push((body_id.clone(), Aabb::from_center_half(center, half)));
-            player_ids.insert(body_id, player);
-        }
-
-        for o in &self.scene.objects {
-            if o.teleportal.is_some() {
-                let aabb = Aabb::from_center_half(o.cuboid.position, o.cuboid.half_size);
-                bodies.push((o.id.clone(), aabb));
-            }
-        }
-
-        let events = self.teleport_collisions.update(&bodies);
-
-        for event in events {
-            match event {
-                CollisionEvent::Enter(a, b) => {
-                    let Some((player, pad_id)) = Self::classify_teleport_pair(&a, &b, &player_ids)
-                    else {
-                        continue;
-                    };
-                    if self.teleport_disarmed.contains(&(player, pad_id.clone())) {
-                        continue;
-                    }
-                    let Some(pad) = self.scene.find_object(&pad_id) else {
-                        continue;
-                    };
-                    let Some(teleportal) = pad.teleportal.as_ref() else {
-                        continue;
-                    };
-
-                    if let Some(target_scene) = teleportal.target_scene.clone() {
-                        self.pending_scene_change = Some(target_scene);
-                        continue;
-                    }
-
-                    let Some(target_id) = teleportal.target_id.clone() else {
-                        continue;
-                    };
-                    let Some(target) = self.scene.find_object(&target_id) else {
-                        continue;
-                    };
-                    if target.teleportal.is_none() {
-                        continue;
-                    }
-                    let target_position = target.cuboid.position;
-                    let target_yaw = Self::yaw_from_forward(target.cuboid.rotation * Vec3::NEG_Z);
-                    let target_id = target.id.clone();
-
-                    if let Some(locomotion) = self.locomotions.get_mut(&player) {
-                        locomotion.player_offset = target_position;
-                        locomotion.player_yaw = target_yaw;
-                    }
-                    self.teleport_disarmed.insert((player, target_id));
-                }
-                CollisionEvent::Exit(a, b) => {
-                    if let Some((player, pad_id)) = Self::classify_teleport_pair(&a, &b, &player_ids) {
-                        self.teleport_disarmed.remove(&(player, pad_id));
-                    }
-                }
-            }
-        }
-    }
-
-    fn dispatch_input(&mut self, input: &InputFrame) {
-        for (id, hand) in &input.pointed {
-            let _ = self
-                .script_host
-                .call(id, "on_point", (hand.as_str().to_string(),));
-        }
-        for (id, hand, point) in &input.grabbed {
-            let _ =
-                self.script_host
-                    .call(id, "on_grab", (hand.as_str().to_string(), point.clone()));
-        }
-        for (id, hand) in &input.released {
-            let _ = self
-                .script_host
-                .call(id, "on_release", (hand.as_str().to_string(),));
-        }
-        for press in &input.button_presses {
-            if let Some(id) = &press.object_id {
-                let _ = self
-                    .script_host
-                    .call(id, "on_press", (press.button.clone(),));
-            }
-        }
-        self.dispatch_animation_bindings(input);
-    }
-
-    fn dispatch_animation_bindings(&mut self, input: &InputFrame) {
-        let mut to_play: Vec<(String, String, PlayMode)> = Vec::new();
-        for press in &input.button_presses {
-            for obj in &self.scene.objects {
-                for binding in &obj.animation_bindings {
-                    if binding.button != press.button || binding.animation.is_empty() {
-                        continue;
-                    }
-                    let in_scope = match binding.scope {
-                        BindingScope::GlobalAnywhere => true,
-                        BindingScope::ContextualHold => {
-                            press.object_id.as_deref() == Some(obj.id.as_str())
-                        }
-                    };
-                    if in_scope {
-                        to_play.push((obj.id.clone(), binding.animation.clone(), binding.play_mode));
-                    }
-                }
-            }
-        }
-        for (obj_id, anim, mode) in to_play {
-            match mode {
-                PlayMode::Simultaneous => self.play_animation(&obj_id, &anim),
-                PlayMode::Sequential => {
-                    if self.players.contains_key(&obj_id) {
-                        self.anim_queues.entry(obj_id).or_default().push(anim);
-                    } else {
-                        self.play_animation(&obj_id, &anim);
-                    }
-                }
-            }
-        }
-    }
-
-    fn dispatch_update_hook(&self, dt: f32) {
-        for obj in &self.scene.objects {
-            if self.script_host.has_script(&obj.id) {
-                let _ = self.script_host.call(&obj.id, "on_update", (dt as f64,));
-            }
-        }
-    }
-
-    fn apply_script_commands(&mut self) {
-        let commands = self.script_host.drain_commands();
-
-        for cmd in commands {
-            match cmd {
-                EngineCommand::MoveObject { id, x, y, z } => {
-                    if let Some(o) = self.scene.find_object_mut(&id) {
-                        o.cuboid.position = Vec3::new(x, y, z);
-                    }
-                }
-                EngineCommand::RotateObject { id, x, y, z, w } => {
-                    if let Some(o) = self.scene.find_object_mut(&id) {
-                        o.cuboid.rotation = Quat::from_xyzw(x, y, z, w);
-                    }
-                }
-                EngineCommand::ScaleObject { id, x, y, z } => {
-                    if let Some(o) = self.scene.find_object_mut(&id) {
-                        o.cuboid.half_size = Vec3::new(x, y, z);
-                    }
-                }
-                EngineCommand::SetColor { id, r, g, b, a } => {
-                    if let Some(o) = self.scene.find_object_mut(&id) {
-                        o.cuboid.color = Color3(r, g, b, a);
-                    }
-                }
-                EngineCommand::PlayAnim { id, anim } => {
-                    self.play_animation(&id, &anim);
-                }
-                EngineCommand::StopAnim { id } => {
-                    self.stop_animation(&id);
-                }
-                EngineCommand::ChangeScene { scene } => {
-                    self.pending_scene_change = Some(scene);
-                }
-                EngineCommand::DestroyObject { id } => {
-                    self.scene.objects.retain(|o| o.id != id);
-                    self.players.remove(&id);
-                    self.anim_queues.remove(&id);
-                    self.attachments.detach(&id);
-                }
-                EngineCommand::AttachToJoint {
-                    id,
-                    joint,
-                    offset_x,
-                    offset_y,
-                    offset_z,
-                } => match JointId::from_name(&joint) {
-                    Some(joint_id) => {
-                        let att = Attachment::with_offset(
-                            joint_id,
-                            Vec3::new(offset_x, offset_y, offset_z),
-                            Quat::IDENTITY,
-                        );
-                        self.attachments.attach(&id, PlayerId::local(), att);
-                    }
-                    None => warn!("attach_to_joint: unknown joint name '{joint}'"),
-                },
-                EngineCommand::GrabAtJoint {
-                    id,
-                    joint,
-                    point,
-                    player,
-                } => match JointId::from_name(&joint) {
-                    Some(joint_id) => match (
-                        self.rigs.get(&player).and_then(|r| r.get(joint_id)),
-                        self.scene.find_object(&id),
-                    ) {
-                        (Some(joint_tf), Some(obj)) => {
-                            let matched_point = point.as_deref().and_then(|p| obj.grip_point(p));
-                            if let Some(g) = matched_point {
-                                if self
-                                    .attachments
-                                    .point_held_by_other(&id, &g.name, player, joint_id)
-                                {
-                                    warn!(
-                                        "grab_at_joint: '{id}' point '{}' already held by another hand",
-                                        g.name
-                                    );
-                                    continue;
-                                }
-                            }
-                            let (offset_pos, offset_rot) = matched_point
-                                .map(|g| {
-                                    let local_rot = Quat::from_array(g.local_rot);
-                                    let inv_rot = local_rot.inverse();
-                                    (inv_rot * -Vec3::from(g.local_pos), inv_rot)
-                                })
-                                .unwrap_or_else(|| {
-                                    let inv_rot = joint_tf.rotation.inverse();
-                                    (
-                                        inv_rot * (obj.cuboid.position - joint_tf.position),
-                                        inv_rot * obj.cuboid.rotation,
-                                    )
-                                });
-                            let attachment = match matched_point {
-                                Some(g) => Attachment::with_grip_point(
-                                    joint_id,
-                                    offset_pos,
-                                    offset_rot,
-                                    g.name.clone(),
-                                ),
-                                None => Attachment::with_offset(joint_id, offset_pos, offset_rot),
-                            };
-                            self.attachments.attach(&id, player, attachment);
-                        }
-                        _ => warn!("grab_at_joint: '{id}' or joint '{joint}' not found"),
-                    },
-                    None => warn!("grab_at_joint: unknown joint name '{joint}'"),
-                },
-                EngineCommand::Detach { id, hand, player } => match hand {
-                    Some(h) => self
-                        .attachments
-                        .detach_joint(&id, player, JointId::HandGrip(h)),
-                    None => self.attachments.detach(&id),
-                },
-                EngineCommand::GrabAtPoint {
-                    id,
-                    point,
-                    hand,
-                    player,
-                } => {
-                    let Some(obj) = self.scene.find_object(&id) else {
-                        warn!("grab_at_point: unknown object '{id}'");
-                        continue;
-                    };
-                    match obj.grip_point(&point).cloned() {
-                        Some(point_def) => self.rigid_physics.grab(player, &id, hand, &point_def),
-                        None => warn!("grab_at_point: '{id}' has no grip point named '{point}'"),
-                    }
-                }
-                EngineCommand::ReleaseGrip { id, hand, player } => {
-                    self.rigid_physics.release(player, &id, hand);
-                }
-                EngineCommand::PlaySound { id } => {
-                    self.sound_play_requests.insert(id);
-                }
-                EngineCommand::StopSound { id } => {
-                    self.sound_stop_requests.insert(id);
-                }
-                EngineCommand::SetLightIntensity { id, intensity } => {
-                    if let Some(o) = self.scene.find_object_mut(&id) {
-                        for light in o.lights.iter_mut() {
-                            light.intensity = intensity;
-                        }
-                    }
-                }
-                EngineCommand::SetSoundPitch { id, pitch } => {
-                    if let Some(o) = self.scene.find_object_mut(&id) {
-                        if let Some(sound) = o.sound.as_mut() {
-                            sound.pitch = pitch;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn held_grip_point(&self, player: PlayerId, hand: Hand) -> Option<(&GameObject, &GripPointDef)> {
-        if let Some((id, point_name)) = self.rigid_physics.held_by(player, hand) {
-            if let Some(point) = self
-                .scene
-                .find_object(id)
-                .and_then(|obj| obj.grip_point(point_name).map(|p| (obj, p)))
-            {
-                return Some(point);
-            }
-        }
-
-        let (id, point_name) = self
-            .attachments
-            .grip_point_at_joint(player, JointId::HandGrip(hand))?;
-        let obj = self.scene.find_object(id)?;
-        let point = obj.grip_point(point_name)?;
-        Some((obj, point))
-    }
-
-    fn collect_render_cuboids(&self) -> Vec<RenderCuboid> {
-        self.scene
-            .objects
-            .iter()
-            .filter(|o| !o.hidden && o.mesh.is_none())
-            .map(|o| RenderCuboid {
-                id: o.id.clone(),
-                position: o.cuboid.position,
-                half_size: o.cuboid.half_size,
-                rotation: o.cuboid.rotation,
-                color: o.cuboid.color,
-                wire_color: o.cuboid.wire_color,
-                style: o.cuboid.style,
-                reflectivity: o.cuboid.reflectivity,
-                shape: if o.teleportal.is_some() {
-                    CuboidShape::Cylinder
-                } else {
-                    CuboidShape::Box
-                },
-            })
-            .collect()
-    }
-
-    fn collect_render_meshes(&self) -> Vec<RenderMesh> {
-        self.scene
-            .objects
-            .iter()
-            .filter(|o| !o.hidden)
-            .filter_map(|o| {
-                let mesh_ref: &MeshRef = o.mesh.as_ref()?;
-                Some(RenderMesh {
-                    id: o.id.clone(),
-                    path: mesh_ref.path.clone(),
-                    position: o.cuboid.position,
-                    rotation: o.cuboid.rotation * mesh_ref.rotation_offset,
-                    scale: mesh_ref.scale,
-                })
-            })
-            .collect()
-    }
-
-    fn collect_render_lights(&self) -> Vec<RenderLight> {
-        self.scene
-            .objects
-            .iter()
-            .flat_map(|o| {
-                o.lights.iter().enumerate().map(move |(i, light)| RenderLight {
-                    id: format!("{}#{i}", o.id),
-                    position: o.cuboid.position,
-                    direction: o.cuboid.rotation * Vec3::NEG_Z,
-                    kind: light.kind,
-                    color: light.color,
-                    intensity: light.intensity,
-                    range: light.range,
-                    cone_angle_deg: light.cone_angle_deg,
-                })
-            })
-            .collect()
-    }
-
-    fn collect_render_particle_emitters(&self) -> Vec<RenderParticleEmitter> {
-        self.scene
-            .objects
-            .iter()
-            .filter_map(|o| {
-                let pe = o.particle_emitter.as_ref()?;
-                Some(RenderParticleEmitter {
-                    id: o.id.clone(),
-                    position: o.cuboid.position,
-                    direction: o.cuboid.rotation * Vec3::NEG_Z,
-                    particle_size: pe.particle_size,
-                    spawn_rate: pe.spawn_rate,
-                    color: pe.color,
-                    lifetime: pe.lifetime,
-                    speed: pe.speed,
-                    spread_deg: pe.spread_deg,
-                    size_growth: pe.size_growth,
-                })
-            })
-            .collect()
-    }
-
-    fn collect_render_lasers(&self) -> Vec<RenderLaser> {
-        self.scene
-            .objects
-            .iter()
-            .filter_map(|o| {
-                let laser = o.laser.as_ref()?;
-                let origin = o.cuboid.position;
-                let direction = o.cuboid.rotation * Vec3::NEG_Z;
-                let end = self
-                    .rigid_physics
-                    .raycast(origin, direction, laser.max_distance)
-                    .map(|(hit_point, _normal)| hit_point)
-                    .unwrap_or(origin + direction * laser.max_distance);
-                Some(RenderLaser {
-                    id: o.id.clone(),
-                    origin,
-                    direction,
-                    end,
-                    color: laser.color,
-                    beam_width: laser.beam_width,
-                })
-            })
-            .collect()
-    }
-
-    pub fn preview_sound(&mut self, clip: &str, volume: f32, pitch: f32) {
-        self.sound_engine.preview(&self.game_dir, clip, volume, pitch);
-    }
-
-    pub fn active_sounds(&self) -> Vec<SoundState> {
-        self.sound_engine
-            .active_sounds(&self.scene.objects)
-            .into_iter()
-            .map(|(object_id, clip, position, volume, pitch, looping, min_distance, max_distance)| SoundState {
-                object_id,
-                clip,
-                position,
-                volume,
-                pitch,
-                looping,
-                min_distance,
-                max_distance,
-            })
-            .collect()
     }
 
     pub fn scene(&self) -> &Scene {
@@ -1059,843 +419,3 @@ impl GameRuntime {
         &mut self.scene
     }
 }
-
-#[cfg(test)]
-mod rigid_physics_test {
-    use super::*;
-    use crate::events::ButtonPress;
-    use std::sync::Mutex;
-
-    static PHYSX_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    fn frame(rig: PlayerRig, input: InputFrame) -> PlayerFrameInput {
-        PlayerFrameInput {
-            rig,
-            input,
-            locomotion_input: LocomotionInput::default(),
-            teleport_target: None,
-        }
-    }
-
-    fn one_player(id: PlayerId, f: PlayerFrameInput) -> HashMap<PlayerId, PlayerFrameInput> {
-        let mut m = HashMap::new();
-        m.insert(id, f);
-        m
-    }
-
-    #[test]
-    fn falls_lands_and_loops() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_rigid_physics_test");
-        let scenes_dir = dir.join("scenes");
-        std::fs::create_dir_all(&scenes_dir).unwrap();
-
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            scenes_dir.join("test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "floor",
-                        "cuboid": { "position": [0.0, -0.5, 0.0], "half_size": [5.0, 0.5, 5.0] },
-                        "rigid_body": { "mode": "Static", "shape": "Box" }
-                    },
-                    {
-                        "id": "ball",
-                        "cuboid": { "position": [0.0, 5.0, 0.0], "half_size": [0.5, 0.5, 0.5] },
-                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 }
-                    },
-                    {
-                        "id": "looping_ball",
-                        "cuboid": { "position": [2.0, 1.5, 0.0], "half_size": [0.5, 0.5, 0.5] },
-                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0, "respawn_interval": 1.5 }
-                    },
-                    {
-                        "id": "handle_box",
-                        "cuboid": { "position": [-3.0, 3.0, 0.0], "half_size": [0.2, 0.2, 0.2] },
-                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 },
-                        "grip_points": [
-                            { "name": "handle", "kind": "Snap", "local_pos": [0.0, 0.0, 0.0] }
-                        ],
-                        "script": "fn on_grab(hand, point) { grab_at_point(\"handle_box\", point, hand); } fn on_release(hand) { release_grip(\"handle_box\", hand); }"
-                    }
-                ]
-            }"#,
-        ).unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-        let dt = 1.0 / 60.0;
-
-        let start_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
-        assert!(
-            (start_y - 5.0).abs() < 0.01,
-            "expected ball to start at y=5.0, got {start_y}"
-        );
-
-        let before_grab_y = rt
-            .scene()
-            .find_object("handle_box")
-            .unwrap()
-            .cuboid
-            .position
-            .y;
-        assert!((before_grab_y - 3.0).abs() < 0.05, "expected handle_box to still be at its spawn height before being grabbed, got {before_grab_y}");
-
-        let player = PlayerId::local();
-
-        let mut grab_input = InputFrame::default();
-        grab_input
-            .grabbed
-            .push(("handle_box".to_string(), Hand::Right, "handle".to_string()));
-        let mut rig = PlayerRig::new();
-        rig.set_hand_grip(Hand::Right, Vec3::new(-3.0, 3.0, 0.0), Quat::IDENTITY);
-        rt.update(dt, &one_player(player, frame(rig, grab_input)));
-
-        for i in 1..=30 {
-            let mut rig = PlayerRig::new();
-            rig.set_hand_grip(
-                Hand::Right,
-                Vec3::new(-3.0, 3.0 - i as f32 * 0.02, 0.0),
-                Quat::IDENTITY,
-            );
-            rt.update(dt, &one_player(player, frame(rig, InputFrame::default())));
-        }
-        let held_y = rt
-            .scene()
-            .find_object("handle_box")
-            .unwrap()
-            .cuboid
-            .position
-            .y;
-        assert!(
-            (held_y - 2.4).abs() < 0.1,
-            "expected handle_box to follow the hand down to y\u{2248}2.4 while snap-grabbed (gravity should be overridden by the joint), got {held_y}"
-        );
-
-        let mut release_input = InputFrame::default();
-        release_input
-            .released
-            .push(("handle_box".to_string(), Hand::Right));
-        rt.update(
-            dt,
-            &one_player(player, frame(PlayerRig::new(), release_input)),
-        );
-        let y_at_release = rt
-            .scene()
-            .find_object("handle_box")
-            .unwrap()
-            .cuboid
-            .position
-            .y;
-
-        for _ in 0..30 {
-            rt.update(
-                dt,
-                &one_player(player, frame(PlayerRig::new(), InputFrame::default())),
-            );
-        }
-        let y_after_release = rt
-            .scene()
-            .find_object("handle_box")
-            .unwrap()
-            .cuboid
-            .position
-            .y;
-        assert!(
-            y_after_release < y_at_release - 0.05,
-            "expected handle_box to fall freely under gravity after release, went from {y_at_release} to {y_after_release}"
-        );
-
-        rt.update(
-            dt,
-            &one_player(player, frame(PlayerRig::new(), InputFrame::default())),
-        );
-        let after_one_step_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
-        assert!(after_one_step_y < start_y, "expected gravity to have pulled the ball down from its start height by now, went from {start_y} to {after_one_step_y}");
-
-        for _ in 0..180 {
-            rt.update(
-                dt,
-                &one_player(player, frame(PlayerRig::new(), InputFrame::default())),
-            );
-        }
-        let landed_y = rt.scene().find_object("ball").unwrap().cuboid.position.y;
-        assert!(
-            (landed_y - 0.5).abs() < 0.15,
-            "expected the ball (half_size.y=0.5) to land resting on the floor's top surface (y=0.0) at y\u{2248}0.5, got {landed_y}"
-        );
-
-        let mut saw_high = false;
-        let mut saw_low = false;
-        for _ in 0..180 {
-            rt.update(
-                dt,
-                &one_player(player, frame(PlayerRig::new(), InputFrame::default())),
-            );
-            let y = rt
-                .scene()
-                .find_object("looping_ball")
-                .unwrap()
-                .cuboid
-                .position
-                .y;
-            if y > 1.2 {
-                saw_high = true;
-            }
-            if y < 0.7 {
-                saw_low = true;
-            }
-        }
-        assert!(
-            saw_high,
-            "expected looping_ball to revisit its spawn height (respawn_interval loop)"
-        );
-        assert!(
-            saw_low,
-            "expected looping_ball to also reach the floor (it should still fall each cycle)"
-        );
-    }
-
-    #[test]
-    fn two_players_grab_different_objects_via_attachments() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_two_player_attach_test");
-        let scenes_dir = dir.join("scenes");
-        std::fs::create_dir_all(&scenes_dir).unwrap();
-
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            scenes_dir.join("test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "gun_a",
-                        "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [0.1, 0.1, 0.1] },
-                        "script": "fn on_grab(hand, point) { grab_at_joint(\"gun_a\", hand + \"_grip\", point); } fn on_release(hand) { detach(\"gun_a\", hand); }"
-                    },
-                    {
-                        "id": "gun_b",
-                        "cuboid": { "position": [5.0, 1.0, 0.0], "half_size": [0.1, 0.1, 0.1] },
-                        "script": "fn on_grab(hand, point) { grab_at_joint(\"gun_b\", hand + \"_grip\", point); } fn on_release(hand) { detach(\"gun_b\", hand); }"
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-        let dt = 1.0 / 60.0;
-
-        let player_a = PlayerId::new();
-        let player_b = PlayerId::new();
-
-        let mut rig_a = PlayerRig::new();
-        rig_a.set_hand_grip(Hand::Right, Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY);
-        let mut grab_a = InputFrame::default();
-        grab_a
-            .grabbed
-            .push(("gun_a".to_string(), Hand::Right, String::new()));
-
-        let mut rig_b = PlayerRig::new();
-        rig_b.set_hand_grip(Hand::Right, Vec3::new(5.0, 1.0, 0.0), Quat::IDENTITY);
-        let mut grab_b = InputFrame::default();
-        grab_b
-            .grabbed
-            .push(("gun_b".to_string(), Hand::Right, String::new()));
-
-        let mut inputs = HashMap::new();
-        inputs.insert(player_a, frame(rig_a, grab_a));
-        inputs.insert(player_b, frame(rig_b, grab_b));
-        rt.update(dt, &inputs);
-
-        let mut rig_a = PlayerRig::new();
-        rig_a.set_hand_grip(Hand::Right, Vec3::new(0.0, 2.0, 0.0), Quat::IDENTITY);
-        let mut rig_b = PlayerRig::new();
-        rig_b.set_hand_grip(Hand::Right, Vec3::new(5.0, 3.0, 0.0), Quat::IDENTITY);
-
-        let mut inputs = HashMap::new();
-        inputs.insert(player_a, frame(rig_a, InputFrame::default()));
-        inputs.insert(player_b, frame(rig_b, InputFrame::default()));
-        rt.update(dt, &inputs);
-
-        let gun_a_pos = rt.scene().find_object("gun_a").unwrap().cuboid.position;
-        let gun_b_pos = rt.scene().find_object("gun_b").unwrap().cuboid.position;
-
-        assert!(
-            (gun_a_pos.y - 2.0).abs() < 0.05,
-            "expected gun_a to follow player A's hand to y\u{2248}2.0, got {gun_a_pos:?}"
-        );
-        assert!(
-            (gun_b_pos.y - 3.0).abs() < 0.05,
-            "expected gun_b to follow player B's hand to y\u{2248}3.0, got {gun_b_pos:?}"
-        );
-        assert!(
-            (gun_a_pos.x - 0.0).abs() < 0.05 && (gun_b_pos.x - 5.0).abs() < 0.05,
-            "guns should not have swapped/crossed positions: gun_a={gun_a_pos:?} gun_b={gun_b_pos:?}"
-        );
-    }
-
-    #[test]
-    fn two_players_hand_anchors_drive_independently() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_two_player_physx_test");
-        let scenes_dir = dir.join("scenes");
-        std::fs::create_dir_all(&scenes_dir).unwrap();
-
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            scenes_dir.join("test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "box_a",
-                        "cuboid": { "position": [-3.0, 3.0, 0.0], "half_size": [0.2, 0.2, 0.2] },
-                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 },
-                        "grip_points": [
-                            { "name": "handle", "kind": "Snap", "local_pos": [0.0, 0.0, 0.0] }
-                        ],
-                        "script": "fn on_grab(hand, point) { grab_at_point(\"box_a\", point, hand); } fn on_release(hand) { release_grip(\"box_a\", hand); }"
-                    },
-                    {
-                        "id": "box_b",
-                        "cuboid": { "position": [3.0, 3.0, 0.0], "half_size": [0.2, 0.2, 0.2] },
-                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 },
-                        "grip_points": [
-                            { "name": "handle", "kind": "Snap", "local_pos": [0.0, 0.0, 0.0] }
-                        ],
-                        "script": "fn on_grab(hand, point) { grab_at_point(\"box_b\", point, hand); } fn on_release(hand) { release_grip(\"box_b\", hand); }"
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-        let dt = 1.0 / 60.0;
-
-        let player_a = PlayerId::new();
-        let player_b = PlayerId::new();
-
-        let mut rig_a = PlayerRig::new();
-        rig_a.set_hand_grip(Hand::Right, Vec3::new(-3.0, 3.0, 0.0), Quat::IDENTITY);
-        let mut grab_a = InputFrame::default();
-        grab_a
-            .grabbed
-            .push(("box_a".to_string(), Hand::Right, "handle".to_string()));
-
-        let mut rig_b = PlayerRig::new();
-        rig_b.set_hand_grip(Hand::Right, Vec3::new(3.0, 3.0, 0.0), Quat::IDENTITY);
-        let mut grab_b = InputFrame::default();
-        grab_b
-            .grabbed
-            .push(("box_b".to_string(), Hand::Right, "handle".to_string()));
-
-        let mut inputs = HashMap::new();
-        inputs.insert(player_a, frame(rig_a, grab_a));
-        inputs.insert(player_b, frame(rig_b, grab_b));
-        rt.update(dt, &inputs);
-
-        for i in 1..=30 {
-            let mut rig_a = PlayerRig::new();
-            rig_a.set_hand_grip(
-                Hand::Right,
-                Vec3::new(-3.0, 3.0 - i as f32 * 0.02, 0.0),
-                Quat::IDENTITY,
-            );
-            let mut rig_b = PlayerRig::new();
-            rig_b.set_hand_grip(Hand::Right, Vec3::new(3.0, 3.0, 0.0), Quat::IDENTITY);
-
-            let mut inputs = HashMap::new();
-            inputs.insert(player_a, frame(rig_a, InputFrame::default()));
-            inputs.insert(player_b, frame(rig_b, InputFrame::default()));
-            rt.update(dt, &inputs);
-        }
-
-        let box_a_y = rt.scene().find_object("box_a").unwrap().cuboid.position.y;
-        let box_b_y = rt.scene().find_object("box_b").unwrap().cuboid.position.y;
-
-        assert!(
-            (box_a_y - 2.4).abs() < 0.1,
-            "expected box_a to follow player A's hand down to y\u{2248}2.4, got {box_a_y}"
-        );
-        assert!(
-            (box_b_y - 3.0).abs() < 0.1,
-            "expected box_b to stay near its spawn height since player B's hand didn't move, got {box_b_y}"
-        );
-    }
-
-    #[test]
-    fn disconnected_player_is_cleaned_up_without_corrupting_the_scene() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_disconnect_test");
-        let scenes_dir = dir.join("scenes");
-        std::fs::create_dir_all(&scenes_dir).unwrap();
-
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            scenes_dir.join("test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "box_a",
-                        "cuboid": { "position": [0.0, 3.0, 0.0], "half_size": [0.2, 0.2, 0.2] },
-                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 },
-                        "grip_points": [
-                            { "name": "handle", "kind": "Snap", "local_pos": [0.0, 0.0, 0.0] }
-                        ],
-                        "script": "fn on_grab(hand, point) { grab_at_point(\"box_a\", point, hand); } fn on_release(hand) { release_grip(\"box_a\", hand); }"
-                    },
-                    {
-                        "id": "box_c",
-                        "cuboid": { "position": [10.0, 3.0, 0.0], "half_size": [0.2, 0.2, 0.2] },
-                        "rigid_body": { "mode": "Dynamic", "shape": "Box", "mass": 1.0 },
-                        "grip_points": [
-                            { "name": "handle", "kind": "Snap", "local_pos": [0.0, 0.0, 0.0] }
-                        ],
-                        "script": "fn on_grab(hand, point) { grab_at_point(\"box_c\", point, hand); } fn on_release(hand) { release_grip(\"box_c\", hand); }"
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-        let dt = 1.0 / 60.0;
-
-        let player_a = PlayerId::new();
-        let mut rig_a = PlayerRig::new();
-        rig_a.set_hand_grip(Hand::Right, Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY);
-        let mut grab_a = InputFrame::default();
-        grab_a
-            .grabbed
-            .push(("box_a".to_string(), Hand::Right, "handle".to_string()));
-        rt.update(dt, &one_player(player_a, frame(rig_a, grab_a)));
-
-        for _ in 0..10 {
-            let mut rig_a = PlayerRig::new();
-            rig_a.set_hand_grip(Hand::Right, Vec3::new(0.0, 3.0, 0.0), Quat::IDENTITY);
-            rt.update(dt, &one_player(player_a, frame(rig_a, InputFrame::default())));
-        }
-        let held_y = rt.scene().find_object("box_a").unwrap().cuboid.position.y;
-        assert!(
-            (held_y - 3.0).abs() < 0.2,
-            "expected box_a to be held near y=3.0 once settled, got {held_y}"
-        );
-
-        for _ in 0..30 {
-            rt.update(dt, &HashMap::new());
-        }
-        let after_drop_y = rt.scene().find_object("box_a").unwrap().cuboid.position.y;
-        assert!(
-            after_drop_y < held_y - 0.1,
-            "expected box_a to fall freely once its holder disconnected and the grab joint was released, went from {held_y} to {after_drop_y}"
-        );
-
-        let player_c = PlayerId::new();
-        let mut rig_c = PlayerRig::new();
-        rig_c.set_hand_grip(Hand::Right, Vec3::new(10.0, 3.0, 0.0), Quat::IDENTITY);
-        let mut grab_c = InputFrame::default();
-        grab_c
-            .grabbed
-            .push(("box_c".to_string(), Hand::Right, "handle".to_string()));
-        rt.update(dt, &one_player(player_c, frame(rig_c, grab_c)));
-
-        for i in 1..=30 {
-            let mut rig_c = PlayerRig::new();
-            rig_c.set_hand_grip(
-                Hand::Right,
-                Vec3::new(10.0, 3.0 - i as f32 * 0.02, 0.0),
-                Quat::IDENTITY,
-            );
-            rt.update(dt, &one_player(player_c, frame(rig_c, InputFrame::default())));
-        }
-        let box_c_y = rt.scene().find_object("box_c").unwrap().cuboid.position.y;
-        assert!(
-            (box_c_y - 2.4).abs() < 0.1,
-            "expected box_c to follow the new player C's hand down to y\u{2248}2.4, got {box_c_y}"
-        );
-    }
-
-    #[test]
-    fn active_sounds_tracked_without_a_listener() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_sound_test");
-        let scenes_dir = dir.join("scenes");
-        std::fs::create_dir_all(&scenes_dir).unwrap();
-
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            scenes_dir.join("test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "beacon",
-                        "cuboid": { "position": [1.0, 2.0, 3.0], "half_size": [0.2, 0.2, 0.2] },
-                        "sound": { "clip": "nonexistent.wav", "autoplay": true, "looping": true }
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        rt.update(1.0 / 60.0, &HashMap::new());
-
-        let sounds = rt.active_sounds();
-        assert_eq!(
-            sounds.len(),
-            1,
-            "expected the autoplay sound to be tracked as active, got {sounds:?}"
-        );
-        assert_eq!(sounds[0].object_id, "beacon");
-        assert!(
-            (sounds[0].position - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-4,
-            "expected the reported position to match the object's, got {:?}",
-            sounds[0].position
-        );
-        assert!(sounds[0].looping);
-    }
-
-    #[test]
-    fn wall_collision_blocks_walking_through_solid_geometry() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_wall_collision_test");
-        let scenes_dir = dir.join("scenes");
-        std::fs::create_dir_all(&scenes_dir).unwrap();
-
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            scenes_dir.join("test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "wall",
-                        "cuboid": { "position": [0.0, 1.0, -2.0], "half_size": [3.0, 2.0, 0.2] },
-                        "rigid_body": { "mode": "Static", "shape": "Box" }
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        let player = PlayerId::new();
-        let mut rig = PlayerRig::new();
-        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
-
-        let locomotion_input = LocomotionInput {
-            move_stick: (0.0, 1.0),
-            ..LocomotionInput::default()
-        };
-
-        for _ in 0..300 {
-            rt.update(
-                1.0 / 60.0,
-                &one_player(
-                    player,
-                    PlayerFrameInput {
-                        rig: rig.clone(),
-                        input: InputFrame::default(),
-                        locomotion_input: locomotion_input.clone(),
-                        teleport_target: None,
-                    },
-                ),
-            );
-        }
-
-        let z = rt.locomotions[&player].player_offset.z;
-        assert!(
-            z > -2.0,
-            "player should have been stopped before reaching the wall at z=-2.0, got z={z}"
-        );
-        assert!(
-            z < -1.0,
-            "player should have walked most of the way to the wall before being stopped, got z={z}"
-        );
-    }
-
-    #[test]
-    fn yaw_from_forward_round_trips_with_apply_to_heads_convention() {
-        for tenths in -30..=30 {
-            let yaw = tenths as f32 / 10.0;
-            let fwd = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
-            let recovered = GameRuntime::yaw_from_forward(fwd);
-            assert!(
-                (recovered - yaw).abs() < 1e-4,
-                "yaw {yaw} -> forward {fwd:?} -> recovered {recovered}, expected round trip"
-            );
-        }
-    }
-
-    fn empty_scene_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        std::fs::create_dir_all(dir.join("scenes")).unwrap();
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
-        )
-        .unwrap();
-        dir
-    }
-
-    #[test]
-    fn spawn_point_seeds_a_fresh_players_position_and_yaw() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = empty_scene_dir("space_soup_engine_spawn_point_test");
-        std::fs::write(
-            dir.join("scenes/test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "start",
-                        "cuboid": { "position": [3.0, 0.0, 4.0], "rotation": [0.0, 1.0, 0.0, 0.0] },
-                        "spawn_point": {}
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        let player = PlayerId::new();
-        let mut rig = PlayerRig::new();
-        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
-        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
-
-        let locomotion = &rt.locomotions[&player];
-        assert!(
-            locomotion.player_offset.distance(Vec3::new(3.0, 0.0, 4.0)) < 1e-4,
-            "expected the player to spawn at the spawn_point's position, got {:?}",
-            locomotion.player_offset
-        );
-        let expected_yaw = GameRuntime::yaw_from_forward(Quat::from_xyzw(0.0, 1.0, 0.0, 0.0) * Vec3::NEG_Z);
-        assert!(
-            (locomotion.player_yaw - expected_yaw).abs() < 1e-4,
-            "expected the player's yaw to match the spawn_point's own facing direction"
-        );
-    }
-
-    #[test]
-    fn no_spawn_point_falls_back_to_origin() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = empty_scene_dir("space_soup_engine_no_spawn_point_test");
-        std::fs::write(
-            dir.join("scenes/test.json"),
-            r#"{ "name": "test", "objects": [] }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        let player = PlayerId::new();
-        let mut rig = PlayerRig::new();
-        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
-        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
-
-        assert_eq!(rt.locomotions[&player].player_offset, Vec3::ZERO);
-    }
-
-    #[test]
-    fn teleport_disarms_until_the_player_walks_off_the_destination_pad() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = empty_scene_dir("space_soup_engine_teleportal_test");
-        std::fs::write(
-            dir.join("scenes/test.json"),
-            r#"{
-                "name": "test",
-                "objects": [
-                    {
-                        "id": "pad_a",
-                        "cuboid": { "position": [0.0, 0.0, 0.0], "half_size": [1.0, 1.0, 1.0] },
-                        "teleportal": { "target_id": "pad_b" }
-                    },
-                    {
-                        "id": "pad_b",
-                        "cuboid": { "position": [10.0, 0.0, 0.0], "half_size": [1.0, 1.0, 1.0] },
-                        "teleportal": { "target_id": "pad_a" }
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        let player = PlayerId::new();
-        let mut rig = PlayerRig::new();
-        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
-        let tick = |rt: &mut GameRuntime| {
-            rt.update(1.0 / 60.0, &one_player(player, frame(rig.clone(), InputFrame::default())));
-        };
-
-        tick(&mut rt);
-        assert!(
-            rt.locomotions[&player].player_offset.distance(Vec3::new(10.0, 0.0, 0.0)) < 1e-4,
-            "expected the player to be teleported onto pad_b, got {:?}",
-            rt.locomotions[&player].player_offset
-        );
-
-        tick(&mut rt);
-        assert!(
-            rt.locomotions[&player].player_offset.distance(Vec3::new(10.0, 0.0, 0.0)) < 1e-4,
-            "expected pad_b to stay disarmed while the player is still standing on it, got {:?}",
-            rt.locomotions[&player].player_offset
-        );
-
-        rt.locomotions.get_mut(&player).unwrap().player_offset = Vec3::new(5.0, 0.0, 0.0);
-        tick(&mut rt);
-        assert!(
-            rt.locomotions[&player].player_offset.distance(Vec3::new(5.0, 0.0, 0.0)) < 1e-4,
-            "player standing on neither pad should not be teleported"
-        );
-
-        rt.locomotions.get_mut(&player).unwrap().player_offset = Vec3::new(10.0, 0.0, 0.0);
-        tick(&mut rt);
-        assert!(
-            rt.locomotions[&player].player_offset.distance(Vec3::new(0.0, 0.0, 0.0)) < 1e-4,
-            "expected re-entering pad_b after fully walking off to teleport again, got {:?}",
-            rt.locomotions[&player].player_offset
-        );
-    }
-
-    fn write_two_scene_game(dir: &std::path::Path) {
-        std::fs::create_dir_all(dir.join("scenes")).unwrap();
-        std::fs::write(
-            dir.join("manifest.json"),
-            r#"{"name":"test","version":"0.1.0","entry_scene":"test_a","scenes":["test_a","test_b"]}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("scenes/test_a.json"),
-            r#"{
-                "name": "test_a",
-                "objects": [
-                    {
-                        "id": "portal",
-                        "cuboid": { "position": [0.0, 0.0, 0.0], "half_size": [1.0, 1.0, 1.0] },
-                        "teleportal": { "target_scene": "test_b" }
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("scenes/test_b.json"),
-            r#"{
-                "name": "test_b",
-                "objects": [
-                    {
-                        "id": "arrival",
-                        "cuboid": { "position": [5.0, 0.0, 7.0] },
-                        "spawn_point": {}
-                    }
-                ]
-            }"#,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn cross_scene_teleportal_switches_scenes_and_repositions_the_player() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_cross_scene_teleport_test");
-        write_two_scene_game(&dir);
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-        assert_eq!(rt.scene_name(), "test_a");
-
-        let player = PlayerId::new();
-        let mut rig = PlayerRig::new();
-        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
-
-        let (_, _, _, _, _, scene_change) = rt.update(
-            1.0 / 60.0,
-            &one_player(player, frame(rig, InputFrame::default())),
-        );
-        let next_scene = scene_change.expect("expected the portal to request a scene change");
-        rt.load_scene(&next_scene).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        assert_eq!(rt.scene_name(), "test_b");
-        assert!(
-            rt.locomotions[&player].player_offset.distance(Vec3::new(5.0, 0.0, 7.0)) < 1e-4,
-            "expected the player to land on test_b's own spawn point, got {:?}",
-            rt.locomotions[&player].player_offset
-        );
-    }
-
-    #[test]
-    fn load_scene_repositions_already_connected_players_to_the_new_spawn_point() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join("space_soup_engine_load_scene_reposition_test");
-        write_two_scene_game(&dir);
-
-        let mut rt = GameRuntime::load(&dir).unwrap();
-
-        let player = PlayerId::new();
-        let mut rig = PlayerRig::new();
-        rig.set_head(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
-        rt.update(1.0 / 60.0, &one_player(player, frame(rig, InputFrame::default())));
-
-        rt.locomotions.get_mut(&player).unwrap().player_offset = Vec3::new(99.0, 0.0, 99.0);
-
-        rt.load_scene("test_b").unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-
-        assert!(
-            rt.locomotions[&player].player_offset.distance(Vec3::new(5.0, 0.0, 7.0)) < 1e-4,
-            "expected load_scene to reposition the already-connected player to the new scene's spawn point, got {:?}",
-            rt.locomotions[&player].player_offset
-        );
-    }
-}
-

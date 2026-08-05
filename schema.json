@@ -66,6 +66,11 @@
       "cardinality": "list"
     },
     {
+      "name": "sockets",
+      "rust_type": "SocketDef",
+      "cardinality": "list"
+    },
+    {
       "name": "slider_joint",
       "rust_type": "SliderJointDef",
       "cardinality": "optional"
@@ -142,12 +147,66 @@
     {
       "name": "particle_emitter",
       "rust_type": "ParticleEmitterDef",
-      "cardinality": "optional"
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "particle_size",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "spawn_rate",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "color",
+          "kind": "color",
+          "optional": false
+        },
+        {
+          "name": "lifetime",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "speed",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "spread_deg",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "size_growth",
+          "kind": "number",
+          "optional": false
+        }
+      ]
     },
     {
       "name": "laser",
       "rust_type": "LaserDef",
-      "cardinality": "optional"
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "color",
+          "kind": "color",
+          "optional": false
+        },
+        {
+          "name": "max_distance",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "beam_width",
+          "kind": "number",
+          "optional": false
+        }
+      ]
     },
     {
       "name": "spawn_point",
@@ -157,7 +216,19 @@
     {
       "name": "teleportal",
       "rust_type": "TeleportalDef",
-      "cardinality": "optional"
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "target_id",
+          "kind": "text",
+          "optional": true
+        },
+        {
+          "name": "target_scene",
+          "kind": "text",
+          "optional": true
+        }
+      ]
     }
   ]
 }

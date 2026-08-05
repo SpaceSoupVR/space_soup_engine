@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::events::Hand;
 use crate::rig::PlayerRig;
+use crate::rigid_physics::PhysicsWorld;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LocomotionMode {
@@ -170,6 +171,68 @@ impl Locomotion {
         let position = self.player_offset + yaw_rot * tracked_position;
         let rotation = yaw_rot * tracked_rotation;
         (position, rotation)
+    }
+
+    // Stops the player at any static rigid_body geometry hit while moving from `prev_xz`
+    // to the current player_offset, then snaps Y to the ground beneath (or reverts XZ if
+    // the ground there is too steep to climb). Shared by GameRuntime::update (the
+    // authoritative server simulation) and any client that runs its own local movement
+    // simulation -- both need identical collision behavior against the same PhysicsWorld
+    // data, so this lives once here rather than being reimplemented per caller.
+    pub fn apply_collision(&mut self, physics: &PhysicsWorld, prev_xz: (f32, f32)) {
+        self.apply_wall_collision(physics, prev_xz);
+        self.apply_ground_follow(physics, prev_xz);
+    }
+
+    fn apply_wall_collision(&mut self, physics: &PhysicsWorld, prev_xz: (f32, f32)) {
+        if self.mode == LocomotionMode::Disabled {
+            return;
+        }
+
+        const PLAYER_RADIUS: f32 = 0.25;
+        const PROBE_HEIGHT: f32 = 1.0;
+
+        let prev = Vec3::new(prev_xz.0, self.player_offset.y + PROBE_HEIGHT, prev_xz.1);
+        let curr = Vec3::new(
+            self.player_offset.x,
+            self.player_offset.y + PROBE_HEIGHT,
+            self.player_offset.z,
+        );
+        let delta = curr - prev;
+        let dist = delta.length();
+        if dist < 1e-5 {
+            return;
+        }
+        let dir = delta / dist;
+
+        let Some((hit_point, _normal)) = physics.raycast(prev, dir, dist + PLAYER_RADIUS) else {
+            return;
+        };
+
+        let clear_dist = (prev.distance(hit_point) - PLAYER_RADIUS).max(0.0);
+        let stopped = prev + dir * clear_dist;
+        self.player_offset.x = stopped.x;
+        self.player_offset.z = stopped.z;
+    }
+
+    fn apply_ground_follow(&mut self, physics: &PhysicsWorld, prev_xz: (f32, f32)) {
+        if self.mode == LocomotionMode::Disabled {
+            return;
+        }
+
+        let offset = self.player_offset;
+        let probe_origin = Vec3::new(offset.x, offset.y + 3.0, offset.z);
+        let Some((hit_point, normal)) = physics.raycast_down(probe_origin, 50.0) else {
+            return;
+        };
+
+        let slope_deg = normal.dot(Vec3::Y).clamp(-1.0, 1.0).acos().to_degrees();
+        if slope_deg <= self.max_climb_angle_deg {
+            self.player_offset.y = hit_point.y;
+        } else {
+            self.player_offset.x = prev_xz.0;
+            self.player_offset.z = prev_xz.1;
+        }
     }
 }
 

@@ -17,6 +17,7 @@ pub enum FieldKind {
     Text,
     Vec3,
     Enum,
+    Color,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -98,6 +99,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
             comp!(grip_pose_right, "GripPoseDef", Optional),
             comp!(rigid_body, "RigidBodyDef", Optional),
             comp!(grip_points, "GripPointDef", List),
+            comp!(sockets, "SocketDef", List),
             comp!(slider_joint, "SliderJointDef", Optional),
             comp!(
                 terrain_collider,
@@ -107,10 +109,15 @@ pub fn game_object_schema() -> SchemaDescriptor {
             ),
             comp!(lights, "LightDef", List),
             comp!(sound, "SoundSourceDef", Optional, sound_fields()),
-            comp!(particle_emitter, "ParticleEmitterDef", Optional),
-            comp!(laser, "LaserDef", Optional),
+            comp!(
+                particle_emitter,
+                "ParticleEmitterDef",
+                Optional,
+                particle_emitter_fields()
+            ),
+            comp!(laser, "LaserDef", Optional, laser_fields()),
             comp!(spawn_point, "SpawnPointDef", Optional),
-            comp!(teleportal, "TeleportalDef", Optional),
+            comp!(teleportal, "TeleportalDef", Optional, teleportal_fields()),
         ],
     }
 }
@@ -151,6 +158,50 @@ fn terrain_collider_fields() -> Vec<FieldDescriptor> {
     vec![field!(node_filter, Text, opt)]
 }
 
+fn laser_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(l: crate::scene::LaserDef) {
+        let crate::scene::LaserDef { color, max_distance, beam_width } = l;
+    }
+    vec![
+        field!(color, Color),
+        field!(max_distance, Number),
+        field!(beam_width, Number),
+    ]
+}
+
+fn particle_emitter_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(p: crate::scene::ParticleEmitterDef) {
+        let crate::scene::ParticleEmitterDef {
+            particle_size,
+            spawn_rate,
+            color,
+            lifetime,
+            speed,
+            spread_deg,
+            size_growth,
+        } = p;
+    }
+    vec![
+        field!(particle_size, Number),
+        field!(spawn_rate, Number),
+        field!(color, Color),
+        field!(lifetime, Number),
+        field!(speed, Number),
+        field!(spread_deg, Number),
+        field!(size_growth, Number),
+    ]
+}
+
+fn teleportal_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(t: crate::scene::TeleportalDef) {
+        let crate::scene::TeleportalDef { target_id, target_scene } = t;
+    }
+    vec![field!(target_id, Text, opt), field!(target_scene, Text, opt)]
+}
+
 #[allow(dead_code, unused_variables)]
 fn schema_exhaustiveness(o: crate::scene::GameObject) {
     let crate::scene::GameObject {
@@ -169,6 +220,7 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         grip_pose_right,
         rigid_body,
         grip_points,
+        sockets,
         slider_joint,
         terrain_collider,
         lights,
@@ -185,8 +237,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_has_the_twenty_one_authorable_components() {
-        assert_eq!(game_object_schema().components.len(), 21);
+    fn schema_has_the_twenty_two_authorable_components() {
+        assert_eq!(game_object_schema().components.len(), 22);
     }
 
     #[test]
@@ -228,7 +280,22 @@ mod tests {
         assert_eq!(terrain.fields[0].name, "node_filter");
         assert!(terrain.fields[0].optional, "node_filter is Option<String>");
 
+        let laser = by("laser");
+        assert_eq!(laser.fields.len(), 3, "LaserDef has 3 fields");
+        assert!(laser.fields.iter().any(|f| f.name == "color" && f.kind == FieldKind::Color));
+        assert!(laser.fields.iter().any(|f| f.name == "max_distance" && f.kind == FieldKind::Number));
+
+        let particle_emitter = by("particle_emitter");
+        assert_eq!(particle_emitter.fields.len(), 7, "ParticleEmitterDef has 7 fields");
+        assert!(particle_emitter.fields.iter().any(|f| f.name == "color" && f.kind == FieldKind::Color));
+
+        let teleportal = by("teleportal");
+        assert_eq!(teleportal.fields.len(), 2, "TeleportalDef has 2 fields");
+        assert!(teleportal.fields.iter().all(|f| f.optional), "both teleportal fields are Option<String>");
+
         assert!(by("grip_points").fields.is_empty());
+        assert!(by("sockets").fields.is_empty());
+        assert!(by("spawn_point").fields.is_empty(), "SpawnPointDef is a zero-field marker component");
         assert!(by("animations").fields.is_empty());
     }
 
@@ -236,7 +303,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 21);
+        assert_eq!(v["components"].as_array().unwrap().len(), 22);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }

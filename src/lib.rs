@@ -9,10 +9,37 @@ pub mod physics;
 pub mod rig;
 pub mod rig_profile;
 pub mod rigid_physics;
+mod rigid_physics_grab;
+mod rigid_physics_query;
+mod rigid_physics_spawn;
 pub mod runtime;
+mod runtime_animation;
+mod runtime_dispatch;
+mod runtime_script_commands;
+mod runtime_locomotion;
+mod runtime_render;
+#[cfg(test)]
+mod runtime_test_support;
+#[cfg(test)]
+mod runtime_tests_multiplayer;
+#[cfg(test)]
+mod runtime_tests_physics;
+#[cfg(test)]
+mod runtime_tests_scripting;
+#[cfg(test)]
+mod runtime_tests_teleport;
 pub mod scene;
+mod scene_animation;
+mod scene_cuboid;
+mod scene_env;
+mod scene_light;
+mod scene_physics;
+mod scene_rig;
 pub mod schema;
 pub mod script;
+mod script_fns_interact;
+mod script_fns_query;
+mod script_fns_transform;
 
 pub use attach::{Attachment, AttachmentTable};
 pub use debug_protocol::{
@@ -28,7 +55,7 @@ pub use rig_profile::{
 };
 pub use runtime::{
     GameRuntime, PlayerFrameInput, RenderCuboid, RenderLaser, RenderLight, RenderMesh,
-    RenderParticleEmitter, SoundState,
+    RenderParticleBurst, RenderParticleEmitter, SoundState,
 };
 pub use scene::{
     Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape, Color3, CuboidDef,
