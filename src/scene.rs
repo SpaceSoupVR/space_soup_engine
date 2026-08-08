@@ -47,6 +47,22 @@ pub struct GameObject {
     #[serde(default)]
     pub part_animations: Vec<PartAnimationDef>,
 
+    /// Parts of this object's model that are not drawn.
+    ///
+    /// State, not an animation channel. A keyframe interpolates, and "half
+    /// visible" is either meaningless or a fade nobody asked for; worse, part
+    /// animations keep only each channel's LAST keyframe, so a hide-then-show
+    /// timeline cannot even be represented in the file. Visibility is a thing a
+    /// part IS, so it lives on the object and is changed by events.
+    ///
+    /// The case that needs it: a magazine model carrying both a loaded and an
+    /// empty magazine as separate parts, where exactly one should be drawn.
+    ///
+    /// Rendering already knows how to do this -- the same joint-exclusion path
+    /// that hides your own avatar's head from your view.
+    #[serde(default)]
+    pub hidden_parts: Vec<String>,
+
     #[serde(default)]
     pub rig_attachment: Option<RigAttachmentDef>,
 

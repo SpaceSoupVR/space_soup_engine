@@ -6,6 +6,7 @@ use crate::events::{Hand, InputFrame};
 use crate::physics::{Aabb, CollisionEvent};
 use crate::runtime::GameRuntime;
 use crate::scene::{BindingScope, PlayMode};
+use crate::script::EngineCommand;
 
 impl GameRuntime {
     pub(crate) fn age_particle_bursts(&mut self, dt: f32) {
@@ -248,6 +249,7 @@ impl GameRuntime {
                 (press.button.clone(), hand.as_str().to_string()),
             );
         }
+        self.dispatch_part_triggers(input);
         self.dispatch_animation_bindings(input);
     }
 
@@ -293,4 +295,109 @@ impl GameRuntime {
         }
     }
 
+}
+
+impl GameRuntime {
+    /// Fire part-animation triggers whose blend crossed their threshold this frame.
+    ///
+    /// Crossing, not "is past" -- otherwise an action fires every frame the blend
+    /// happens to sit beyond the line. And latched with hysteresis, because a hand
+    /// held near a threshold jitters across it many times a second; one deliberate
+    /// motion has to produce one event.
+    ///
+    /// Runs here rather than on the headset because the actions are authoritative:
+    /// spawning a magazine and handing it to physics decides world state that every
+    /// player must agree on.
+    pub(crate) fn dispatch_part_triggers(&mut self, input: &InputFrame) {
+        use crate::scene_animation::{PartTriggerAction, TRIGGER_HYSTERESIS};
+
+        let mut fired: Vec<(String, PartTriggerAction)> = Vec::new();
+        for (object_id, clips) in &input.part_blends {
+            let Some(obj) = self.scene.find_object(object_id) else { continue };
+            for pa in &obj.part_animations {
+                let Some(&blend) = clips.get(&pa.clip) else { continue };
+                let prev = self
+                    .prev_part_blends
+                    .get(object_id)
+                    .and_then(|m| m.get(&pa.clip))
+                    .copied()
+                    .unwrap_or(0.0);
+                for (i, trig) in pa.triggers.iter().enumerate() {
+                    let key = (object_id.clone(), pa.clip.clone(), i);
+                    let crossed = if trig.rising {
+                        prev < trig.at && blend >= trig.at
+                    } else {
+                        prev > trig.at && blend <= trig.at
+                    };
+                    // Rearm only once the blend has retreated clear of the band.
+                    let rearmed = if trig.rising {
+                        blend < trig.at - TRIGGER_HYSTERESIS
+                    } else {
+                        blend > trig.at + TRIGGER_HYSTERESIS
+                    };
+                    if rearmed {
+                        self.latched_triggers.remove(&key);
+                    } else if crossed && !self.latched_triggers.contains(&key) {
+                        self.latched_triggers.insert(key);
+                        fired.push((object_id.clone(), trig.action.clone()));
+                    }
+                }
+            }
+        }
+
+        for (object_id, action) in fired {
+            self.run_part_trigger_action(&object_id, action);
+        }
+
+        self.prev_part_blends = input.part_blends.clone();
+    }
+
+    fn run_part_trigger_action(&mut self, object_id: &str, action: crate::scene_animation::PartTriggerAction) {
+        use crate::scene_animation::PartTriggerAction as A;
+        match action {
+            A::DetachPart { part, template, impulse } => {
+                // A part is a joint inside a skinned mesh, not an object, so it
+                // cannot itself become a rigid body. The handover is a spawn plus a
+                // hide: put a physics copy into the world and stop drawing the joint.
+                let Some(obj) = self.scene.find_object(object_id) else { return };
+                let at = obj.cuboid.position;
+                let new_id = format!("{object_id}#{part}#{}", self.next_detached_id);
+                self.next_detached_id += 1;
+                self.script_host.push_command(EngineCommand::SpawnObject {
+                    template_id: template,
+                    new_id: new_id.clone(),
+                    x: at.x,
+                    y: at.y,
+                    z: at.z,
+                });
+                if impulse != [0.0, 0.0, 0.0] {
+                    self.script_host.push_command(EngineCommand::ApplyImpulse {
+                        id: new_id,
+                        x: impulse[0],
+                        y: impulse[1],
+                        z: impulse[2],
+                    });
+                }
+                self.script_host.push_command(EngineCommand::SetPartVisible {
+                    id: object_id.to_string(),
+                    part,
+                    visible: false,
+                });
+            }
+            A::SetPartVisible { part, visible } => {
+                self.script_host.push_command(EngineCommand::SetPartVisible {
+                    id: object_id.to_string(),
+                    part,
+                    visible,
+                });
+            }
+            A::PlaySound { id } => self.script_host.push_command(EngineCommand::PlaySound { id }),
+            A::SpawnParticleBurst { id, count } => {
+                // Authored as u32 -- a negative burst is not a thing anyone means --
+                // and widened here to the command's script-facing i64.
+                self.script_host
+                    .push_command(EngineCommand::SpawnParticleBurst { id, count: count as i64 })
+            }
+        }
+    }
 }

@@ -66,6 +66,7 @@ impl GameRuntime {
                     rotation: o.cuboid.rotation * mesh_ref.rotation_offset,
                     scale: mesh_ref.scale,
                     manual_part_blends: self.manual_part_blends.get(&o.id).cloned().unwrap_or_default(),
+                    hidden_parts: o.hidden_parts.clone(),
                 })
             })
             .collect()
