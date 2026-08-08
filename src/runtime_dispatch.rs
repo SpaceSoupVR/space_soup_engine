@@ -224,12 +224,29 @@ impl GameRuntime {
                 .script_host
                 .call(id, "on_release", (hand.as_str().to_string(),));
         }
+        // Note `on_release` above is GRAB release, and has meant that since before
+        // buttons had an up edge at all. Button edges therefore get their own
+        // clearly distinct names rather than an `on_release` overload that would
+        // silently collide with every existing grab script.
+        self.script_host.set_input_axes(&input.axes);
         for press in &input.button_presses {
-            if let Some(id) = &press.object_id {
-                let _ = self
-                    .script_host
-                    .call(id, "on_press", (press.button.clone(),));
-            }
+            let Some(id) = &press.object_id else { continue };
+            let hand = press.hand.unwrap_or_default();
+            let _ = self.script_host.call(id, "on_press", (press.button.clone(),));
+            let _ = self.script_host.call(
+                id,
+                "on_button_down",
+                (press.button.clone(), hand.as_str().to_string()),
+            );
+        }
+        for press in &input.button_releases {
+            let Some(id) = &press.object_id else { continue };
+            let hand = press.hand.unwrap_or_default();
+            let _ = self.script_host.call(
+                id,
+                "on_button_up",
+                (press.button.clone(), hand.as_str().to_string()),
+            );
         }
         self.dispatch_animation_bindings(input);
     }

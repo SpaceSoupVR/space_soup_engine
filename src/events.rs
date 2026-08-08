@@ -31,11 +31,75 @@ pub struct InputFrame {
     pub grabbed: Vec<(String, Hand, String)>,
     pub released: Vec<(String, Hand)>,
     pub button_presses: Vec<ButtonPress>,
+
+    /// Button-up edges. Separate from `button_presses` rather than a flag on it
+    /// so older wire data still deserializes into an empty release list.
+    #[serde(default)]
+    pub button_releases: Vec<ButtonPress>,
+
+    /// Continuous controller values, refreshed every frame.
+    #[serde(default)]
+    pub axes: InputAxes,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ButtonPress {
     pub button: String,
     pub object_id: Option<String>,
+
+    /// Which controller produced it. `None` on wire data written before this
+    /// existed. A two-handed weapon cannot tell the support hand from the
+    /// firing hand without it.
+    #[serde(default)]
+    pub hand: Option<Hand>,
+}
+
+impl ButtonPress {
+    pub fn new(button: impl Into<String>, object_id: Option<String>, hand: Hand) -> Self {
+        Self { button: button.into(), object_id, hand: Some(hand) }
+    }
+}
+
+/// Continuous controller inputs.
+///
+/// Deliberately polled rather than delivered as events: an axis changes every
+/// frame, and a script that wants "how hard is the trigger held" wants to ask in
+/// `on_update`, not to be woken sixty times a second. Edges get events, levels
+/// get getters.
+///
+/// This is also what makes a held-button behaviour writable at all -- button
+/// presses are edge-triggered, so before this a script could see the trigger go
+/// down but had nothing to tell it the trigger was still down.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct InputAxes {
+    pub l_trigger: f32,
+    pub r_trigger: f32,
+    pub l_grip: f32,
+    pub r_grip: f32,
+    pub l_stick: [f32; 2],
+    pub r_stick: [f32; 2],
+}
+
+impl InputAxes {
+    pub fn trigger(&self, hand: Hand) -> f32 {
+        match hand {
+            Hand::Left => self.l_trigger,
+            Hand::Right => self.r_trigger,
+        }
+    }
+
+    pub fn grip(&self, hand: Hand) -> f32 {
+        match hand {
+            Hand::Left => self.l_grip,
+            Hand::Right => self.r_grip,
+        }
+    }
+
+    pub fn stick(&self, hand: Hand) -> [f32; 2] {
+        match hand {
+            Hand::Left => self.l_stick,
+            Hand::Right => self.r_stick,
+        }
+    }
 }
 

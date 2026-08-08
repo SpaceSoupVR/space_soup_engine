@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use space_soup_protocol::PlayerId;
 
-use crate::events::Hand;
+use crate::events::{Hand, InputAxes};
 
 pub(crate) fn parse_hand(s: &str) -> Hand {
     if s.eq_ignore_ascii_case("left") {
@@ -142,6 +142,10 @@ pub struct ScriptContext {
     pub current_player: PlayerId,
     pub last_raycast_hit: Option<(f32, f32, f32)>,
     pub raycast_hit_object: String,
+
+    /// Continuous controller values, mirrored here each frame so scripts can
+    /// poll them from on_update. Edges arrive as events; levels are polled.
+    pub input_axes: InputAxes,
 }
 
 pub type SharedContext = Arc<Mutex<ScriptContext>>;
@@ -237,6 +241,10 @@ impl ScriptHost {
     pub fn set_current_player(&self, player: PlayerId) {
         self.context.lock().unwrap().current_player = player;
     }
+
+    pub fn set_input_axes(&self, axes: &InputAxes) {
+        self.context.lock().unwrap().input_axes = *axes;
+    }
 }
 
 
@@ -245,5 +253,6 @@ fn build_engine(context: SharedContext) -> Engine {
     crate::script_fns_transform::register_transform_and_scene_fns(&mut engine, &context);
     crate::script_fns_query::register_position_query_fns(&mut engine, &context);
     crate::script_fns_interact::register_interaction_and_audio_fns(&mut engine, &context);
+    crate::script_fns_input::register_input_fns(&mut engine, &context);
     engine
 }
