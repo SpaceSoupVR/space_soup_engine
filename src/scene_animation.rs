@@ -62,12 +62,24 @@ impl Animation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// No Eq: Cyclic carries a rate, and f32 has no total equality. PartialEq is what
+// the driver comparisons actually use.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum PartDriver {
     HoldTrigger,
     HoldGrip,
     HandPull,
     Manual,
+    /// Runs off a clock instead of a hand: while the drive input is held, the
+    /// blend sweeps 0 -> 1 -> 0 repeatedly at `cycles_per_second`.
+    ///
+    /// Everything else here maps a continuous input to a blend, which cannot
+    /// express "play once and come back" -- so a reciprocating bolt had to be a
+    /// hand-written script per weapon, and could not even tell when the trigger
+    /// was released. This makes it authored data.
+    ///
+    /// Held by the trigger, since that is what an automatic weapon cycles on.
+    Cyclic { cycles_per_second: f32 },
 }
 
 impl Default for PartDriver {
@@ -87,6 +99,22 @@ pub struct PartAnimationDef {
     /// Things that happen at a point in this clip's blend.
     #[serde(default)]
     pub triggers: Vec<PartTrigger>,
+
+    /// How this clip combines with the others on a shared part. Override (the
+    /// default) takes the part outright; Additive layers on top. See
+    /// space_soup's ClipBlendMode.
+    #[serde(default)]
+    pub blend_mode: ClipBlendMode,
+}
+
+/// Mirrors space_soup::renderer::mesh::skin::ClipBlendMode as authorable data.
+/// Declared here rather than imported so the scene format does not depend on the
+/// renderer crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ClipBlendMode {
+    #[default]
+    Override,
+    Additive,
 }
 
 /// Something discrete that fires when a clip's blend crosses a threshold.

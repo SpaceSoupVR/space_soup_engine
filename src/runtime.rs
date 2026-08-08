@@ -159,6 +159,10 @@ pub struct GameRuntime {
 
     /// Last frame's part blends, so a trigger fires on a CROSSING rather than on
     /// every frame the blend happens to sit past its threshold.
+    /// Latest posed part transforms reported by the client, for part-anchored
+    /// sockets and for spawning a detached part where the part actually is.
+    pub(crate) part_transforms: HashMap<String, HashMap<String, (Vec3, Quat)>>,
+
     pub(crate) prev_part_blends: HashMap<String, HashMap<String, f32>>,
 
     /// Triggers currently latched, as (object, clip, trigger index). A latched
@@ -197,6 +201,7 @@ impl GameRuntime {
             sound_play_requests: HashSet::new(),
             sound_stop_requests: HashSet::new(),
             manual_part_blends: HashMap::new(),
+            part_transforms: HashMap::new(),
             prev_part_blends: HashMap::new(),
             latched_triggers: std::collections::HashSet::new(),
             particle_bursts: Vec::new(),

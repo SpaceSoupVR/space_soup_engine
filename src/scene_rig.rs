@@ -129,4 +129,16 @@ pub struct SocketDef {
     pub local_pos: [f32; 3],
     #[serde(default = "identity_quat_arr")]
     pub local_rot: [f32; 4],
+
+    /// Anchor this socket to a model part, so it rides that part's animated pose
+    /// instead of the object's origin.
+    ///
+    /// An ejection port has to be where the port actually is with the bolt back;
+    /// a muzzle has to follow the barrel. Without this, anything spawned at a
+    /// socket appears at the object pivot and stays there while the mechanism
+    /// moves around it.
+    ///
+    /// `local_pos`/`local_rot` are then relative to that part, not the object.
+    #[serde(default)]
+    pub part: Option<String>,
 }
