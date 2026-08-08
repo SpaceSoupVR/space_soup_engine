@@ -104,6 +104,11 @@ pub enum EngineCommand {
         clip: String,
         blend: f32,
     },
+    SetPartVisible {
+        id: String,
+        part: String,
+        visible: bool,
+    },
     SpawnParticleBurst {
         id: String,
         count: i64,
@@ -211,6 +216,15 @@ impl ScriptHost {
                 }
             }
         }
+    }
+
+    /// Queue a command from engine code.
+    ///
+    /// Blend-threshold triggers are authored data, not script, but they produce
+    /// exactly the same effects -- so they go through the same queue and are
+    /// applied by the same drain, rather than mutating the scene behind it.
+    pub fn push_command(&self, command: EngineCommand) {
+        self.context.lock().unwrap().commands.push(command);
     }
 
     pub fn drain_commands(&self) -> Vec<EngineCommand> {

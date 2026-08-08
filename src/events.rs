@@ -40,6 +40,17 @@ pub struct InputFrame {
     /// Continuous controller values, refreshed every frame.
     #[serde(default)]
     pub axes: InputAxes,
+
+    /// Every part-animation blend the client computed this frame:
+    /// object id -> clip name -> 0..1.
+    ///
+    /// The client owns these because it is the only side that can compute them:
+    /// a HandPull blend comes from where the player's hand is relative to the
+    /// part, which needs the skinned pose. The engine needs them anyway, because
+    /// blend-threshold triggers spawn objects and apply impulses -- authoritative
+    /// work that cannot live on a headset.
+    #[serde(default)]
+    pub part_blends: std::collections::HashMap<String, std::collections::HashMap<String, f32>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

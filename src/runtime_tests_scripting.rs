@@ -472,3 +472,146 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             "a button-up edge must reach scripts -- on_release means GRAB release"
         );
     }
+
+    #[test]
+    fn set_part_visible_toggles_hidden_parts_and_defaults_to_visible() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_part_visible_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "script": "fn on_button_down(b, hand) { if b == \"grip\" { set_part_visible(\"gun\", \"mag_full\", false); set_part_visible(\"gun\", \"mag_empty\", true); } else { set_part_visible(\"gun\", \"mag_full\", true); } }"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+        let hidden = |rt: &GameRuntime| rt.scene().find_object("gun").unwrap().hidden_parts.clone();
+
+        // Nothing is hidden until something says so -- "visible" is the default for
+        // every part of every model that never mentions this.
+        assert!(hidden(&rt).is_empty());
+
+        let press = |button: &str| {
+            let mut i = InputFrame::default();
+            i.button_presses.push(crate::events::ButtonPress::new(
+                button,
+                Some("gun".to_string()),
+                crate::events::Hand::Right,
+            ));
+            i
+        };
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("grip"))));
+        assert_eq!(hidden(&rt), vec!["mag_full".to_string()],
+            "hiding one part must not hide the one that was made visible in the same batch");
+
+        // Idempotent: holding the button must not stack duplicates.
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("grip"))));
+        assert_eq!(hidden(&rt), vec!["mag_full".to_string()]);
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("trigger"))));
+        assert!(hidden(&rt).is_empty(), "making a part visible removes it from hidden_parts");
+    }
+
+    #[test]
+    fn a_blend_trigger_fires_once_per_crossing_and_detaches_to_physics() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_blend_trigger_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [1.0, 2.0, 3.0], "half_size": [0.2, 0.1, 0.5] },
+                        "part_animations": [
+                            { "clip": "mag_eject", "driver": "HoldGrip",
+                              "triggers": [ { "at": 0.85,
+                                              "action": { "DetachPart": { "part": "mag_full",
+                                                                          "template": "mag_template",
+                                                                          "impulse": [0.0, -1.0, 0.0] } } } ] }
+                        ]
+                    },
+                    {
+                        "id": "mag_template",
+                        "hidden": true,
+                        "cuboid": { "position": [0.0, -50.0, 0.0], "half_size": [0.05, 0.12, 0.02] },
+                        "rigid_body": { "mode": "Dynamic", "mass": 0.3 }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+
+        let at_blend = |b: f32| {
+            let mut i = InputFrame::default();
+            let mut clips = std::collections::HashMap::new();
+            clips.insert("mag_eject".to_string(), b);
+            i.part_blends.insert("gun".to_string(), clips);
+            i
+        };
+        let detached = |rt: &GameRuntime| {
+            rt.scene().objects.iter().filter(|o| o.id.contains("#mag_full#")).count()
+        };
+
+        // Below the threshold nothing happens, however long it is held there.
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.5))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.8))));
+        assert_eq!(detached(rt_ref(&rt)), 0, "a blend short of the threshold must not fire");
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
+        assert_eq!(detached(rt_ref(&rt)), 1, "crossing the threshold should detach exactly once");
+        assert!(
+            rt.scene().find_object("gun").unwrap().hidden_parts.contains(&"mag_full".to_string()),
+            "the source part must stop being drawn, or the magazine appears twice"
+        );
+
+        // Held past the line, and jittering across it, must not fire again --
+        // a hand near a threshold crosses it many times a second.
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.95))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.84))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
+        assert_eq!(detached(rt_ref(&rt)), 1, "jitter around the threshold must not re-fire");
+
+        // Fully released and pulled again is a new, deliberate motion.
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.0))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
+        assert_eq!(detached(rt_ref(&rt)), 2, "a fresh pull should detach again");
+    }
+
+    fn rt_ref(rt: &GameRuntime) -> &GameRuntime {
+        rt
+    }

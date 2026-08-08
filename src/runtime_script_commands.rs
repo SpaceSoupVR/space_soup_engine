@@ -168,6 +168,19 @@ impl GameRuntime {
                         .or_default()
                         .insert(clip, blend.clamp(0.0, 1.0));
                 }
+                EngineCommand::SetPartVisible { id, part, visible } => {
+                    let Some(obj) = self.scene.find_object_mut(&id) else {
+                        warn!("set_part_visible: unknown object '{id}'");
+                        continue;
+                    };
+                    // Store only the hidden ones, so "visible" is the default for
+                    // every part of every model that never mentions this.
+                    if visible {
+                        obj.hidden_parts.retain(|p| p != &part);
+                    } else if !obj.hidden_parts.iter().any(|p| p == &part) {
+                        obj.hidden_parts.push(part);
+                    }
+                }
                 EngineCommand::SpawnObject { template_id, new_id, x, y, z } => {
                     if self.scene.find_object(&new_id).is_some() {
                         warn!("spawn_object: id '{new_id}' already exists");
