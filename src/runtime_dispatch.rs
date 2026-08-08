@@ -84,8 +84,18 @@ impl GameRuntime {
         for (child_id, parent_id, socket_name) in pairs {
             let Some(parent) = self.scene.find_object(&parent_id) else { continue };
             let Some(socket) = parent.socket(&socket_name) else { continue };
-            let world_pos = parent.cuboid.position + parent.cuboid.rotation * Vec3::from(socket.local_pos);
-            let world_rot = parent.cuboid.rotation * Quat::from_array(socket.local_rot);
+            // A part-anchored socket rides that part's posed transform, so a mag
+            // well stays where the well is even as the mechanism moves. Falls back
+            // to the object when the client has not reported that part -- better a
+            // socket at the pivot than an attachment that vanishes.
+            let (base_pos, base_rot) = socket
+                .part
+                .as_ref()
+                .and_then(|p| self.part_transforms.get(&parent_id).and_then(|m| m.get(p)))
+                .copied()
+                .unwrap_or((parent.cuboid.position, parent.cuboid.rotation));
+            let world_pos = base_pos + base_rot * Vec3::from(socket.local_pos);
+            let world_rot = base_rot * Quat::from_array(socket.local_rot);
             if let Some(child) = self.scene.find_object_mut(&child_id) {
                 child.cuboid.position = world_pos;
                 child.cuboid.rotation = world_rot;
@@ -230,6 +240,19 @@ impl GameRuntime {
         // clearly distinct names rather than an `on_release` overload that would
         // silently collide with every existing grab script.
         self.script_host.set_input_axes(&input.axes);
+        if !input.part_transforms.is_empty() {
+            self.part_transforms = input
+                .part_transforms
+                .iter()
+                .map(|(obj, parts)| {
+                    let m = parts
+                        .iter()
+                        .map(|(p, (pos, rot))| (p.clone(), (Vec3::from(*pos), Quat::from_array(*rot))))
+                        .collect();
+                    (obj.clone(), m)
+                })
+                .collect();
+        }
         for press in &input.button_presses {
             let Some(id) = &press.object_id else { continue };
             let hand = press.hand.unwrap_or_default();
@@ -360,7 +383,15 @@ impl GameRuntime {
                 // cannot itself become a rigid body. The handover is a spawn plus a
                 // hide: put a physics copy into the world and stop drawing the joint.
                 let Some(obj) = self.scene.find_object(object_id) else { return };
-                let at = obj.cuboid.position;
+                // Spawn where the PART is, not where the object's pivot is -- a
+                // casing belongs at the ejection port, which moves with the bolt.
+                // Falls back to the object when the client has not reported it.
+                let at = self
+                    .part_transforms
+                    .get(object_id)
+                    .and_then(|m| m.get(&part))
+                    .map(|(p, _)| *p)
+                    .unwrap_or(obj.cuboid.position);
                 let new_id = format!("{object_id}#{part}#{}", self.next_detached_id);
                 self.next_detached_id += 1;
                 self.script_host.push_command(EngineCommand::SpawnObject {

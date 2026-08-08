@@ -615,3 +615,68 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
     fn rt_ref(rt: &GameRuntime) -> &GameRuntime {
         rt
     }
+
+    #[test]
+    fn a_part_anchored_socket_and_detach_use_the_posed_part_position() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_part_socket_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 0.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "sockets": [ { "name": "ejection_port", "part": "bolt", "local_pos": [0.0, 0.1, 0.0] } ],
+                        "part_animations": [
+                            { "clip": "eject", "driver": "HoldGrip",
+                              "triggers": [ { "at": 0.5,
+                                              "action": { "DetachPart": { "part": "bolt",
+                                                                          "template": "casing" } } } ] }
+                        ]
+                    },
+                    { "id": "casing", "hidden": true,
+                      "cuboid": { "position": [0.0, -50.0, 0.0], "half_size": [0.01, 0.02, 0.01] },
+                      "rigid_body": { "mode": "Dynamic", "mass": 0.01 } }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+
+        // The bolt is posed 3 units away from the gun's own origin.
+        let mut input = InputFrame::default();
+        let mut parts = std::collections::HashMap::new();
+        parts.insert("bolt".to_string(), ([3.0f32, 0.0, 0.0], [0.0f32, 0.0, 0.0, 1.0]));
+        input.part_transforms.insert("gun".to_string(), parts);
+        let mut clips = std::collections::HashMap::new();
+        clips.insert("eject".to_string(), 0.9);
+        input.part_blends.insert("gun".to_string(), clips);
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), input)));
+
+        let spawned = rt
+            .scene()
+            .objects
+            .iter()
+            .find(|o| o.id.contains("#bolt#"))
+            .expect("crossing the threshold should detach");
+        assert!(
+            (spawned.cuboid.position.x - 3.0).abs() < 0.2,
+            "the detached part must appear where the PART is, not at the object pivot -- got {:?}",
+            spawned.cuboid.position
+        );
+    }

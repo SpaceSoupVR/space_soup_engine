@@ -51,6 +51,21 @@ pub struct InputFrame {
     /// work that cannot live on a headset.
     #[serde(default)]
     pub part_blends: std::collections::HashMap<String, std::collections::HashMap<String, f32>>,
+
+    /// World transforms of posed model parts: object id -> part name ->
+    /// (position, rotation).
+    ///
+    /// Same reason as part_blends: joint matrices are computed from the skinned
+    /// pose, which only the client has. The engine needs them to resolve
+    /// part-anchored sockets and to spawn a detached part where the part actually
+    /// is rather than at the object's pivot.
+    ///
+    /// Reported only for parts something actually asks about -- a socket anchor
+    /// or a DetachPart trigger -- so this stays a handful of entries rather than
+    /// every joint of every model, every frame.
+    #[serde(default)]
+    pub part_transforms:
+        std::collections::HashMap<String, std::collections::HashMap<String, ([f32; 3], [f32; 4])>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
