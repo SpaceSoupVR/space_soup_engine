@@ -165,6 +165,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         input.button_presses.push(crate::events::ButtonPress {
             button: "trigger".to_string(),
             object_id: Some("gun".to_string()),
+            ..Default::default()
         });
         rt.update(dt, &one_player(player, frame(rig.clone(), input)));
 
@@ -233,6 +234,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         input.button_presses.push(crate::events::ButtonPress {
             button: "trigger".to_string(),
             object_id: Some("gun".to_string()),
+            ..Default::default()
         });
         rt.update(dt, &one_player(player, frame(rig.clone(), input)));
 
@@ -302,6 +304,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             input.button_presses.push(crate::events::ButtonPress {
                 button: button.to_string(),
                 object_id: Some("gun".to_string()),
+                ..Default::default()
             });
             input
         };
@@ -369,6 +372,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             input.button_presses.push(crate::events::ButtonPress {
                 button: "trigger".to_string(),
                 object_id: Some("gun".to_string()),
+                ..Default::default()
             });
             input
         };
@@ -389,3 +393,82 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         assert!(sounds.iter().all(|s| s.clip == "shot.wav"));
     }
 
+
+    // ── Button edges and polled axes ─────────────────────────────────────────
+
+    #[test]
+    fn button_up_and_hand_reach_scripts_and_axes_can_be_polled() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_button_edges_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+
+        // Records what it saw into vars. `on_press` is kept alongside the new hooks
+        // to prove the old one-arg form still fires for existing scripts.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "script": "fn on_press(b) { set_var(\"legacy\", b); } fn on_button_down(b, hand) { set_var(\"down\", b + \":\" + hand); } fn on_button_up(b, hand) { set_var(\"up\", b + \":\" + hand); } fn on_update(dt) { set_var(\"trig\", get_trigger(\"right\")); set_var(\"stick\", get_stick_x(\"left\")); }"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+        let var = |rt: &GameRuntime, k: &str| rt.script_host.context().lock().unwrap().vars.get(k).cloned();
+
+        let mut down = InputFrame::default();
+        down.button_presses.push(crate::events::ButtonPress::new(
+            "trigger",
+            Some("gun".to_string()),
+            crate::events::Hand::Left,
+        ));
+        down.axes.r_trigger = 0.75;
+        down.axes.l_stick = [-0.5, 0.25];
+        rt.update(dt, &one_player(player, frame(rig.clone(), down)));
+
+        assert_eq!(
+            var(&rt, "down").unwrap().into_string().unwrap(),
+            "trigger:left",
+            "on_button_down must carry both the button and the hand that pressed it"
+        );
+        assert_eq!(
+            var(&rt, "legacy").unwrap().into_string().unwrap(),
+            "trigger",
+            "the one-arg on_press must keep working so existing scripts do not break"
+        );
+        assert!(var(&rt, "up").is_none(), "nothing was released yet");
+
+        // Polled, not evented: this is what lets a script know the trigger is STILL
+        // held, which an edge cannot say.
+        assert!((var(&rt, "trig").unwrap().as_float().unwrap() - 0.75).abs() < 1e-6);
+        assert!((var(&rt, "stick").unwrap().as_float().unwrap() - -0.5).abs() < 1e-6);
+
+        let mut up = InputFrame::default();
+        up.button_releases.push(crate::events::ButtonPress::new(
+            "trigger",
+            Some("gun".to_string()),
+            crate::events::Hand::Left,
+        ));
+        rt.update(dt, &one_player(player, frame(rig.clone(), up)));
+        assert_eq!(
+            var(&rt, "up").unwrap().into_string().unwrap(),
+            "trigger:left",
+            "a button-up edge must reach scripts -- on_release means GRAB release"
+        );
+    }

@@ -37,6 +37,7 @@ mod scene_physics;
 mod scene_rig;
 pub mod schema;
 pub mod script;
+mod script_fns_input;
 mod script_fns_interact;
 mod script_fns_query;
 mod script_fns_transform;
@@ -46,7 +47,7 @@ pub use debug_protocol::{
     receiver as debug_receiver, sender as debug_sender, DebugPacket, HandSample, JointSample,
     LocomotionSample, Pose, SceneSample, TimingSample,
 };
-pub use events::{ButtonPress, Hand, InputFrame};
+pub use events::{ButtonPress, Hand, InputAxes, InputFrame};
 pub use locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget, TurnMode};
 pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
