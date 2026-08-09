@@ -48,6 +48,7 @@ pub use debug_protocol::{
     LocomotionSample, Pose, SceneSample, TimingSample,
 };
 pub use events::{ButtonPress, Hand, InputAxes, InputFrame};
+pub use scene_animation::ClipBlendMode;
 pub use locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget, TurnMode};
 pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
