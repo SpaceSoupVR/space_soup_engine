@@ -750,3 +750,114 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             "with the bolt locked back, fire_cycle must be gated off however hard the trigger is held"
         );
     }
+
+    #[test]
+    fn authored_grip_points_are_grabbable_without_a_script() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_default_grab_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        // Exactly the m4a1's shape in the shipped lobby: grip points, no script.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [5.0, 0.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "mesh": { "path": "models/m4a1.glb" },
+                        "grip_points": [ { "name": "main_grip", "hand": "right", "local_pos": [0.0, -0.05, 0.0] } ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        // A rig with an actual right hand. PlayerRig::default() has no joints, and
+        // an attach silently warns rather than failing when the hand is missing --
+        // so a rig-less fixture would have "passed" this test by never attaching.
+        let mut rig = PlayerRig::new();
+        rig.joints.insert(
+            crate::rig::JointId::HandGrip(crate::events::Hand::Right),
+            crate::rig::Transform::default(),
+        );
+        let held = |rt: &GameRuntime| rt.held_grip_point(player, crate::events::Hand::Right).is_some();
+
+        assert!(!held(&rt), "nothing is held before grabbing");
+
+        let mut grab = InputFrame::default();
+        grab.grabbed.push(("gun".to_string(), crate::events::Hand::Right, "main_grip".to_string()));
+        rt.update(dt, &one_player(player, frame(rig.clone(), grab)));
+
+        assert!(
+            held(&rt),
+            "an object with authored grip points must be holdable with no script -- \
+             not one object in the shipped lobby scene had an on_grab, so nothing in it could be picked up"
+        );
+
+        // The default release has to mirror it, or the object stays welded on.
+        let mut release = InputFrame::default();
+        release.released.push(("gun".to_string(), crate::events::Hand::Right));
+        rt.update(dt, &one_player(player, frame(rig.clone(), release)));
+        assert!(!held(&rt), "releasing must let go");
+    }
+
+    #[test]
+    fn a_script_that_handles_on_grab_still_owns_the_behaviour() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_script_grab_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        // Deliberately does NOT attach: proves the default did not also fire.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [5.0, 0.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "grip_points": [ { "name": "main_grip", "hand": "right", "local_pos": [0.0, -0.05, 0.0] } ],
+                        "script": "fn on_grab(hand, point) { set_var(\"grabbed_by_script\", point); }"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+
+        let mut grab = InputFrame::default();
+        grab.grabbed.push(("gun".to_string(), crate::events::Hand::Right, "main_grip".to_string()));
+        rt.update(dt, &one_player(player, frame(rig.clone(), grab)));
+
+        let vars = rt.script_host.context().lock().unwrap().vars.clone();
+        assert_eq!(
+            vars.get("grabbed_by_script").map(|v| v.to_string()),
+            Some("main_grip".to_string()),
+            "the script handler must still run"
+        );
+        assert!(
+            rt.held_grip_point(player, crate::events::Hand::Right).is_none(),
+            "the default must NOT also attach when a script owns on_grab, or the two fire together"
+        );
+    }

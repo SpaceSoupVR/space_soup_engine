@@ -225,15 +225,46 @@ impl GameRuntime {
                 .script_host
                 .call(id, "on_point", (hand.as_str().to_string(),));
         }
+        // Grabbing works from authored grip points alone.
+        //
+        // A grab used to do exactly one thing -- call on_grab -- and held state is
+        // only ever populated by the commands that handler issues. So an object
+        // with grip points and no script was detected, resolved to a point, and
+        // then dropped on the floor: the editor said "grabbable", the game
+        // disagreed, and nothing logged the difference. Not one object in the
+        // shipped lobby scene had an on_grab, so nothing in it could be picked up.
+        //
+        // The default fires only when the object has NOT written its own handler,
+        // so a declarative attach and a script can never both run and attach
+        // twice. Existing scripted objects are untouched.
         for (id, hand, point) in &input.grabbed {
-            let _ =
-                self.script_host
+            if self.script_host.defines(id, "on_grab") {
+                let _ = self
+                    .script_host
                     .call(id, "on_grab", (hand.as_str().to_string(), point.clone()));
+                continue;
+            }
+            self.script_host.push_command(EngineCommand::GrabAtJoint {
+                id: id.clone(),
+                joint: format!("{}_grip", hand.as_str()),
+                point: (!point.is_empty()).then(|| point.clone()),
+                player: self.script_host.current_player(),
+            });
         }
         for (id, hand) in &input.released {
-            let _ = self
-                .script_host
-                .call(id, "on_release", (hand.as_str().to_string(),));
+            if self.script_host.defines(id, "on_release") {
+                let _ = self
+                    .script_host
+                    .call(id, "on_release", (hand.as_str().to_string(),));
+                continue;
+            }
+            // Must mirror the default attach, or a default-grabbed object stays
+            // welded to the hand forever.
+            self.script_host.push_command(EngineCommand::Detach {
+                id: id.clone(),
+                hand: Some(*hand),
+                player: self.script_host.current_player(),
+            });
         }
         // Note `on_release` above is GRAB release, and has meant that since before
         // buttons had an up edge at all. Button edges therefore get their own

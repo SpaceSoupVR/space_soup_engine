@@ -78,6 +78,14 @@ impl GameRuntime {
                     ) {
                         (Some(joint_tf), Some(obj)) => {
                             let matched_point = point.as_deref().and_then(|p| obj.grip_point(p));
+                            // A named point that does not exist silently became a
+                            // generic centre-of-object grab, which looks like a
+                            // bad grip pose rather than a typo.
+                            if let (Some(named), None) = (point.as_deref(), matched_point) {
+                                warn!(
+                                    "grab_at_joint: '{id}' has no grip point named '{named}' --                                      grabbing at the object centre instead"
+                                );
+                            }
                             if let Some(g) = matched_point {
                                 if self
                                     .attachments
@@ -114,7 +122,15 @@ impl GameRuntime {
                             };
                             self.attachments.attach(&id, player, attachment);
                         }
-                        _ => warn!("grab_at_joint: '{id}' or joint '{joint}' not found"),
+                        // Naming which of the two is missing, because they have
+                        // completely different causes and the old combined message
+                        // ("'x' or joint 'y' not found") pointed at neither. A
+                        // rig missing the joint is the non-obvious one: the name
+                        // parsed fine, the player just has no such joint yet.
+                        (None, _) => warn!(
+                            "grab_at_joint: player {player:?} has no '{joint}' joint in their rig,                              so '{id}' was not picked up"
+                        ),
+                        (_, None) => warn!("grab_at_joint: no object '{id}' in the scene"),
                     },
                     None => warn!("grab_at_joint: unknown joint name '{joint}'"),
                 },
