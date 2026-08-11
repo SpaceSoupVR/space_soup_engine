@@ -53,6 +53,14 @@ pub struct RenderMesh {
     pub manual_part_blends: HashMap<String, f32>,
     /// Parts of this model that must not be drawn -- see GameObject::hidden_parts.
     pub hidden_parts: Vec<String>,
+
+    /// Clips whose `enabled_when` does not currently hold, so the client must
+    /// treat their blend as zero however hard the driving input is pressed.
+    ///
+    /// Evaluated here because the state lives here: vars are authoritative, and a
+    /// headset deciding for itself whether the bolt is locked back is a headset
+    /// that can disagree with every other player.
+    pub disabled_clips: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

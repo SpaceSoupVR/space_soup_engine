@@ -67,6 +67,16 @@ impl GameRuntime {
                     scale: mesh_ref.scale,
                     manual_part_blends: self.manual_part_blends.get(&o.id).cloned().unwrap_or_default(),
                     hidden_parts: o.hidden_parts.clone(),
+                    disabled_clips: o
+                        .part_animations
+                        .iter()
+                        .filter(|pa| {
+                            pa.enabled_when.as_ref().is_some_and(|c| {
+                                !c.holds(self.script_host.var_string(&c.var).as_deref())
+                            })
+                        })
+                        .map(|pa| pa.clip.clone())
+                        .collect(),
                 })
             })
             .collect()

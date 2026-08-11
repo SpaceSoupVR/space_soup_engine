@@ -422,6 +422,11 @@ impl GameRuntime {
                     visible,
                 });
             }
+            A::SetVar { name, value } => {
+                // Straight into the same store scripts use, so a state set by an
+                // animation and one set by a script are the same thing.
+                self.script_host.set_var(&name, &value);
+            }
             A::PlaySound { id } => self.script_host.push_command(EngineCommand::PlaySound { id }),
             A::SpawnParticleBurst { id, count } => {
                 // Authored as u32 -- a negative burst is not a thing anyone means --
