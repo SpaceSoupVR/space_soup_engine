@@ -115,6 +115,19 @@ pub struct PartAnimationDef {
     /// there is a round in it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_when: Option<ClipCondition>,
+
+    /// The grip point the pulling hand is posed from, for a HandPull clip.
+    ///
+    /// A HandPull already reads the hand's position to drive the blend, but the
+    /// hand itself keeps whatever pose it had -- an open palm dragging a charging
+    /// handle. Naming a grip point here gives that hand the grip's finger curl and
+    /// orientation for as long as the pull lasts.
+    ///
+    /// Point it at a part-scoped grip (`GripPointDef::part`) on the part being
+    /// pulled, so the hand tracks the handle rather than the receiver. This poses
+    /// the hand only; it creates no attachment, so the object does not follow it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grip_point: Option<String>,
 }
 
 /// A named state this clip requires.

@@ -252,6 +252,21 @@ impl ScriptHost {
         ctx.rig_positions.insert(joint_name.to_string(), (x, y, z));
     }
 
+    /// Does this object's script define `name`?
+    ///
+    /// Lets the runtime provide a sensible default for an event only when the
+    /// object has not written its own handler -- so a declarative default and a
+    /// script cannot both fire and attach twice.
+    pub fn defines(&self, object_id: &str, name: &str) -> bool {
+        self.asts
+            .get(object_id)
+            .is_some_and(|ast| ast.iter_functions().any(|f| f.name == name))
+    }
+
+    pub fn current_player(&self) -> PlayerId {
+        self.context.lock().unwrap().current_player
+    }
+
     pub fn set_current_player(&self, player: PlayerId) {
         self.context.lock().unwrap().current_player = player;
     }

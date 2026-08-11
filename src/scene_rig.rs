@@ -1,3 +1,4 @@
+use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -82,6 +83,70 @@ pub struct GripPointDef {
     pub hand_offset_pos: Option<[f32; 3]>,
     #[serde(default)]
     pub hand_offset_rot: Option<[f32; 4]>,
+
+    /// Anchor this grip to a model part, so the hand rides that part's animated
+    /// pose instead of the object's origin. Mirrors `SocketDef::part`.
+    ///
+    /// A charging handle grip has to be on the handle -- once the bolt is 3 cm
+    /// back, a grip measured from the receiver origin leaves the hand floating
+    /// inside the gun while the part it is supposedly pulling has moved away.
+    ///
+    /// Resolved on the headset, which is the only place a posed part exists, and
+    /// falls back to the object origin when that part has not been reported --
+    /// better a hand at the pivot than a hand at the world origin.
+    ///
+    /// Intended for grips that pose a hand onto a moving part (a pull grip), not
+    /// for the grip that carries the object: carrying from a part would feed the
+    /// object's own pose back into the part that derives from it.
+    #[serde(default)]
+    pub part: Option<String>,
+}
+
+impl GripPointDef {
+    /// Where this grip's local offsets are measured from.
+    ///
+    /// `part` is the posed world transform of `self.part`, which only the client
+    /// can supply -- it is the only place a skinned pose exists. Passing None for
+    /// a part-scoped grip falls back to the object, so a mesh that has never been
+    /// posed puts the grip at the pivot rather than at the world origin.
+    pub fn base(
+        &self,
+        obj_pos: Vec3,
+        obj_rot: Quat,
+        part: Option<(Vec3, Quat)>,
+    ) -> (Vec3, Quat) {
+        match (self.part.as_ref(), part) {
+            (Some(_), Some(p)) => p,
+            _ => (obj_pos, obj_rot),
+        }
+    }
+
+    /// World transform of the reach anchor -- what a hand has to get near to grab.
+    pub fn anchor_world(
+        &self,
+        obj_pos: Vec3,
+        obj_rot: Quat,
+        part: Option<(Vec3, Quat)>,
+    ) -> (Vec3, Quat) {
+        let (bp, br) = self.base(obj_pos, obj_rot, part);
+        (bp + br * Vec3::from(self.local_pos), br * Quat::from_array(self.local_rot))
+    }
+
+    /// World transform the hand itself is drawn at.
+    ///
+    /// Honours `hand_offset_*` when authored, so the reach zone and the hand can
+    /// sit apart -- reach at the trigger, hand a few cm down the grip.
+    pub fn hand_world(
+        &self,
+        obj_pos: Vec3,
+        obj_rot: Quat,
+        part: Option<(Vec3, Quat)>,
+    ) -> (Vec3, Quat) {
+        let (bp, br) = self.base(obj_pos, obj_rot, part);
+        let local_pos = Vec3::from(self.hand_offset_pos.unwrap_or(self.local_pos));
+        let local_rot = Quat::from_array(self.hand_offset_rot.unwrap_or(self.local_rot));
+        (bp + br * local_pos, br * local_rot)
+    }
 }
 
 fn default_slider_axis() -> [f32; 3] {
