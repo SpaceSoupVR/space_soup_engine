@@ -105,6 +105,39 @@ pub struct PartAnimationDef {
     /// space_soup's ClipBlendMode.
     #[serde(default)]
     pub blend_mode: ClipBlendMode,
+
+    /// Only respond to its driver while this holds.
+    ///
+    /// A weapon is a state machine -- bolt forward or locked back, chamber
+    /// loaded or empty, safety on or off -- and most of its actions are only
+    /// legal in some of those states. Without a gate every clip answers its
+    /// driver always, so pulling the trigger cycles the bolt whether or not
+    /// there is a round in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_when: Option<ClipCondition>,
+}
+
+/// A named state this clip requires.
+///
+/// Deliberately string equality rather than an expression language: weapon
+/// states are named things ("locked_back", "empty", "safe"), and a condition you
+/// can read aloud is one an animator can author without a manual.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClipCondition {
+    pub var: String,
+    pub equals: String,
+    /// Invert it: enabled while the variable is anything BUT `equals`.
+    #[serde(default)]
+    pub negate: bool,
+}
+
+impl ClipCondition {
+    pub fn holds(&self, current: Option<&str>) -> bool {
+        // An unset variable matches "" so a state nobody has set yet reads as
+        // absent rather than as a match for whatever was asked.
+        let matches = current.unwrap_or("") == self.equals;
+        matches != self.negate
+    }
 }
 
 /// Mirrors space_soup::renderer::mesh::skin::ClipBlendMode as authorable data.
@@ -168,6 +201,10 @@ pub enum PartTriggerAction {
     },
     /// Show or hide a part. See GameObject::hidden_parts.
     SetPartVisible { part: String, visible: bool },
+    /// Record a state, which other clips can require via `enabled_when` and
+    /// scripts can read with get_var. This is what makes a weapon a state
+    /// machine rather than a set of independent motions.
+    SetVar { name: String, value: String },
     PlaySound { id: String },
     SpawnParticleBurst { id: String, count: u32 },
 }

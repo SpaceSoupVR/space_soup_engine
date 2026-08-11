@@ -256,6 +256,18 @@ impl ScriptHost {
         self.context.lock().unwrap().current_player = player;
     }
 
+    /// Set a state variable from engine code (a blend trigger), into the same
+    /// store `set_var`/`get_var` use from scripts.
+    pub fn set_var(&self, key: &str, value: &str) {
+        self.context.lock().unwrap().vars.insert(key.to_string(), Dynamic::from(value.to_string()));
+    }
+
+    /// Read a state variable as a string, for clip conditions.
+    pub fn var_string(&self, key: &str) -> Option<String> {
+        let ctx = self.context.lock().unwrap();
+        ctx.vars.get(key).map(|v| v.to_string())
+    }
+
     pub fn set_input_axes(&self, axes: &InputAxes) {
         self.context.lock().unwrap().input_axes = *axes;
     }

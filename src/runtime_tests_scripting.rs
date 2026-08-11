@@ -680,3 +680,73 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             spawned.cuboid.position
         );
     }
+
+    #[test]
+    fn a_trigger_can_set_a_state_that_gates_another_clip() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_clip_state_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        // Pulling the charging handle locks the bolt back; firing is only legal
+        // while it is forward.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "mesh": { "path": "models/m4a1.glb" },
+                        "part_animations": [
+                            { "clip": "charging_handle", "driver": "HandPull",
+                              "triggers": [ { "at": 0.9,
+                                              "action": { "SetVar": { "name": "bolt", "value": "locked_back" } } } ] },
+                            { "clip": "fire_cycle", "driver": "HoldTrigger",
+                              "enabled_when": { "var": "bolt", "equals": "locked_back", "negate": true } }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+        let gated = |rt: &GameRuntime| {
+            rt.collect_render_meshes()
+                .into_iter()
+                .find(|m| m.id == "gun")
+                .map(|m| m.disabled_clips)
+                .unwrap_or_default()
+        };
+
+        // Bolt forward to begin with, so firing is allowed.
+        rt.update(dt, &one_player(player, frame(rig.clone(), InputFrame::default())));
+        assert!(
+            rt.collect_render_meshes().iter().any(|m| m.id == "gun"),
+            "the fixture must actually produce a render mesh, or every assertion here passes vacuously"
+        );
+        assert!(gated(&rt).is_empty(), "firing should be legal before the bolt is locked back");
+
+        // Pull the charging handle past the threshold.
+        let mut pull = InputFrame::default();
+        let mut clips = std::collections::HashMap::new();
+        clips.insert("charging_handle".to_string(), 0.95);
+        pull.part_blends.insert("gun".to_string(), clips);
+        rt.update(dt, &one_player(player, frame(rig.clone(), pull)));
+
+        assert_eq!(
+            gated(&rt),
+            vec!["fire_cycle".to_string()],
+            "with the bolt locked back, fire_cycle must be gated off however hard the trigger is held"
+        );
+    }
