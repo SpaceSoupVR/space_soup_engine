@@ -4,6 +4,12 @@ use std::collections::HashMap;
 
 use crate::events::Hand;
 
+/// The single global maximum every pre-2026-08 finger curl was authored against
+/// (`RigConfig::finger_curl_max_deg`). Migration multiplies by this rather than
+/// by each joint's own anatomical limit, so existing poses keep their exact
+/// angles instead of being silently re-posed.
+pub const LEGACY_CURL_MAX_DEG: f32 = 80.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RigAttachmentDef {
     pub joint: String,
@@ -29,6 +35,18 @@ pub struct GripPoseDef {
     pub hand_offset_scale: [f32; 3],
     #[serde(default)]
     pub finger_curl: HashMap<String, f32>,
+}
+
+impl GripPoseDef {
+    /// The fallback hand pose. Only ever authored as a legacy curl, so this is
+    /// the migration and nothing else -- present so callers have one accessor
+    /// rather than two shapes to reason about.
+    pub fn hand_pose(&self) -> avatar_ik::HandPose {
+        avatar_ik::HandPose::from_curl(
+            avatar_ik::HandCurl::from_finger_curl(&self.finger_curl, 0.0),
+            LEGACY_CURL_MAX_DEG,
+        )
+    }
 }
 
 impl Default for GripPoseDef {
@@ -84,6 +102,18 @@ pub struct GripPointDef {
     #[serde(default)]
     pub hand_offset_rot: Option<[f32; 4]>,
 
+    /// The hand pose, in degrees, with a spread and twist axis per finger.
+    ///
+    /// Supersedes `finger_curl`, which held 15 normalised scalars that could only
+    /// bend each bone on one axis -- fingers could not be spread apart and the
+    /// thumb could not oppose, because nothing downstream had a second axis to
+    /// carry it.
+    ///
+    /// When absent the pose is migrated from `finger_curl` at the old global
+    /// maximum, so every grip authored before this keeps the angles it had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finger_pose: Option<avatar_ik::HandPose>,
+
     /// Anchor this grip to a model part, so the hand rides that part's animated
     /// pose instead of the object's origin. Mirrors `SocketDef::part`.
     ///
@@ -103,6 +133,20 @@ pub struct GripPointDef {
 }
 
 impl GripPointDef {
+    /// This grip's hand pose, whichever way it was authored.
+    ///
+    /// One accessor so no caller has to know that two representations exist, and
+    /// so the legacy migration happens in exactly one place.
+    pub fn hand_pose(&self) -> avatar_ik::HandPose {
+        match &self.finger_pose {
+            Some(p) => p.clamped(),
+            None => avatar_ik::HandPose::from_curl(
+                avatar_ik::HandCurl::from_finger_curl(&self.finger_curl, 0.0),
+                LEGACY_CURL_MAX_DEG,
+            ),
+        }
+    }
+
     /// Where this grip's local offsets are measured from.
     ///
     /// `part` is the posed world transform of `self.part`, which only the client
