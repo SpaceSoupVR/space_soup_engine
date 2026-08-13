@@ -8,7 +8,9 @@ pub use crate::scene_animation::{
     Animation, AnimationBinding, BindingScope, Easing, Keyframe, PartAnimationDef, PartDriver,
     PlayMode, BINDING_BUTTONS,
 };
-pub use crate::scene_cuboid::{Color3, CuboidDef, CuboidShape, CuboidStyle, MeshRef};
+pub use crate::scene_cuboid::{
+    distance_to_oriented_box, Color3, CuboidDef, CuboidShape, CuboidStyle, MeshRef,
+};
 pub use crate::scene_env::{
     LaserDef, ParticleEmitterDef, SoundSourceDef, SpawnPointDef, TeleportalDef,
 };
@@ -218,6 +220,11 @@ mod grip_pose_migration_test {
 mod grip_points_authoring_test {
     use super::*;
     include!("scene_tests_grip_points.rs");
+}
+
+#[cfg(test)]
+mod cuboid_geometry_test {
+    include!("scene_tests_cuboid_geom.rs");
 }
 
 #[cfg(test)]

@@ -60,7 +60,8 @@ pub use runtime::{
     RenderParticleBurst, RenderParticleEmitter, SoundState,
 };
 pub use scene::{
-    Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape, Color3, CuboidDef,
+    distance_to_oriented_box, Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape,
+    Color3, CuboidDef,
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
     LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
     PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
