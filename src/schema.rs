@@ -229,6 +229,11 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         laser,
         spawn_point,
         teleportal,
+        // Not an authorable component in its own right: it is per-part state on
+        // the model, edited from the Model Editor's part list rather than added
+        // to an object as a component. Listed here only to satisfy the
+        // exhaustiveness check, which is what caught it being added at all.
+        hidden_parts,
     } = o;
 }
 
@@ -315,9 +320,15 @@ mod tests {
         let checked_in = std::fs::read_to_string(&path).expect(
             "schema.json missing — run `cargo run --bin emit_schema` in space_soup_engine",
         );
+        // Compare line-ending-insensitively. to_json() emits LF, but a Windows
+        // checkout can easily hold schema.json with CRLF, and .trim() only strips
+        // the outside -- so an identical file failed here as "stale", sending the
+        // developer to regenerate something that was already correct. Same family
+        // as the CRLF that made run.sh unrunnable on macOS.
+        let normalise = |s: &str| s.replace("\r\n", "\n").trim().to_string();
         assert_eq!(
-            checked_in.trim(),
-            generated.trim(),
+            normalise(&checked_in),
+            normalise(&generated),
             "schema.json is stale — regenerate with `cargo run --bin emit_schema`"
         );
     }

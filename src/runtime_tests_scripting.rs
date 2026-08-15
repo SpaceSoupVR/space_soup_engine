@@ -165,6 +165,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         input.button_presses.push(crate::events::ButtonPress {
             button: "trigger".to_string(),
             object_id: Some("gun".to_string()),
+            ..Default::default()
         });
         rt.update(dt, &one_player(player, frame(rig.clone(), input)));
 
@@ -233,6 +234,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         input.button_presses.push(crate::events::ButtonPress {
             button: "trigger".to_string(),
             object_id: Some("gun".to_string()),
+            ..Default::default()
         });
         rt.update(dt, &one_player(player, frame(rig.clone(), input)));
 
@@ -302,6 +304,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             input.button_presses.push(crate::events::ButtonPress {
                 button: button.to_string(),
                 object_id: Some("gun".to_string()),
+                ..Default::default()
             });
             input
         };
@@ -369,6 +372,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             input.button_presses.push(crate::events::ButtonPress {
                 button: "trigger".to_string(),
                 object_id: Some("gun".to_string()),
+                ..Default::default()
             });
             input
         };
@@ -389,3 +393,471 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         assert!(sounds.iter().all(|s| s.clip == "shot.wav"));
     }
 
+
+    // ── Button edges and polled axes ─────────────────────────────────────────
+
+    #[test]
+    fn button_up_and_hand_reach_scripts_and_axes_can_be_polled() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_button_edges_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+
+        // Records what it saw into vars. `on_press` is kept alongside the new hooks
+        // to prove the old one-arg form still fires for existing scripts.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "script": "fn on_press(b) { set_var(\"legacy\", b); } fn on_button_down(b, hand) { set_var(\"down\", b + \":\" + hand); } fn on_button_up(b, hand) { set_var(\"up\", b + \":\" + hand); } fn on_update(dt) { set_var(\"trig\", get_trigger(\"right\")); set_var(\"stick\", get_stick_x(\"left\")); }"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+        let var = |rt: &GameRuntime, k: &str| rt.script_host.context().lock().unwrap().vars.get(k).cloned();
+
+        let mut down = InputFrame::default();
+        down.button_presses.push(crate::events::ButtonPress::new(
+            "trigger",
+            Some("gun".to_string()),
+            crate::events::Hand::Left,
+        ));
+        down.axes.r_trigger = 0.75;
+        down.axes.l_stick = [-0.5, 0.25];
+        rt.update(dt, &one_player(player, frame(rig.clone(), down)));
+
+        assert_eq!(
+            var(&rt, "down").unwrap().into_string().unwrap(),
+            "trigger:left",
+            "on_button_down must carry both the button and the hand that pressed it"
+        );
+        assert_eq!(
+            var(&rt, "legacy").unwrap().into_string().unwrap(),
+            "trigger",
+            "the one-arg on_press must keep working so existing scripts do not break"
+        );
+        assert!(var(&rt, "up").is_none(), "nothing was released yet");
+
+        // Polled, not evented: this is what lets a script know the trigger is STILL
+        // held, which an edge cannot say.
+        assert!((var(&rt, "trig").unwrap().as_float().unwrap() - 0.75).abs() < 1e-6);
+        assert!((var(&rt, "stick").unwrap().as_float().unwrap() - -0.5).abs() < 1e-6);
+
+        let mut up = InputFrame::default();
+        up.button_releases.push(crate::events::ButtonPress::new(
+            "trigger",
+            Some("gun".to_string()),
+            crate::events::Hand::Left,
+        ));
+        rt.update(dt, &one_player(player, frame(rig.clone(), up)));
+        assert_eq!(
+            var(&rt, "up").unwrap().into_string().unwrap(),
+            "trigger:left",
+            "a button-up edge must reach scripts -- on_release means GRAB release"
+        );
+    }
+
+    #[test]
+    fn set_part_visible_toggles_hidden_parts_and_defaults_to_visible() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_part_visible_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "script": "fn on_button_down(b, hand) { if b == \"grip\" { set_part_visible(\"gun\", \"mag_full\", false); set_part_visible(\"gun\", \"mag_empty\", true); } else { set_part_visible(\"gun\", \"mag_full\", true); } }"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+        let hidden = |rt: &GameRuntime| rt.scene().find_object("gun").unwrap().hidden_parts.clone();
+
+        // Nothing is hidden until something says so -- "visible" is the default for
+        // every part of every model that never mentions this.
+        assert!(hidden(&rt).is_empty());
+
+        let press = |button: &str| {
+            let mut i = InputFrame::default();
+            i.button_presses.push(crate::events::ButtonPress::new(
+                button,
+                Some("gun".to_string()),
+                crate::events::Hand::Right,
+            ));
+            i
+        };
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("grip"))));
+        assert_eq!(hidden(&rt), vec!["mag_full".to_string()],
+            "hiding one part must not hide the one that was made visible in the same batch");
+
+        // Idempotent: holding the button must not stack duplicates.
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("grip"))));
+        assert_eq!(hidden(&rt), vec!["mag_full".to_string()]);
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("trigger"))));
+        assert!(hidden(&rt).is_empty(), "making a part visible removes it from hidden_parts");
+    }
+
+    #[test]
+    fn a_blend_trigger_fires_once_per_crossing_and_detaches_to_physics() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_blend_trigger_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [1.0, 2.0, 3.0], "half_size": [0.2, 0.1, 0.5] },
+                        "part_animations": [
+                            { "clip": "mag_eject", "driver": "HoldGrip",
+                              "triggers": [ { "at": 0.85,
+                                              "action": { "DetachPart": { "part": "mag_full",
+                                                                          "template": "mag_template",
+                                                                          "impulse": [0.0, -1.0, 0.0] } } } ] }
+                        ]
+                    },
+                    {
+                        "id": "mag_template",
+                        "hidden": true,
+                        "cuboid": { "position": [0.0, -50.0, 0.0], "half_size": [0.05, 0.12, 0.02] },
+                        "rigid_body": { "mode": "Dynamic", "mass": 0.3 }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+
+        let at_blend = |b: f32| {
+            let mut i = InputFrame::default();
+            let mut clips = std::collections::HashMap::new();
+            clips.insert("mag_eject".to_string(), b);
+            i.part_blends.insert("gun".to_string(), clips);
+            i
+        };
+        let detached = |rt: &GameRuntime| {
+            rt.scene().objects.iter().filter(|o| o.id.contains("#mag_full#")).count()
+        };
+
+        // Below the threshold nothing happens, however long it is held there.
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.5))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.8))));
+        assert_eq!(detached(rt_ref(&rt)), 0, "a blend short of the threshold must not fire");
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
+        assert_eq!(detached(rt_ref(&rt)), 1, "crossing the threshold should detach exactly once");
+        assert!(
+            rt.scene().find_object("gun").unwrap().hidden_parts.contains(&"mag_full".to_string()),
+            "the source part must stop being drawn, or the magazine appears twice"
+        );
+
+        // Held past the line, and jittering across it, must not fire again --
+        // a hand near a threshold crosses it many times a second.
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.95))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.84))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
+        assert_eq!(detached(rt_ref(&rt)), 1, "jitter around the threshold must not re-fire");
+
+        // Fully released and pulled again is a new, deliberate motion.
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.0))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
+        assert_eq!(detached(rt_ref(&rt)), 2, "a fresh pull should detach again");
+    }
+
+    fn rt_ref(rt: &GameRuntime) -> &GameRuntime {
+        rt
+    }
+
+    #[test]
+    fn a_part_anchored_socket_and_detach_use_the_posed_part_position() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_part_socket_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 0.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "sockets": [ { "name": "ejection_port", "part": "bolt", "local_pos": [0.0, 0.1, 0.0] } ],
+                        "part_animations": [
+                            { "clip": "eject", "driver": "HoldGrip",
+                              "triggers": [ { "at": 0.5,
+                                              "action": { "DetachPart": { "part": "bolt",
+                                                                          "template": "casing" } } } ] }
+                        ]
+                    },
+                    { "id": "casing", "hidden": true,
+                      "cuboid": { "position": [0.0, -50.0, 0.0], "half_size": [0.01, 0.02, 0.01] },
+                      "rigid_body": { "mode": "Dynamic", "mass": 0.01 } }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+
+        // The bolt is posed 3 units away from the gun's own origin.
+        let mut input = InputFrame::default();
+        let mut parts = std::collections::HashMap::new();
+        parts.insert("bolt".to_string(), ([3.0f32, 0.0, 0.0], [0.0f32, 0.0, 0.0, 1.0]));
+        input.part_transforms.insert("gun".to_string(), parts);
+        let mut clips = std::collections::HashMap::new();
+        clips.insert("eject".to_string(), 0.9);
+        input.part_blends.insert("gun".to_string(), clips);
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), input)));
+
+        let spawned = rt
+            .scene()
+            .objects
+            .iter()
+            .find(|o| o.id.contains("#bolt#"))
+            .expect("crossing the threshold should detach");
+        assert!(
+            (spawned.cuboid.position.x - 3.0).abs() < 0.2,
+            "the detached part must appear where the PART is, not at the object pivot -- got {:?}",
+            spawned.cuboid.position
+        );
+    }
+
+    #[test]
+    fn a_trigger_can_set_a_state_that_gates_another_clip() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_clip_state_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        // Pulling the charging handle locks the bolt back; firing is only legal
+        // while it is forward.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "mesh": { "path": "models/m4a1.glb" },
+                        "part_animations": [
+                            { "clip": "charging_handle", "driver": "HandPull",
+                              "triggers": [ { "at": 0.9,
+                                              "action": { "SetVar": { "name": "bolt", "value": "locked_back" } } } ] },
+                            { "clip": "fire_cycle", "driver": "HoldTrigger",
+                              "enabled_when": { "var": "bolt", "equals": "locked_back", "negate": true } }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+        let gated = |rt: &GameRuntime| {
+            rt.collect_render_meshes()
+                .into_iter()
+                .find(|m| m.id == "gun")
+                .map(|m| m.disabled_clips)
+                .unwrap_or_default()
+        };
+
+        // Bolt forward to begin with, so firing is allowed.
+        rt.update(dt, &one_player(player, frame(rig.clone(), InputFrame::default())));
+        assert!(
+            rt.collect_render_meshes().iter().any(|m| m.id == "gun"),
+            "the fixture must actually produce a render mesh, or every assertion here passes vacuously"
+        );
+        assert!(gated(&rt).is_empty(), "firing should be legal before the bolt is locked back");
+
+        // Pull the charging handle past the threshold.
+        let mut pull = InputFrame::default();
+        let mut clips = std::collections::HashMap::new();
+        clips.insert("charging_handle".to_string(), 0.95);
+        pull.part_blends.insert("gun".to_string(), clips);
+        rt.update(dt, &one_player(player, frame(rig.clone(), pull)));
+
+        assert_eq!(
+            gated(&rt),
+            vec!["fire_cycle".to_string()],
+            "with the bolt locked back, fire_cycle must be gated off however hard the trigger is held"
+        );
+    }
+
+    #[test]
+    fn authored_grip_points_are_grabbable_without_a_script() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_default_grab_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        // Exactly the m4a1's shape in the shipped lobby: grip points, no script.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [5.0, 0.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "mesh": { "path": "models/m4a1.glb" },
+                        "grip_points": [ { "name": "main_grip", "hand": "right", "local_pos": [0.0, -0.05, 0.0] } ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        // A rig with an actual right hand. PlayerRig::default() has no joints, and
+        // an attach silently warns rather than failing when the hand is missing --
+        // so a rig-less fixture would have "passed" this test by never attaching.
+        let mut rig = PlayerRig::new();
+        rig.joints.insert(
+            crate::rig::JointId::HandGrip(crate::events::Hand::Right),
+            crate::rig::Transform::default(),
+        );
+        let held = |rt: &GameRuntime| rt.held_grip_point(player, crate::events::Hand::Right).is_some();
+
+        assert!(!held(&rt), "nothing is held before grabbing");
+
+        let mut grab = InputFrame::default();
+        grab.grabbed.push(("gun".to_string(), crate::events::Hand::Right, "main_grip".to_string()));
+        rt.update(dt, &one_player(player, frame(rig.clone(), grab)));
+
+        assert!(
+            held(&rt),
+            "an object with authored grip points must be holdable with no script -- \
+             not one object in the shipped lobby scene had an on_grab, so nothing in it could be picked up"
+        );
+
+        // The default release has to mirror it, or the object stays welded on.
+        let mut release = InputFrame::default();
+        release.released.push(("gun".to_string(), crate::events::Hand::Right));
+        rt.update(dt, &one_player(player, frame(rig.clone(), release)));
+        assert!(!held(&rt), "releasing must let go");
+    }
+
+    #[test]
+    fn a_script_that_handles_on_grab_still_owns_the_behaviour() {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_script_grab_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        // Deliberately does NOT attach: proves the default did not also fire.
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [5.0, 0.0, 0.0], "half_size": [0.2, 0.1, 0.5] },
+                        "grip_points": [ { "name": "main_grip", "hand": "right", "local_pos": [0.0, -0.05, 0.0] } ],
+                        "script": "fn on_grab(hand, point) { set_var(\"grabbed_by_script\", point); }"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+
+        let mut grab = InputFrame::default();
+        grab.grabbed.push(("gun".to_string(), crate::events::Hand::Right, "main_grip".to_string()));
+        rt.update(dt, &one_player(player, frame(rig.clone(), grab)));
+
+        let vars = rt.script_host.context().lock().unwrap().vars.clone();
+        assert_eq!(
+            vars.get("grabbed_by_script").map(|v| v.to_string()),
+            Some("main_grip".to_string()),
+            "the script handler must still run"
+        );
+        assert!(
+            rt.held_grip_point(player, crate::events::Hand::Right).is_none(),
+            "the default must NOT also attach when a script owns on_grab, or the two fire together"
+        );
+    }

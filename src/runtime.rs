@@ -51,6 +51,16 @@ pub struct RenderMesh {
     pub rotation: Quat,
     pub scale: Vec3,
     pub manual_part_blends: HashMap<String, f32>,
+    /// Parts of this model that must not be drawn -- see GameObject::hidden_parts.
+    pub hidden_parts: Vec<String>,
+
+    /// Clips whose `enabled_when` does not currently hold, so the client must
+    /// treat their blend as zero however hard the driving input is pressed.
+    ///
+    /// Evaluated here because the state lives here: vars are authoritative, and a
+    /// headset deciding for itself whether the bolt is locked back is a headset
+    /// that can disagree with every other player.
+    pub disabled_clips: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,8 +164,23 @@ pub struct GameRuntime {
     pub(crate) sound_play_requests: HashSet<String>,
     pub(crate) sound_stop_requests: HashSet<String>,
     pub(crate) manual_part_blends: HashMap<String, HashMap<String, f32>>,
+
+    /// Last frame's part blends, so a trigger fires on a CROSSING rather than on
+    /// every frame the blend happens to sit past its threshold.
+    /// Latest posed part transforms reported by the client, for part-anchored
+    /// sockets and for spawning a detached part where the part actually is.
+    pub(crate) part_transforms: HashMap<String, HashMap<String, (Vec3, Quat)>>,
+
+    pub(crate) prev_part_blends: HashMap<String, HashMap<String, f32>>,
+
+    /// Triggers currently latched, as (object, clip, trigger index). A latched
+    /// trigger will not fire again until the blend retreats past the hysteresis
+    /// band -- a hand held near the threshold jitters across it many times a
+    /// second, and an eject that fires on every jitter is unusable.
+    pub(crate) latched_triggers: std::collections::HashSet<(String, String, usize)>,
     pub(crate) particle_bursts: Vec<ParticleBurst>,
     pub(crate) next_particle_burst_id: u64,
+    pub(crate) next_detached_id: u64,
     pub(crate) socket_attachments: HashMap<String, (String, String)>,
 }
 
@@ -184,8 +209,12 @@ impl GameRuntime {
             sound_play_requests: HashSet::new(),
             sound_stop_requests: HashSet::new(),
             manual_part_blends: HashMap::new(),
+            part_transforms: HashMap::new(),
+            prev_part_blends: HashMap::new(),
+            latched_triggers: std::collections::HashSet::new(),
             particle_bursts: Vec::new(),
             next_particle_burst_id: 0,
+            next_detached_id: 0,
             socket_attachments: HashMap::new(),
         };
 
