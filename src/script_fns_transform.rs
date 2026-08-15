@@ -90,6 +90,25 @@ pub(crate) fn register_transform_and_scene_fns(engine: &mut Engine, context: &Sh
 
     {
         let ctx = context.clone();
+        // Visibility is state rather than an animation channel -- see
+        // GameObject::hidden_parts. A keyframe interpolates, and "half visible" is
+        // either meaningless or a fade nobody asked for. This is how a trigger
+        // swaps a loaded magazine for an empty one without either being
+        // half-drawn mid-blend.
+        engine.register_fn(
+            "set_part_visible",
+            move |id: &str, part: &str, visible: bool| {
+                ctx.lock().unwrap().commands.push(EngineCommand::SetPartVisible {
+                    id: id.to_string(),
+                    part: part.to_string(),
+                    visible,
+                });
+            },
+        );
+    }
+
+    {
+        let ctx = context.clone();
         engine.register_fn(
             "play_part_animation",
             move |id: &str, clip: &str, blend: f64| {

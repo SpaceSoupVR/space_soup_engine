@@ -74,6 +74,25 @@ impl Default for CuboidDef {
     }
 }
 
+/// Distance from a point to the surface of an oriented box; 0 inside it.
+///
+/// The box is ORIENTED. Objects carry a rotation alongside a LOCAL half-extent,
+/// so clamping a world point against `position +/- half_size` measures a different
+/// box than the one on screen -- correct only while the object happens to be
+/// axis-aligned. The client's grab test did exactly that: harmless on an m4a1
+/// authored at -2.7 degrees (about 2 cm of error) and badly wrong the moment a
+/// held weapon turns, since at 90 degrees the test box still reaches 45 cm along
+/// an axis the rifle only fills to 5 cm.
+///
+/// Lives here, in the engine, rather than beside its caller in quest_app,
+/// because every module there is `#[cfg(target_os = "android")]` -- nothing in
+/// them can be tested without building an APK and putting on a headset. The
+/// geometry is pure, so it belongs where a test can reach it.
+pub fn distance_to_oriented_box(center: Vec3, rotation: Quat, half_size: Vec3, point: Vec3) -> f32 {
+    let local = rotation.inverse() * (point - center);
+    local.distance(local.clamp(-half_size, half_size))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshRef {
     pub path: String,

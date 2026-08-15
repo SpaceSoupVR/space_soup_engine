@@ -62,12 +62,24 @@ impl Animation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// No Eq: Cyclic carries a rate, and f32 has no total equality. PartialEq is what
+// the driver comparisons actually use.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum PartDriver {
     HoldTrigger,
     HoldGrip,
     HandPull,
     Manual,
+    /// Runs off a clock instead of a hand: while the drive input is held, the
+    /// blend sweeps 0 -> 1 -> 0 repeatedly at `cycles_per_second`.
+    ///
+    /// Everything else here maps a continuous input to a blend, which cannot
+    /// express "play once and come back" -- so a reciprocating bolt had to be a
+    /// hand-written script per weapon, and could not even tell when the trigger
+    /// was released. This makes it authored data.
+    ///
+    /// Held by the trigger, since that is what an automatic weapon cycles on.
+    Cyclic { cycles_per_second: f32 },
 }
 
 impl Default for PartDriver {
@@ -83,6 +95,131 @@ pub struct PartAnimationDef {
     pub driver: PartDriver,
     #[serde(default)]
     pub easing: Easing,
+
+    /// Things that happen at a point in this clip's blend.
+    #[serde(default)]
+    pub triggers: Vec<PartTrigger>,
+
+    /// How this clip combines with the others on a shared part. Override (the
+    /// default) takes the part outright; Additive layers on top. See
+    /// space_soup's ClipBlendMode.
+    #[serde(default)]
+    pub blend_mode: ClipBlendMode,
+
+    /// Only respond to its driver while this holds.
+    ///
+    /// A weapon is a state machine -- bolt forward or locked back, chamber
+    /// loaded or empty, safety on or off -- and most of its actions are only
+    /// legal in some of those states. Without a gate every clip answers its
+    /// driver always, so pulling the trigger cycles the bolt whether or not
+    /// there is a round in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_when: Option<ClipCondition>,
+
+    /// The grip point the pulling hand is posed from, for a HandPull clip.
+    ///
+    /// A HandPull already reads the hand's position to drive the blend, but the
+    /// hand itself keeps whatever pose it had -- an open palm dragging a charging
+    /// handle. Naming a grip point here gives that hand the grip's finger curl and
+    /// orientation for as long as the pull lasts.
+    ///
+    /// Point it at a part-scoped grip (`GripPointDef::part`) on the part being
+    /// pulled, so the hand tracks the handle rather than the receiver. This poses
+    /// the hand only; it creates no attachment, so the object does not follow it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grip_point: Option<String>,
+}
+
+/// A named state this clip requires.
+///
+/// Deliberately string equality rather than an expression language: weapon
+/// states are named things ("locked_back", "empty", "safe"), and a condition you
+/// can read aloud is one an animator can author without a manual.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClipCondition {
+    pub var: String,
+    pub equals: String,
+    /// Invert it: enabled while the variable is anything BUT `equals`.
+    #[serde(default)]
+    pub negate: bool,
+}
+
+impl ClipCondition {
+    pub fn holds(&self, current: Option<&str>) -> bool {
+        // An unset variable matches "" so a state nobody has set yet reads as
+        // absent rather than as a match for whatever was asked.
+        let matches = current.unwrap_or("") == self.equals;
+        matches != self.negate
+    }
+}
+
+/// Mirrors space_soup::renderer::mesh::skin::ClipBlendMode as authorable data.
+/// Declared here rather than imported so the scene format does not depend on the
+/// renderer crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ClipBlendMode {
+    #[default]
+    Override,
+    Additive,
+}
+
+/// Something discrete that fires when a clip's blend crosses a threshold.
+///
+/// A part animation is a pose blend, not a timeline: the runtime lerps the bind
+/// pose toward a target by a scalar, and blend is the only axis it has. So a
+/// trigger fires on a blend crossing rather than at a time, which also matches
+/// the physical statement an animator actually wants to make -- "once the
+/// magazine is 85% of the way out, the feed lips have released it".
+///
+/// Detaching, spawning and hiding are discrete state changes. They cannot be
+/// keyframe channels: a keyframe interpolates, and half-detached is not a state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PartTrigger {
+    /// Blend value to cross, 0..1.
+    pub at: f32,
+
+    /// Fire while the blend is increasing (the default) or while it falls back.
+    /// Rising is the usual case -- the action happens as the motion completes.
+    #[serde(default = "default_true")]
+    pub rising: bool,
+
+    pub action: PartTriggerAction,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Hysteresis band around a trigger's threshold.
+///
+/// A player holding a control near the threshold jitters across it many times a
+/// second. Without a band, an eject trigger would fire repeatedly while a hand
+/// shook. Rearming only once the blend has retreated this far past the threshold
+/// makes a single deliberate motion produce a single event.
+pub const TRIGGER_HYSTERESIS: f32 = 0.05;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PartTriggerAction {
+    /// Hand a part over to physics: spawn `template` at the part's current world
+    /// transform, optionally with an impulse, and hide the source part so it does
+    /// not appear twice.
+    ///
+    /// The part itself cannot become a physics body -- it is a joint inside a
+    /// skinned mesh, not an object -- so the handover is a spawn plus a hide.
+    DetachPart {
+        part: String,
+        template: String,
+        #[serde(default)]
+        impulse: [f32; 3],
+    },
+    /// Show or hide a part. See GameObject::hidden_parts.
+    SetPartVisible { part: String, visible: bool },
+    /// Record a state, which other clips can require via `enabled_when` and
+    /// scripts can read with get_var. This is what makes a weapon a state
+    /// machine rather than a set of independent motions.
+    SetVar { name: String, value: String },
+    PlaySound { id: String },
+    SpawnParticleBurst { id: String, count: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

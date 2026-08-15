@@ -6,6 +6,7 @@ use crate::events::{Hand, InputFrame};
 use crate::physics::{Aabb, CollisionEvent};
 use crate::runtime::GameRuntime;
 use crate::scene::{BindingScope, PlayMode};
+use crate::script::EngineCommand;
 
 impl GameRuntime {
     pub(crate) fn age_particle_bursts(&mut self, dt: f32) {
@@ -83,8 +84,18 @@ impl GameRuntime {
         for (child_id, parent_id, socket_name) in pairs {
             let Some(parent) = self.scene.find_object(&parent_id) else { continue };
             let Some(socket) = parent.socket(&socket_name) else { continue };
-            let world_pos = parent.cuboid.position + parent.cuboid.rotation * Vec3::from(socket.local_pos);
-            let world_rot = parent.cuboid.rotation * Quat::from_array(socket.local_rot);
+            // A part-anchored socket rides that part's posed transform, so a mag
+            // well stays where the well is even as the mechanism moves. Falls back
+            // to the object when the client has not reported that part -- better a
+            // socket at the pivot than an attachment that vanishes.
+            let (base_pos, base_rot) = socket
+                .part
+                .as_ref()
+                .and_then(|p| self.part_transforms.get(&parent_id).and_then(|m| m.get(p)))
+                .copied()
+                .unwrap_or((parent.cuboid.position, parent.cuboid.rotation));
+            let world_pos = base_pos + base_rot * Vec3::from(socket.local_pos);
+            let world_rot = base_rot * Quat::from_array(socket.local_rot);
             if let Some(child) = self.scene.find_object_mut(&child_id) {
                 child.cuboid.position = world_pos;
                 child.cuboid.rotation = world_rot;
@@ -214,23 +225,85 @@ impl GameRuntime {
                 .script_host
                 .call(id, "on_point", (hand.as_str().to_string(),));
         }
+        // Grabbing works from authored grip points alone.
+        //
+        // A grab used to do exactly one thing -- call on_grab -- and held state is
+        // only ever populated by the commands that handler issues. So an object
+        // with grip points and no script was detected, resolved to a point, and
+        // then dropped on the floor: the editor said "grabbable", the game
+        // disagreed, and nothing logged the difference. Not one object in the
+        // shipped lobby scene had an on_grab, so nothing in it could be picked up.
+        //
+        // The default fires only when the object has NOT written its own handler,
+        // so a declarative attach and a script can never both run and attach
+        // twice. Existing scripted objects are untouched.
         for (id, hand, point) in &input.grabbed {
-            let _ =
-                self.script_host
-                    .call(id, "on_grab", (hand.as_str().to_string(), point.clone()));
-        }
-        for (id, hand) in &input.released {
-            let _ = self
-                .script_host
-                .call(id, "on_release", (hand.as_str().to_string(),));
-        }
-        for press in &input.button_presses {
-            if let Some(id) = &press.object_id {
+            if self.script_host.defines(id, "on_grab") {
                 let _ = self
                     .script_host
-                    .call(id, "on_press", (press.button.clone(),));
+                    .call(id, "on_grab", (hand.as_str().to_string(), point.clone()));
+                continue;
             }
+            self.script_host.push_command(EngineCommand::GrabAtJoint {
+                id: id.clone(),
+                joint: format!("{}_grip", hand.as_str()),
+                point: (!point.is_empty()).then(|| point.clone()),
+                player: self.script_host.current_player(),
+            });
         }
+        for (id, hand) in &input.released {
+            if self.script_host.defines(id, "on_release") {
+                let _ = self
+                    .script_host
+                    .call(id, "on_release", (hand.as_str().to_string(),));
+                continue;
+            }
+            // Must mirror the default attach, or a default-grabbed object stays
+            // welded to the hand forever.
+            self.script_host.push_command(EngineCommand::Detach {
+                id: id.clone(),
+                hand: Some(*hand),
+                player: self.script_host.current_player(),
+            });
+        }
+        // Note `on_release` above is GRAB release, and has meant that since before
+        // buttons had an up edge at all. Button edges therefore get their own
+        // clearly distinct names rather than an `on_release` overload that would
+        // silently collide with every existing grab script.
+        self.script_host.set_input_axes(&input.axes);
+        if !input.part_transforms.is_empty() {
+            self.part_transforms = input
+                .part_transforms
+                .iter()
+                .map(|(obj, parts)| {
+                    let m = parts
+                        .iter()
+                        .map(|(p, (pos, rot))| (p.clone(), (Vec3::from(*pos), Quat::from_array(*rot))))
+                        .collect();
+                    (obj.clone(), m)
+                })
+                .collect();
+        }
+        for press in &input.button_presses {
+            let Some(id) = &press.object_id else { continue };
+            let hand = press.hand.unwrap_or_default();
+            let _ = self.script_host.call(id, "on_press", (press.button.clone(),));
+            let _ = self.script_host.call(
+                id,
+                "on_button_down",
+                (press.button.clone(), hand.as_str().to_string()),
+            );
+        }
+        for press in &input.button_releases {
+            let Some(id) = &press.object_id else { continue };
+            let hand = press.hand.unwrap_or_default();
+            let _ = self.script_host.call(
+                id,
+                "on_button_up",
+                (press.button.clone(), hand.as_str().to_string()),
+            );
+        }
+        self.dispatch_part_triggers(input);
         self.dispatch_animation_bindings(input);
     }
 
@@ -276,4 +349,122 @@ impl GameRuntime {
         }
     }
 
+}
+
+impl GameRuntime {
+    /// Fire part-animation triggers whose blend crossed their threshold this frame.
+    ///
+    /// Crossing, not "is past" -- otherwise an action fires every frame the blend
+    /// happens to sit beyond the line. And latched with hysteresis, because a hand
+    /// held near a threshold jitters across it many times a second; one deliberate
+    /// motion has to produce one event.
+    ///
+    /// Runs here rather than on the headset because the actions are authoritative:
+    /// spawning a magazine and handing it to physics decides world state that every
+    /// player must agree on.
+    pub(crate) fn dispatch_part_triggers(&mut self, input: &InputFrame) {
+        use crate::scene_animation::{PartTriggerAction, TRIGGER_HYSTERESIS};
+
+        let mut fired: Vec<(String, PartTriggerAction)> = Vec::new();
+        for (object_id, clips) in &input.part_blends {
+            let Some(obj) = self.scene.find_object(object_id) else { continue };
+            for pa in &obj.part_animations {
+                let Some(&blend) = clips.get(&pa.clip) else { continue };
+                let prev = self
+                    .prev_part_blends
+                    .get(object_id)
+                    .and_then(|m| m.get(&pa.clip))
+                    .copied()
+                    .unwrap_or(0.0);
+                for (i, trig) in pa.triggers.iter().enumerate() {
+                    let key = (object_id.clone(), pa.clip.clone(), i);
+                    let crossed = if trig.rising {
+                        prev < trig.at && blend >= trig.at
+                    } else {
+                        prev > trig.at && blend <= trig.at
+                    };
+                    // Rearm only once the blend has retreated clear of the band.
+                    let rearmed = if trig.rising {
+                        blend < trig.at - TRIGGER_HYSTERESIS
+                    } else {
+                        blend > trig.at + TRIGGER_HYSTERESIS
+                    };
+                    if rearmed {
+                        self.latched_triggers.remove(&key);
+                    } else if crossed && !self.latched_triggers.contains(&key) {
+                        self.latched_triggers.insert(key);
+                        fired.push((object_id.clone(), trig.action.clone()));
+                    }
+                }
+            }
+        }
+
+        for (object_id, action) in fired {
+            self.run_part_trigger_action(&object_id, action);
+        }
+
+        self.prev_part_blends = input.part_blends.clone();
+    }
+
+    fn run_part_trigger_action(&mut self, object_id: &str, action: crate::scene_animation::PartTriggerAction) {
+        use crate::scene_animation::PartTriggerAction as A;
+        match action {
+            A::DetachPart { part, template, impulse } => {
+                // A part is a joint inside a skinned mesh, not an object, so it
+                // cannot itself become a rigid body. The handover is a spawn plus a
+                // hide: put a physics copy into the world and stop drawing the joint.
+                let Some(obj) = self.scene.find_object(object_id) else { return };
+                // Spawn where the PART is, not where the object's pivot is -- a
+                // casing belongs at the ejection port, which moves with the bolt.
+                // Falls back to the object when the client has not reported it.
+                let at = self
+                    .part_transforms
+                    .get(object_id)
+                    .and_then(|m| m.get(&part))
+                    .map(|(p, _)| *p)
+                    .unwrap_or(obj.cuboid.position);
+                let new_id = format!("{object_id}#{part}#{}", self.next_detached_id);
+                self.next_detached_id += 1;
+                self.script_host.push_command(EngineCommand::SpawnObject {
+                    template_id: template,
+                    new_id: new_id.clone(),
+                    x: at.x,
+                    y: at.y,
+                    z: at.z,
+                });
+                if impulse != [0.0, 0.0, 0.0] {
+                    self.script_host.push_command(EngineCommand::ApplyImpulse {
+                        id: new_id,
+                        x: impulse[0],
+                        y: impulse[1],
+                        z: impulse[2],
+                    });
+                }
+                self.script_host.push_command(EngineCommand::SetPartVisible {
+                    id: object_id.to_string(),
+                    part,
+                    visible: false,
+                });
+            }
+            A::SetPartVisible { part, visible } => {
+                self.script_host.push_command(EngineCommand::SetPartVisible {
+                    id: object_id.to_string(),
+                    part,
+                    visible,
+                });
+            }
+            A::SetVar { name, value } => {
+                // Straight into the same store scripts use, so a state set by an
+                // animation and one set by a script are the same thing.
+                self.script_host.set_var(&name, &value);
+            }
+            A::PlaySound { id } => self.script_host.push_command(EngineCommand::PlaySound { id }),
+            A::SpawnParticleBurst { id, count } => {
+                // Authored as u32 -- a negative burst is not a thing anyone means --
+                // and widened here to the command's script-facing i64.
+                self.script_host
+                    .push_command(EngineCommand::SpawnParticleBurst { id, count: count as i64 })
+            }
+        }
+    }
 }
