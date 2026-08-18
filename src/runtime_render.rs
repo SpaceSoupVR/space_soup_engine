@@ -71,9 +71,9 @@ impl GameRuntime {
                         .part_animations
                         .iter()
                         .filter(|pa| {
-                            pa.enabled_when.as_ref().is_some_and(|c| {
-                                !c.holds(self.script_host.var_string(&c.var).as_deref())
-                            })
+                            pa.enabled_when
+                                .as_ref()
+                                .is_some_and(|c| !c.holds(&|k| self.script_host.var_string(k)))
                         })
                         .map(|pa| pa.clip.clone())
                         .collect(),
