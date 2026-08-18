@@ -861,3 +861,60 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             "the default must NOT also attach when a script owns on_grab, or the two fire together"
         );
     }
+
+#[test]
+fn per_trigger_condition_and_counter_gate_a_repeated_action() {
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join("space_soup_engine_rule_counter_test");
+    let scenes_dir = dir.join("scenes");
+    std::fs::create_dir_all(&scenes_dir).unwrap();
+    std::fs::write(
+        dir.join("manifest.json"),
+        r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+    )
+    .unwrap();
+    // Feeding is legal only while the magazine has rounds, and each feed spends one.
+    std::fs::write(
+        scenes_dir.join("test.json"),
+        r#"{
+            "name":"test",
+            "objects":[{
+                "id":"gun",
+                "cuboid":{"position":[0.0,0.0,0.0],"half_size":[0.2,0.1,0.5]},
+                "mesh":{"path":"models/m4a1.glb"},
+                "part_animations":[
+                    {"clip":"feed","driver":"Manual",
+                     "triggers":[{"at":0.9,"rising":true,
+                        "when":{"var":"mag_rounds","op":"gt","value":0},
+                        "action":{"AddVar":{"name":"mag_rounds","delta":-1.0}}}]}
+                ]
+            }]
+        }"#,
+    )
+    .unwrap();
+
+    let mut rt = GameRuntime::load(&dir).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    rt.script_host.set_var("mag_rounds", "2");
+    let dt = 1.0 / 60.0;
+    let player = PlayerId::new();
+    let rig = PlayerRig::default();
+    let mut feed = |rt: &mut GameRuntime, blend: f32| {
+        let mut i = InputFrame::default();
+        let mut c = std::collections::HashMap::new();
+        c.insert("feed".to_string(), blend);
+        i.part_blends.insert("gun".to_string(), c);
+        rt.update(dt, &one_player(player, frame(rig.clone(), i)));
+    };
+    // Three racks; the magazine holds two.
+    feed(&mut rt, 0.95); // cross -> 2 -> 1
+    feed(&mut rt, 0.0); // rearm
+    feed(&mut rt, 0.95); // cross -> 1 -> 0
+    feed(&mut rt, 0.0); // rearm
+    feed(&mut rt, 0.95); // cross -> gated out (mag_rounds is 0)
+    assert_eq!(
+        rt.script_host.var_string("mag_rounds").as_deref(),
+        Some("0"),
+        "the counter stops at zero: the third feed is gated out by when mag_rounds>0"
+    );
+}
