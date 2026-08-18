@@ -389,9 +389,15 @@ impl GameRuntime {
                     } else {
                         blend > trig.at + TRIGGER_HYSTERESIS
                     };
+                    // A per-trigger condition gates the crossing -- the same rack ejects a case
+                    // only when one is chambered. Evaluated against the shared state vars.
+                    let when_ok = trig
+                        .when
+                        .as_ref()
+                        .map_or(true, |c| c.holds(&|k| self.script_host.var_string(k)));
                     if rearmed {
                         self.latched_triggers.remove(&key);
-                    } else if crossed && !self.latched_triggers.contains(&key) {
+                    } else if crossed && when_ok && !self.latched_triggers.contains(&key) {
                         self.latched_triggers.insert(key);
                         fired.push((object_id.clone(), trig.action.clone()));
                     }
@@ -457,6 +463,30 @@ impl GameRuntime {
                 // Straight into the same store scripts use, so a state set by an
                 // animation and one set by a script are the same thing.
                 self.script_host.set_var(&name, &value);
+            }
+            A::AddVar { name, delta } => {
+                let cur = self
+                    .script_host
+                    .var_string(&name)
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let next = cur + delta;
+                // Whole numbers read back as "30", not "30.0", so a Compare or SetVar can round-trip.
+                let text = if next.fract() == 0.0 {
+                    (next as i64).to_string()
+                } else {
+                    next.to_string()
+                };
+                self.script_host.set_var(&name, &text);
+            }
+            A::PlayClip { clip } => {
+                // Drive the follow-on clip to its target (blend 1) -- the mechanical consequence,
+                // e.g. the round sliding up into the chamber as the bolt returns.
+                self.script_host.push_command(EngineCommand::SetPartBlend {
+                    id: object_id.to_string(),
+                    clip,
+                    blend: 1.0,
+                });
             }
             A::PlaySound { id } => self.script_host.push_command(EngineCommand::PlaySound { id }),
             A::SpawnParticleBurst { id, count } => {

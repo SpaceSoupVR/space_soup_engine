@@ -5,8 +5,8 @@ use std::path::Path;
 use crate::events::Hand;
 
 pub use crate::scene_animation::{
-    Animation, AnimationBinding, BindingScope, Easing, Keyframe, PartAnimationDef, PartDriver,
-    PlayMode, BINDING_BUTTONS,
+    Animation, AnimationBinding, BindingScope, CompareOp, Condition, Easing, Keyframe,
+    PartAnimationDef, PartDriver, PartTrigger, PartTriggerAction, PlayMode, BINDING_BUTTONS,
 };
 pub use crate::scene_cuboid::{
     distance_to_oriented_box, Color3, CuboidDef, CuboidShape, CuboidStyle, MeshRef,

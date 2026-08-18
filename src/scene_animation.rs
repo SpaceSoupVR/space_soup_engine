@@ -114,7 +114,7 @@ pub struct PartAnimationDef {
     /// driver always, so pulling the trigger cycles the bolt whether or not
     /// there is a round in it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled_when: Option<ClipCondition>,
+    pub enabled_when: Option<Condition>,
 
     /// The grip point the pulling hand is posed from, for a HandPull clip.
     ///
@@ -130,26 +130,62 @@ pub struct PartAnimationDef {
     pub grip_point: Option<String>,
 }
 
-/// A named state this clip requires.
-///
-/// Deliberately string equality rather than an expression language: weapon
-/// states are named things ("locked_back", "empty", "safe"), and a condition you
-/// can read aloud is one an animator can author without a manual.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClipCondition {
-    pub var: String,
-    pub equals: String,
-    /// Invert it: enabled while the variable is anything BUT `equals`.
-    #[serde(default)]
-    pub negate: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareOp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
 }
 
-impl ClipCondition {
-    pub fn holds(&self, current: Option<&str>) -> bool {
-        // An unset variable matches "" so a state nobody has set yet reads as
-        // absent rather than as a match for whatever was asked.
-        let matches = current.unwrap_or("") == self.equals;
-        matches != self.negate
+/// A condition over authored state variables. Beyond the old single-equality gate a weapon needs
+/// compound logic ("bolt is back AND chamber is loaded") and counts ("magazine has rounds left"),
+/// so this is a small boolean tree: an equality, a numeric comparison, or all/any/not of others.
+///
+/// Untagged so the leaf `{ "var": "chamber", "equals": "loaded" }` stays byte-compatible with the
+/// clips authored before compound conditions existed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Condition {
+    All { all: Vec<Condition> },
+    Any { any: Vec<Condition> },
+    Not { not: Box<Condition> },
+    /// Numeric: parses the var as a number (unset = 0) and compares to `value`.
+    Compare { var: String, op: CompareOp, value: f64 },
+    /// String equality, the backward-compatible leaf.
+    Equals {
+        var: String,
+        equals: String,
+        #[serde(default)]
+        negate: bool,
+    },
+}
+
+impl Condition {
+    /// `get` reads the current string value of a state var (None = unset, treated as "" / 0).
+    pub fn holds(&self, get: &dyn Fn(&str) -> Option<String>) -> bool {
+        match self {
+            Condition::All { all } => all.iter().all(|c| c.holds(get)),
+            Condition::Any { any } => any.iter().any(|c| c.holds(get)),
+            Condition::Not { not } => !not.holds(get),
+            Condition::Equals { var, equals, negate } => {
+                (get(var).as_deref().unwrap_or("") == equals) != *negate
+            }
+            Condition::Compare { var, op, value } => {
+                let v = get(var).and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0);
+                match op {
+                    CompareOp::Lt => v < *value,
+                    CompareOp::Le => v <= *value,
+                    CompareOp::Gt => v > *value,
+                    CompareOp::Ge => v >= *value,
+                    CompareOp::Eq => v == *value,
+                    CompareOp::Ne => v != *value,
+                }
+            }
+        }
     }
 }
 
@@ -182,6 +218,12 @@ pub struct PartTrigger {
     /// Rising is the usual case -- the action happens as the motion completes.
     #[serde(default = "default_true")]
     pub rising: bool,
+
+    /// Only fire when this holds. Lets one blend crossing mean different things in different
+    /// states -- racking the bolt ejects a case only when one is chambered, chambers a fresh
+    /// round only when the magazine has any. Absent = fires on every crossing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<Condition>,
 
     pub action: PartTriggerAction,
 }
@@ -218,6 +260,12 @@ pub enum PartTriggerAction {
     /// scripts can read with get_var. This is what makes a weapon a state
     /// machine rather than a set of independent motions.
     SetVar { name: String, value: String },
+    /// Numeric state change: add `delta` (may be negative) to a var read as a number. This is what
+    /// counts rounds -- feeding chambers one and does `mag_rounds -= 1`.
+    AddVar { name: String, delta: f64 },
+    /// Drive another clip to its target pose -- the mechanical follow-on. The bolt returning to
+    /// battery plays `chamber_feed`, sliding the round up into the chamber.
+    PlayClip { clip: String },
     PlaySound { id: String },
     SpawnParticleBurst { id: String, count: u32 },
 }
@@ -256,4 +304,44 @@ pub struct AnimationBinding {
     pub play_mode: PlayMode,
     #[serde(default)]
     pub scope: BindingScope,
+}
+
+#[cfg(test)]
+mod condition_tests {
+    use super::*;
+
+    fn vars(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn old_equality_leaf_is_byte_compatible() {
+        let c: Condition = serde_json::from_str(r#"{"var":"chamber","equals":"loaded"}"#).unwrap();
+        assert!(c.holds(&vars(&[("chamber", "loaded")])));
+        assert!(!c.holds(&vars(&[("chamber", "empty")])));
+        assert!(!c.holds(&vars(&[]))); // unset reads as ""
+    }
+
+    #[test]
+    fn compound_all_with_numeric_compare() {
+        // bolt is back AND the magazine has rounds left
+        let c: Condition = serde_json::from_str(
+            r#"{"all":[{"var":"bolt","equals":"back"},{"var":"mag_rounds","op":"gt","value":0}]}"#,
+        )
+        .unwrap();
+        assert!(c.holds(&vars(&[("bolt", "back"), ("mag_rounds", "30")])));
+        assert!(!c.holds(&vars(&[("bolt", "back"), ("mag_rounds", "0")])));
+        assert!(!c.holds(&vars(&[("bolt", "forward"), ("mag_rounds", "30")])));
+    }
+
+    #[test]
+    fn any_and_not_compose() {
+        let c: Condition = serde_json::from_str(
+            r#"{"any":[{"not":{"var":"safety","equals":"safe"}},{"var":"override","equals":"on"}]}"#,
+        )
+        .unwrap();
+        assert!(c.holds(&vars(&[("safety", "fire")])));
+        assert!(!c.holds(&vars(&[("safety", "safe")])));
+        assert!(c.holds(&vars(&[("safety", "safe"), ("override", "on")])));
+    }
 }
