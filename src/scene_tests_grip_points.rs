@@ -144,3 +144,22 @@
             "hand offset must compose on top of the part pose, got {hand:?}"
         );
     }
+
+    // A support grip (the offhand on a rifle's handguard) must not be a way to pick
+    // the object up -- every authored grip used to be independently grabbable, so the
+    // m4a1 could be carried by its barrel with no hand on the pistol grip.
+
+    #[test]
+    fn support_defaults_to_false_and_deserializes_when_set() {
+        let plain: crate::GripPointDef =
+            serde_json::from_value(serde_json::json!({"name": "main_grip"})).unwrap();
+        assert!(
+            !plain.support,
+            "a grip with no `support` key must stay independently grabbable"
+        );
+
+        let support: crate::GripPointDef =
+            serde_json::from_value(serde_json::json!({"name": "support_grip", "support": true}))
+                .unwrap();
+        assert!(support.support);
+    }

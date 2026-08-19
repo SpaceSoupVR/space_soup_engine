@@ -97,6 +97,17 @@ impl GameRuntime {
                                     );
                                     continue;
                                 }
+                                // A support grip is not a way to pick the object up.
+                                // Every authored grip used to be independently
+                                // grabbable, so a rifle could be carried by its
+                                // handguard with no hand on the pistol grip.
+                                if g.support && !self.attachments.held_by_player(&id, player) {
+                                    warn!(
+                                        "grab_at_joint: '{id}' point '{}' is a support grip and                                          this player is not holding '{id}' yet -- ignored",
+                                        g.name
+                                    );
+                                    continue;
+                                }
                             }
                             let (offset_pos, offset_rot) = matched_point
                                 .map(|g| {

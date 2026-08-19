@@ -130,6 +130,19 @@ pub struct GripPointDef {
     /// object's own pose back into the part that derives from it.
     #[serde(default)]
     pub part: Option<String>,
+
+    /// A support grip: grabbable only while the same player already holds this
+    /// object by some other grip. The offhand on a rifle's handguard is the case
+    /// this exists for -- you cannot pick a carbine up by the barrel, but once
+    /// the firing hand has it you can bring the support hand on.
+    ///
+    /// Without this every authored grip was independently grabbable, so the
+    /// weapon could be carried by the handguard alone with no hand on the pistol
+    /// grip. It does NOT make the grip drive the object's pose -- the primary
+    /// attachment still does that (see `AttachmentTable::is_primary`); a support
+    /// grip only poses its own hand.
+    #[serde(default)]
+    pub support: bool,
 }
 
 impl GripPointDef {
