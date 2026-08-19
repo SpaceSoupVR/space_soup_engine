@@ -132,6 +132,23 @@ impl AttachmentTable {
         self.primary.contains_key(object_id)
     }
 
+    /// Is this exact (player, joint) the attachment that drives the object's pose?
+    ///
+    /// Several joints can hold one object, but only the primary positions it. The
+    /// client needs this to stop a second hand overwriting the first's transform,
+    /// which it did unconditionally because nothing on the wire distinguished them.
+    pub fn is_primary(&self, object_id: &str, player: PlayerId, joint: JointId) -> bool {
+        self.primary.get(object_id) == Some(&(player, joint))
+    }
+
+    /// Does this player already hold this object by any joint? Gates support grips,
+    /// which may only be taken once the object is genuinely in hand.
+    pub fn held_by_player(&self, object_id: &str, player: PlayerId) -> bool {
+        self.attachments
+            .keys()
+            .any(|(id, p, _)| id == object_id && *p == player)
+    }
+
     pub fn object_for_joint(&self, player: PlayerId, joint: JointId) -> Option<&str> {
         self.attachments
             .iter()
@@ -175,3 +192,56 @@ impl AttachmentTable {
     }
 }
 
+
+#[cfg(test)]
+mod primary_and_support_tests {
+    use super::*;
+    use crate::events::Hand;
+
+    fn grip(hand: Hand) -> JointId {
+        JointId::HandGrip(hand)
+    }
+
+    // Two hands on one object: the FIRST to grab positions it, and the second must
+    // not. The client used to write the object's transform once per hand, so the
+    // right hand always won regardless of which the server considered primary.
+    #[test]
+    fn only_the_first_hand_to_grab_is_primary() {
+        let mut t = AttachmentTable::new();
+        let p = PlayerId::local();
+        t.attach("m4a1", p, Attachment::rigid(grip(Hand::Right)));
+        t.attach("m4a1", p, Attachment::rigid(grip(Hand::Left)));
+
+        assert!(t.is_primary("m4a1", p, grip(Hand::Right)));
+        assert!(
+            !t.is_primary("m4a1", p, grip(Hand::Left)),
+            "the second hand poses itself but must not drive the object"
+        );
+    }
+
+    // Releasing the primary hands the object to the hand still holding it, rather
+    // than dropping an object the player is visibly still carrying.
+    #[test]
+    fn releasing_the_primary_promotes_the_remaining_hand() {
+        let mut t = AttachmentTable::new();
+        let p = PlayerId::local();
+        t.attach("m4a1", p, Attachment::rigid(grip(Hand::Right)));
+        t.attach("m4a1", p, Attachment::rigid(grip(Hand::Left)));
+
+        t.detach_joint("m4a1", p, grip(Hand::Right));
+        assert!(t.is_attached("m4a1"), "still held by the support hand");
+        assert!(t.is_primary("m4a1", p, grip(Hand::Left)));
+    }
+
+    #[test]
+    fn held_by_player_gates_a_support_grip() {
+        let mut t = AttachmentTable::new();
+        let p = PlayerId::local();
+        assert!(
+            !t.held_by_player("m4a1", p),
+            "nothing held yet, so a support grip must be refused"
+        );
+        t.attach("m4a1", p, Attachment::rigid(grip(Hand::Right)));
+        assert!(t.held_by_player("m4a1", p), "now the offhand may join");
+    }
+}
