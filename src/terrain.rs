@@ -78,6 +78,20 @@ pub struct SplatDef {
     pub path: String,
     /// Texels along x and z.
     pub resolution: [u32; 2],
+    /// How many material layers each texel carries.
+    ///
+    /// Always 4 today, and recorded anyway. The file is headerless raw bytes,
+    /// so without this a 4-layer and an 8-layer map of different resolutions
+    /// can have identical byte counts and nothing can tell them apart. Writing
+    /// it now makes a future second texture an ADDITIVE change; leaving it out
+    /// would make it a migration with a heuristic in the middle. It defaults on
+    /// read, so maps written before this field keep loading.
+    #[serde(default = "default_splat_layers")]
+    pub layers: u8,
+}
+
+fn default_splat_layers() -> u8 {
+    SPLAT_LAYERS as u8
 }
 
 /// A patch of terrain geometry, ready for collision or rendering.
@@ -444,6 +458,16 @@ pub fn load_splat(
         return Ok(None);
     };
     let full = game_dir.join(&splat.path);
+    if splat.layers as usize != SPLAT_LAYERS {
+        // Refused rather than best-effort: a map with a different layer count
+        // is not slightly wrong, it is a different pixel layout, and reading it
+        // as four would shear every weight across the wrong materials.
+        return Err(format!(
+            "splat map {} declares {} layers but this build supports {SPLAT_LAYERS}",
+            full.display(),
+            splat.layers,
+        ));
+    }
     let bytes = std::fs::read(&full)
         .map_err(|e| format!("failed to read splat map {}: {e}", full.display()))?;
     Ok(Some(SplatMap::new(bytes, splat.resolution)?))
@@ -528,5 +552,55 @@ mod splat_tests {
             },
         };
         assert_eq!(load_splat(&def, std::path::Path::new("/nonexistent")), Ok(None));
+    }
+}
+
+#[cfg(test)]
+mod splat_layers_tests {
+    use super::*;
+
+    fn def_with(json: &str) -> TerrainDef {
+        serde_json::from_str(json).expect("parse terrain def")
+    }
+
+    /// Maps written before the field existed must keep loading.
+    #[test]
+    fn a_splat_block_without_a_layer_count_defaults_to_four() {
+        let def = def_with(
+            r#"{"origin":[0,0,0],"splat":{"path":"t.splat","resolution":[4,4]},
+                "kind":"heightfield","path":"h.r16","resolution":[2,2],
+                "size":[1,1],"height_range":[0,1]}"#,
+        );
+        assert_eq!(def.splat.as_ref().unwrap().layers, 4);
+    }
+
+    /// A map declaring a layout this build cannot read is refused, not
+    /// best-effort decoded -- reading 8-layer bytes as 4 would shear every
+    /// weight across the wrong materials and look like a painting mistake.
+    #[test]
+    fn a_foreign_layer_count_is_refused_with_a_message_naming_both() {
+        let def = def_with(
+            r#"{"origin":[0,0,0],"splat":{"path":"t.splat","resolution":[4,4],"layers":8},
+                "kind":"heightfield","path":"h.r16","resolution":[2,2],
+                "size":[1,1],"height_range":[0,1]}"#,
+        );
+        let err = load_splat(&def, std::path::Path::new("/nonexistent")).unwrap_err();
+        assert!(err.contains('8'), "error should name what the file claims: {err}");
+        assert!(err.contains('4'), "error should name what this build supports: {err}");
+    }
+
+    /// The count survives a write/read cycle, which is the whole point of
+    /// recording it.
+    #[test]
+    fn the_layer_count_round_trips() {
+        let def = def_with(
+            r#"{"origin":[0,0,0],"splat":{"path":"t.splat","resolution":[8,8]},
+                "kind":"heightfield","path":"h.r16","resolution":[2,2],
+                "size":[1,1],"height_range":[0,1]}"#,
+        );
+        let text = serde_json::to_string(&def).expect("serialize");
+        assert!(text.contains("\"layers\":4"), "layer count must be written: {text}");
+        let back: TerrainDef = serde_json::from_str(&text).expect("round trip");
+        assert_eq!(back.splat.unwrap().layers, 4);
     }
 }
