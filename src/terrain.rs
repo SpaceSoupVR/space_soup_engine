@@ -321,10 +321,38 @@ impl TerrainSource for Heightfield {
                     }
                 }
 
-                // Counter-clockwise, matching the renderer's front_face(Ccw) --
-                // cuboids were once wound the other way and every one of them
-                // lit inside-out without erroring.
-                patch.indices.extend_from_slice(&[a, c, b, b, c, d]);
+                // Split along the SHORTER diagonal rather than always the
+                // same one. A fixed diagonal gives every quad in the terrain
+                // the same bias, which reads as a directional grain across the
+                // whole map -- ridges and gullies look subtly wrong depending
+                // on which way they run.
+                //
+                // Shorter is the right criterion because it preserves flat
+                // ground. With one corner raised, splitting along the flat pair
+                // leaves half the quad genuinely flat and confines the slope to
+                // the other half; splitting along the raised corner ramps both
+                // triangles and the flat region disappears. Since x/z spacing
+                // is the same either way, "shorter" reduces to the smaller
+                // height difference.
+                //
+                // Measured on the DECIMATED positions, not the source samples,
+                // so a coarse LOD picks the diagonal that is right for the
+                // triangles it is actually drawing.
+                let ha = patch.positions[a as usize].y;
+                let hb = patch.positions[b as usize].y;
+                let hc = patch.positions[c as usize].y;
+                let hd = patch.positions[d as usize].y;
+
+                // Both windings below are counter-clockwise, matching the
+                // renderer's front_face(Ccw) -- cuboids were once wound the
+                // other way and every one of them lit inside-out without
+                // erroring, so a second winding is a second chance to make that
+                // mistake. They are asserted equivalent in the tests.
+                if (hb - hc).abs() <= (ha - hd).abs() {
+                    patch.indices.extend_from_slice(&[a, c, b, b, c, d]);
+                } else {
+                    patch.indices.extend_from_slice(&[a, c, d, a, d, b]);
+                }
             }
         }
         patch
@@ -876,4 +904,208 @@ mod hole_tests {
         assert!(back.any_open());
         assert!(!HoleMask::solid([3, 2]).any_open());
     }
+}
+
+#[cfg(test)]
+mod diagonal_tests {
+    use super::*;
+
+    /// Build a 2x2-sample field (one quad) with the given corner heights, in
+    /// sample order: (0,0), (1,0), (0,1), (1,1) -- a, b, c, d.
+    fn one_quad(h: [u16; 4]) -> Heightfield {
+        Heightfield::new(h.to_vec(), [2, 2], [10.0, 10.0], [0.0, 100.0], Vec3::ZERO)
+            .expect("build quad")
+    }
+
+    fn tris(field: &Heightfield) -> Vec<[u32; 3]> {
+        let p = field.patch(field.bounds(), 1);
+        p.indices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect()
+    }
+
+    /// Signed area of a triangle projected to the xz plane. Its SIGN is the
+    /// winding; a mix of signs across a flat surface means some triangles face
+    /// the other way and will be culled or lit inside-out.
+    fn signed_area_xz(p: &TerrainPatch, t: [u32; 3]) -> f32 {
+        let (a, b, c) = (
+            p.positions[t[0] as usize],
+            p.positions[t[1] as usize],
+            p.positions[t[2] as usize],
+        );
+        (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x)
+    }
+
+    /// The whole point: one raised corner must leave the opposite half flat.
+    /// Splitting along the raised corner ramps both triangles and the flat
+    /// ground disappears, which is the artefact a fixed diagonal produces.
+    #[test]
+    fn a_single_raised_corner_keeps_the_opposite_half_flat() {
+        // d raised. |hb - hc| = 0, |ha - hd| is large, so the b-c diagonal wins.
+        let field = one_quad([0, 0, 0, 40000]);
+        let patch = field.patch(field.bounds(), 1);
+        let flat: Vec<_> = tris(&field)
+            .into_iter()
+            .filter(|t| t.iter().all(|i| patch.positions[*i as usize].y == 0.0))
+            .collect();
+        assert_eq!(flat.len(), 1, "exactly one triangle should stay entirely at zero");
+
+        // And the mirror case: a raised instead, so the diagonal must flip.
+        let field = one_quad([40000, 0, 0, 0]);
+        let patch = field.patch(field.bounds(), 1);
+        let flat: Vec<_> = tris(&field)
+            .into_iter()
+            .filter(|t| t.iter().all(|i| patch.positions[*i as usize].y == 0.0))
+            .collect();
+        assert_eq!(flat.len(), 1, "the mirrored case must also keep a flat half");
+    }
+
+    /// A ridge running along the a-d diagonal must become a real mesh edge
+    /// rather than being cut across. This is the case a fixed diagonal gets
+    /// wrong half the time, purely by which way the feature happens to run.
+    #[test]
+    fn a_diagonal_ridge_is_split_along_its_length() {
+        // a and d high, b and c low: |hb - hc| = 0 <= |ha - hd| = 0. Tie, so the
+        // default holds. Make it unambiguous instead -- b and c differ.
+        let field = one_quad([50000, 0, 20000, 50000]);
+        let t = tris(&field);
+        // |hb - hc| is large; |ha - hd| is 0, so the a-d diagonal must be used,
+        // which means every triangle contains both a and d.
+        assert!(
+            t.iter().all(|tri| tri.contains(&0) && tri.contains(&3)),
+            "both triangles should share the a-d edge, got {t:?}",
+        );
+    }
+
+    /// Flat ground is a tie and must resolve the same way every time -- an
+    /// unstable choice would make identical terrain produce different meshes.
+    #[test]
+    fn a_tie_is_deterministic() {
+        let a = tris(&one_quad([1000, 1000, 1000, 1000]));
+        let b = tris(&one_quad([1000, 1000, 1000, 1000]));
+        assert_eq!(a, b);
+        assert_eq!(a, tris(&one_quad([0, 0, 0, 0])), "any flat quad splits alike");
+    }
+
+    /// BOTH windings must be counter-clockwise. A second triangulation is a
+    /// second chance to wind one the wrong way, and the symptom is terrain lit
+    /// inside-out with nothing reported -- exactly how the cuboid winding bug
+    /// stayed hidden.
+    #[test]
+    fn both_diagonals_wind_the_same_way() {
+        for heights in [
+            [0, 0, 0, 40000],     // b-c diagonal
+            [50000, 0, 20000, 50000], // a-d diagonal
+            [0, 0, 0, 0],         // tie
+            [10000, 40000, 5000, 60000],
+        ] {
+            let field = one_quad(heights);
+            let patch = field.patch(field.bounds(), 1);
+            let signs: Vec<f32> = patch
+                .indices
+                .chunks(3)
+                .map(|c| signed_area_xz(&patch, [c[0], c[1], c[2]]).signum())
+                .collect();
+            assert!(
+                signs.windows(2).all(|w| w[0] == w[1]),
+                "mixed winding for heights {heights:?}: {signs:?}",
+            );
+        }
+    }
+
+    /// Whichever diagonal is chosen, the quad is still fully covered by two
+    /// triangles using all four corners -- no sliver, no gap.
+    #[test]
+    fn every_split_covers_the_quad_with_all_four_corners() {
+        for heights in [[0, 0, 0, 40000], [50000, 0, 20000, 50000], [0, 0, 0, 0]] {
+            let field = one_quad(heights);
+            let patch = field.patch(field.bounds(), 1);
+            assert_eq!(patch.indices.len(), 6, "two triangles for {heights:?}");
+            let used: std::collections::HashSet<u32> = patch.indices.iter().copied().collect();
+            assert_eq!(used.len(), 4, "all four corners used for {heights:?}");
+        }
+    }
+
+    /// The choice must survive decimation, measured on the vertices actually
+    /// drawn rather than the source samples.
+    #[test]
+    fn a_coarse_step_still_produces_whole_quads() {
+        let mut samples = vec![0u16; 81];
+        samples[40] = 60000; // a bump in the middle
+        let field = Heightfield::new(samples, [9, 9], [80.0, 80.0], [0.0, 100.0], Vec3::ZERO)
+            .expect("build field");
+        for step in [1, 2, 4] {
+            let patch = field.patch(field.bounds(), step);
+            assert_eq!(patch.indices.len() % 6, 0, "whole quads at step {step}");
+            assert!(!patch.indices.is_empty(), "geometry at step {step}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod diagonal_parity {
+    use super::*;
+
+    /// A deterministic field both languages can build identically.
+    ///
+    /// Small integers only, so JavaScript reproduces the arithmetic exactly --
+    /// the same discipline the scatter port uses. The heights are irregular on
+    /// purpose: a smooth field would tie on most quads and the test would pass
+    /// with either implementation ignoring the rule.
+    pub fn reference_field() -> Heightfield {
+        let (nx, nz) = (9u32, 9u32);
+        let mut samples = Vec::with_capacity((nx * nz) as usize);
+        for iz in 0..nz {
+            for ix in 0..nx {
+                samples.push(((ix * 7919 + iz * 104729) % 65536) as u16);
+            }
+        }
+        Heightfield::new(samples, [nx, nz], [80.0, 80.0], [0.0, 100.0], Vec3::ZERO)
+            .expect("reference field")
+    }
+
+    /// Order-sensitive checksum of the index buffer.
+    pub fn index_checksum(indices: &[u32]) -> u32 {
+        let mut h: u32 = 2166136261;
+        for (i, v) in indices.iter().enumerate() {
+            h ^= v.wrapping_mul(i as u32 + 1);
+            h = h.wrapping_mul(16777619);
+        }
+        h
+    }
+
+    /// Pinned so the editor's port can assert the SAME number.
+    ///
+    /// If this changes, every terrain in the project retriangulates -- which is
+    /// allowed, but it must be a decision rather than a drift, and the editor's
+    /// matching test must change in the same commit or the preview stops
+    /// agreeing with the runtime.
+    #[test]
+    fn the_reference_triangulation_is_pinned() {
+        let field = reference_field();
+        let patch = field.patch(field.bounds(), 1);
+        assert_eq!(patch.indices.len(), 8 * 8 * 6, "64 quads, two triangles each");
+        println!("REFERENCE_INDEX_CHECKSUM = {}", index_checksum(&patch.indices));
+        assert_eq!(index_checksum(&patch.indices), REFERENCE_INDEX_CHECKSUM);
+    }
+
+    /// Both diagonals genuinely occur in the reference, so the parity check is
+    /// exercising the choice rather than one branch.
+    #[test]
+    fn the_reference_uses_both_diagonals() {
+        let field = reference_field();
+        let patch = field.patch(field.bounds(), 1);
+        let mut bc = 0;
+        let mut ad = 0;
+        for quad in patch.indices.chunks(6) {
+            // b-c split is [a, c, b, b, c, d] -- the second triangle starts at b.
+            // a-d split is [a, c, d, a, d, b] -- the second triangle starts at a,
+            // the same vertex the quad started with. That is the cheapest
+            // distinguishing feature, and unlike "does the first triangle
+            // contain d" it is actually true: the a-d split's first triangle is
+            // [a, c, d] and its LAST index is b, not d.
+            if quad[3] == quad[0] { ad += 1 } else { bc += 1 }
+        }
+        assert!(bc > 0 && ad > 0, "expected both splits, got bc={bc} ad={ad}");
+    }
+
+    pub const REFERENCE_INDEX_CHECKSUM: u32 = 2993084145;
 }
