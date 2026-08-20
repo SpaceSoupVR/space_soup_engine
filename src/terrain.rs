@@ -64,6 +64,12 @@ pub struct TerrainDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub splat: Option<SplatDef>,
 
+    /// Cells where the ground is absent, for cave mouths, alcoves and
+    /// overhangs. The opening is authored here; the geometry that fills it is
+    /// an ordinary placed mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holes: Option<HoleDef>,
+
     #[serde(flatten)]
     pub kind: TerrainKind,
 }
@@ -133,6 +139,13 @@ pub struct Heightfield {
     size: [f32; 2],
     height_range: [f32; 2],
     origin: Vec3,
+    /// Cells with no ground. Held HERE, on the source, rather than applied by
+    /// whoever asked for the geometry -- because `patch` is the single place
+    /// both the renderer and the physics cooker get their triangles, and a hole
+    /// you can see through but not fall through (or the reverse) is one of the
+    /// worst bugs a level can have. One source of truth makes that
+    /// unrepresentable rather than merely unlikely.
+    holes: Option<HoleMask>,
 }
 
 impl Heightfield {
@@ -161,7 +174,7 @@ impl Heightfield {
         if !(size[0] > 0.0 && size[1] > 0.0) {
             return Err(format!("heightfield size {size:?} must be positive"));
         }
-        Ok(Self { samples, resolution, size, height_range, origin })
+        Ok(Self { samples, resolution, size, height_range, origin, holes: None })
     }
 
     /// Decode little-endian u16 pairs, as written by every terrain tool and by
@@ -289,6 +302,25 @@ impl TerrainSource for Heightfield {
                 let b = a + 1;
                 let c = a + stride;
                 let d = c + 1;
+
+                // Skip the quad entirely where the ground is absent. Sampled at
+                // the quad's CENTRE: at a coarse LOD step one quad spans several
+                // mask cells, so a hole edge can shift by up to half a step at
+                // distance. Centre sampling makes that error symmetric rather
+                // than biased toward holes growing or shrinking, and physics
+                // always cooks at step 1 where it is exact.
+                if self.holes.is_some() {
+                    let cx = (self.world_position(xs[col as usize], iz_at(&zs, row)).x
+                        + self.world_position(xs[col as usize + 1], iz_at(&zs, row + 1)).x)
+                        * 0.5;
+                    let cz = (self.world_position(xs[col as usize], iz_at(&zs, row)).z
+                        + self.world_position(xs[col as usize + 1], iz_at(&zs, row + 1)).z)
+                        * 0.5;
+                    if self.is_hole_at(cx, cz) {
+                        continue;
+                    }
+                }
+
                 // Counter-clockwise, matching the renderer's front_face(Ccw) --
                 // cuboids were once wound the other way and every one of them
                 // lit inside-out without erroring.
@@ -325,7 +357,23 @@ pub fn load(def: &TerrainDef, game_dir: &std::path::Path) -> Result<Box<dyn Terr
                 *height_range,
                 Vec3::from(def.origin),
             )?;
-            Ok(Box::new(field))
+
+            // Loaded here rather than by the caller so every consumer of
+            // `terrain::load` -- renderer, physics, gameplay queries -- gets a
+            // source that already knows where the ground is missing. A caller
+            // that had to remember to apply the mask is a caller that will
+            // eventually forget, and the symptom is invisible ground.
+            let holes = match &def.holes {
+                Some(h) => {
+                    let hole_path = game_dir.join(&h.path);
+                    let hole_bytes = std::fs::read(&hole_path).map_err(|e| {
+                        format!("failed to read hole mask {}: {e}", hole_path.display())
+                    })?;
+                    Some(HoleMask::from_bytes(&hole_bytes, h.resolution)?)
+                }
+                None => None,
+            };
+            Ok(Box::new(field.with_holes(holes)))
         }
     }
 }
@@ -544,6 +592,7 @@ mod splat_tests {
         let def = TerrainDef {
             origin: [0.0; 3],
             splat: None,
+            holes: None,
             kind: TerrainKind::Heightfield {
                 path: "unused".into(),
                 resolution: [2, 2],
@@ -602,5 +651,229 @@ mod splat_layers_tests {
         assert!(text.contains("\"layers\":4"), "layer count must be written: {text}");
         let back: TerrainDef = serde_json::from_str(&text).expect("round trip");
         assert_eq!(back.splat.unwrap().layers, 4);
+    }
+}
+
+/// Which terrain cells have no ground at all.
+///
+/// A cell is the quad between four height samples. Marking one open removes its
+/// two triangles from every patch, which is what makes a cave mouth, an alcove
+/// or an overhang possible on a heightfield: the heightfield still cannot store
+/// two surfaces at one point, but it can stop claiming there is a surface there
+/// at all, and a separately authored mesh supplies the real geometry.
+///
+/// This is deliberately NOT the voxel answer. It buys openings in the ground for
+/// a fraction of the cost, and it does not foreclose voxels later -- a volumetric
+/// source would implement the same `TerrainSource` trait and simply never need
+/// a mask.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoleMask {
+    /// True where the ground is absent.
+    open: Vec<bool>,
+    resolution: [u32; 2],
+}
+
+impl HoleMask {
+    pub fn new(open: Vec<bool>, resolution: [u32; 2]) -> Result<Self, String> {
+        if resolution[0] < 1 || resolution[1] < 1 {
+            return Err(format!("hole resolution {resolution:?} must be at least 1x1"));
+        }
+        let expected = resolution[0] as usize * resolution[1] as usize;
+        if open.len() != expected {
+            return Err(format!(
+                "hole mask has {} cells but resolution {resolution:?} needs {expected}",
+                open.len(),
+            ));
+        }
+        Ok(Self { open, resolution })
+    }
+
+    /// Decode from one byte per cell, which is how it travels and is stored.
+    ///
+    /// A byte rather than a packed bit: the whole mask for a large terrain is
+    /// well under a megabyte either way, and packing would put a bit-order
+    /// convention between the editor and the runtime for no benefit -- the same
+    /// argument that keeps the heightfield and splat map byte-addressed.
+    pub fn from_bytes(bytes: &[u8], resolution: [u32; 2]) -> Result<Self, String> {
+        Self::new(bytes.iter().map(|b| *b != 0).collect(), resolution)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.open.iter().map(|o| u8::from(*o)).collect()
+    }
+
+    pub fn solid(resolution: [u32; 2]) -> Self {
+        let count = resolution[0] as usize * resolution[1] as usize;
+        Self { open: vec![false; count], resolution }
+    }
+
+    pub fn resolution(&self) -> [u32; 2] {
+        self.resolution
+    }
+
+    pub fn any_open(&self) -> bool {
+        self.open.iter().any(|o| *o)
+    }
+
+    /// Whether the ground is absent at a normalised position over the footprint.
+    pub fn is_open_uv(&self, u: f32, v: f32) -> bool {
+        let ix = (u.clamp(0.0, 1.0) * self.resolution[0] as f32).floor() as u32;
+        let iz = (v.clamp(0.0, 1.0) * self.resolution[1] as f32).floor() as u32;
+        let ix = ix.min(self.resolution[0] - 1) as usize;
+        let iz = iz.min(self.resolution[1] - 1) as usize;
+        self.open[iz * self.resolution[0] as usize + ix]
+    }
+
+    pub fn set_open(&mut self, ix: u32, iz: u32, open: bool) {
+        if ix >= self.resolution[0] || iz >= self.resolution[1] {
+            return;
+        }
+        let at = iz as usize * self.resolution[0] as usize + ix as usize;
+        self.open[at] = open;
+    }
+}
+
+/// Where a scene's hole mask lives.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HoleDef {
+    /// Path to the raw one-byte-per-cell file, relative to the game directory.
+    pub path: String,
+    /// Cells along x and z.
+    pub resolution: [u32; 2],
+}
+
+fn iz_at(zs: &[u32], row: u32) -> u32 {
+    zs[(row as usize).min(zs.len() - 1)]
+}
+
+impl Heightfield {
+    /// Attach a hole mask. Consumed by `patch`, so it affects render and
+    /// collision together.
+    pub fn with_holes(mut self, holes: Option<HoleMask>) -> Self {
+        self.holes = holes;
+        self
+    }
+
+    pub fn holes(&self) -> Option<&HoleMask> {
+        self.holes.as_ref()
+    }
+
+    /// Whether a world x/z sits over an open cell.
+    ///
+    /// Public because gameplay needs it for the same reason the mesher does: a
+    /// spawn point, a foot placement or a grenade bounce resolved against ground
+    /// that is not there would drop an actor into a cave ceiling.
+    pub fn is_hole_at(&self, x: f32, z: f32) -> bool {
+        let Some(mask) = &self.holes else { return false };
+        let u = (x - self.origin.x) / self.size[0].max(1e-6);
+        let v = (z - self.origin.z) / self.size[1].max(1e-6);
+        if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+            return false;
+        }
+        mask.is_open_uv(u, v)
+    }
+}
+
+#[cfg(test)]
+mod hole_tests {
+    use super::*;
+
+    fn flat(res: [u32; 2], size: [f32; 2]) -> Heightfield {
+        let count = res[0] as usize * res[1] as usize;
+        Heightfield::new(vec![0u16; count], res, size, [0.0, 10.0], Vec3::ZERO)
+            .expect("build heightfield")
+    }
+
+    #[test]
+    fn a_solid_mask_changes_nothing() {
+        let field = flat([5, 5], [40.0, 40.0]);
+        let before = field.patch(field.bounds(), 1).indices.len();
+
+        let holed = flat([5, 5], [40.0, 40.0]).with_holes(Some(HoleMask::solid([4, 4])));
+        assert_eq!(holed.patch(holed.bounds(), 1).indices.len(), before);
+    }
+
+    #[test]
+    fn an_open_cell_removes_its_two_triangles() {
+        let mut mask = HoleMask::solid([4, 4]);
+        mask.set_open(1, 1, true);
+        let field = flat([5, 5], [40.0, 40.0]).with_holes(Some(mask));
+
+        let solid = flat([5, 5], [40.0, 40.0]);
+        let before = solid.patch(solid.bounds(), 1).indices.len();
+        let after = field.patch(field.bounds(), 1).indices.len();
+
+        assert_eq!(before - after, 6, "one open cell should drop exactly two triangles");
+    }
+
+    /// THE test. The renderer and the physics cooker both call `patch`, so a
+    /// hole must be identical in both. A hole you can see through but not fall
+    /// through -- or the reverse -- is among the worst bugs a level can have,
+    /// and it is only unrepresentable because the mask lives on the source.
+    #[test]
+    fn render_and_physics_see_the_same_holes() {
+        let mut mask = HoleMask::solid([8, 8]);
+        for ix in 2..5 {
+            for iz in 3..6 {
+                mask.set_open(ix, iz, true);
+            }
+        }
+        let field = flat([9, 9], [80.0, 80.0]).with_holes(Some(mask));
+
+        // Physics cooks the whole thing at step 1; so does the near-field
+        // render. Same call, same result, by construction.
+        let physics = field.patch(field.bounds(), 1);
+        let render = field.patch(field.bounds(), 1);
+        assert_eq!(physics.indices, render.indices);
+        assert_eq!(physics.positions.len(), render.positions.len());
+
+        // And the hole is genuinely there.
+        let solid = flat([9, 9], [80.0, 80.0]);
+        assert!(
+            physics.indices.len() < solid.patch(solid.bounds(), 1).indices.len(),
+            "the mask should have removed geometry",
+        );
+    }
+
+    #[test]
+    fn a_fully_open_mask_produces_no_triangles() {
+        let mut mask = HoleMask::solid([4, 4]);
+        for ix in 0..4 {
+            for iz in 0..4 {
+                mask.set_open(ix, iz, true);
+            }
+        }
+        let field = flat([5, 5], [40.0, 40.0]).with_holes(Some(mask));
+        assert!(field.patch(field.bounds(), 1).indices.is_empty());
+    }
+
+    /// Gameplay asks the same question the mesher does, so a spawn or a foot
+    /// placement cannot resolve onto ground that is not there.
+    #[test]
+    fn gameplay_can_ask_whether_a_point_is_over_a_hole() {
+        let mut mask = HoleMask::solid([4, 4]);
+        mask.set_open(0, 0, true);
+        let field = flat([5, 5], [40.0, 40.0]).with_holes(Some(mask));
+
+        assert!(field.is_hole_at(5.0, 5.0), "inside the open cell");
+        assert!(!field.is_hole_at(35.0, 35.0), "far from it");
+        assert!(!field.is_hole_at(-100.0, 0.0), "outside the terrain is not a hole");
+    }
+
+    #[test]
+    fn a_cell_count_that_does_not_match_the_resolution_is_rejected() {
+        assert!(HoleMask::from_bytes(&[0, 1, 0, 1], [2, 2]).is_ok());
+        let err = HoleMask::from_bytes(&[0, 1, 0], [2, 2]).unwrap_err();
+        assert!(err.contains('3') && err.contains('4'), "error should name both counts: {err}");
+    }
+
+    #[test]
+    fn the_mask_round_trips_through_bytes() {
+        let mut mask = HoleMask::solid([3, 2]);
+        mask.set_open(2, 1, true);
+        let back = HoleMask::from_bytes(&mask.to_bytes(), [3, 2]).expect("round trip");
+        assert_eq!(back, mask);
+        assert!(back.any_open());
+        assert!(!HoleMask::solid([3, 2]).any_open());
     }
 }
