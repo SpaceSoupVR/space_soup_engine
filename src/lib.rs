@@ -37,6 +37,9 @@ mod scene_physics;
 mod scene_rig;
 #[cfg(test)]
 mod scene_tests_hierarchy;
+pub mod scatter;
+#[cfg(test)]
+mod scatter_tests;
 pub mod schema;
 pub mod terrain;
 #[cfg(test)]
