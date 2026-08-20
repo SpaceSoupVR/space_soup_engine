@@ -270,3 +270,28 @@ fn dedup_sorted(mut v: Vec<u32>) -> Vec<u32> {
     v.dedup();
     v
 }
+
+/// Build a live source from a scene's `TerrainDef`, reading the sample asset.
+///
+/// Both the server (for collision) and a client (for rendering) call this
+/// against their own copy of the game directory. The samples are static scene
+/// data that is already on every machine, so terrain costs nothing on the wire
+/// -- which matters rather a lot when the target is 64 players and the snapshot
+/// budget is the binding constraint.
+pub fn load(def: &TerrainDef, game_dir: &std::path::Path) -> Result<Box<dyn TerrainSource>, String> {
+    match &def.kind {
+        TerrainKind::Heightfield { path, resolution, size, height_range } => {
+            let full = game_dir.join(path);
+            let bytes = std::fs::read(&full)
+                .map_err(|e| format!("failed to read terrain {}: {e}", full.display()))?;
+            let field = Heightfield::from_raw_le(
+                &bytes,
+                *resolution,
+                *size,
+                *height_range,
+                Vec3::from(def.origin),
+            )?;
+            Ok(Box::new(field))
+        }
+    }
+}
