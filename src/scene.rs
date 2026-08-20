@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::events::Hand;
+pub use crate::scatter::ScatterLayer;
 pub use crate::terrain::{TerrainDef, TerrainKind};
 
 pub use crate::scene_animation::{
@@ -201,6 +202,15 @@ pub struct Scene {
     /// standing on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terrain: Option<TerrainDef>,
+
+    /// Procedural placement layers -- trees, grass, rocks.
+    ///
+    /// Parameters, not output. Five thousand scattered trees are a handful of
+    /// strokes plus a seed here, and are resolved to instances at load; storing
+    /// them as objects would put them in `objects`, which is the one thing that
+    /// would make this format unusable at map scale.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scatter: Vec<ScatterLayer>,
 
     #[serde(default)]
     pub objects: Vec<GameObject>,

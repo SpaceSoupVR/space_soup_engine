@@ -295,3 +295,15 @@ pub fn load(def: &TerrainDef, game_dir: &std::path::Path) -> Result<Box<dyn Terr
         }
     }
 }
+
+/// Lets a heightfield answer scatter's ground queries.
+///
+/// Kept as a concrete impl rather than a blanket one over `TerrainSource`:
+/// coherence would then make `FlatGround` -- which is deliberately not terrain
+/// at all -- awkward to implement, and scatter only ever needs a height at an
+/// x/z. A future voxel or mesh source adds its own two-line impl.
+impl crate::scatter::Ground for Heightfield {
+    fn height_at(&self, x: f32, z: f32) -> Option<f32> {
+        TerrainSource::height_at(self, x, z)
+    }
+}
