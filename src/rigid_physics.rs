@@ -135,8 +135,21 @@ pub struct PhysicsWorld {
     pub(crate) hand_anchors: HashMap<(PlayerId, Hand), *mut PxRigidDynamic>,
     pub(crate) grabs: HashMap<(PlayerId, String, Hand), GrabState>,
     pub(crate) scratch: ScratchBuffer,
-    pub(crate) foundation: PxFoundation,
+
+    // ORDER MATTERS, and it is load-bearing rather than stylistic. Rust drops
+    // fields in declaration order, and a cooked TriangleMesh is owned by the
+    // physics object inside the foundation: releasing one after the foundation
+    // has gone is a use-after-free, and it segfaults at teardown rather than
+    // where the mistake is.
+    //
+    // So the sequence has to be: `scene` first (it releases the actors that
+    // reference the meshes), then `terrain_meshes`, then `foundation` last.
+    //
+    // This was already wrong -- terrain_meshes sat after foundation -- and it
+    // had never been caught because nothing exercised a cooked terrain collider
+    // in a test. The glTF terrain_collider path had the same fault.
     pub(crate) terrain_meshes: Vec<Owner<TriangleMesh>>,
+    pub(crate) foundation: PxFoundation,
 }
 
 pub(crate) fn new_px_scene(foundation: &mut PxFoundation) -> Owner<PxScene> {
@@ -273,6 +286,10 @@ impl PhysicsWorld {
                 continue;
             };
             self.spawn_terrain_colliders(obj, def, game_dir);
+        }
+
+        if let Some(def) = &scene.terrain {
+            self.spawn_scene_terrain(def, game_dir);
         }
     }
 }

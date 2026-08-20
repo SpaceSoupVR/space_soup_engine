@@ -338,6 +338,86 @@ impl PhysicsWorld {
         }
     }
 
+    /// Static collider for the scene's sculpted ground.
+    ///
+    /// Cooked as a triangle mesh rather than a PhysX heightfield. PhysX 5.1 has
+    /// PxHeightField and it would be considerably more compact, but the safe
+    /// `physx` wrapper does not expose it -- reaching it means unsafe FFI
+    /// against physx-sys, which is not worth doing before anything has measured
+    /// terrain collision as a cost. The triangle path is already proven here by
+    /// the glTF terrain colliders and shares its cooking code.
+    ///
+    /// A failure warns and leaves the scene without ground rather than aborting
+    /// the load: a level that opens with nothing to stand on is diagnosable, and
+    /// a runtime that refuses to start is not.
+    pub(crate) fn spawn_scene_terrain(&mut self, def: &crate::terrain::TerrainDef, game_dir: &Path) {
+        let source = match crate::terrain::load(def, game_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("rigid_physics: scene terrain not loaded: {e}");
+                return;
+            }
+        };
+
+        let patch = source.patch(source.bounds(), 1);
+        if patch.positions.is_empty() || patch.indices.is_empty() {
+            log::warn!("rigid_physics: scene terrain produced no geometry");
+            return;
+        }
+
+        let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
+            log::warn!("rigid_physics: failed to create scene terrain material");
+            return;
+        };
+
+        let points: Vec<PxVec3> = patch
+            .positions
+            .iter()
+            .map(|p| PxVec3::new(p.x, p.y, p.z))
+            .collect();
+
+        let Some(owned) = cook_triangle_mesh(&mut self.foundation, &points, &patch.indices) else {
+            log::warn!("rigid_physics: failed to cook scene terrain mesh");
+            return;
+        };
+        self.terrain_meshes.push(owned);
+        let mesh_idx = self.terrain_meshes.len() - 1;
+
+        // Already in world space -- patch() bakes the terrain origin into every
+        // vertex -- so the actor sits at identity rather than carrying a second
+        // transform that could disagree with the one the editor previewed.
+        let scale_px = PxVec3::new(1.0, 1.0, 1.0);
+        let rot_px = PxQuat::new(0.0, 0.0, 0.0, 1.0);
+        let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };
+
+        let geo = PxTriangleMeshGeometry::new(
+            self.terrain_meshes[mesh_idx].as_mut(),
+            &mesh_scale,
+            MeshGeometryFlags::empty(),
+        );
+
+        let transform = to_px_transform(Vec3::ZERO, Quat::IDENTITY);
+        match self.foundation.create_rigid_static(
+            transform,
+            &geo,
+            material.as_mut(),
+            PxTransform::default(),
+            (),
+        ) {
+            Some(actor) => self.scene.add_static_actor(actor),
+            None => {
+                log::warn!("rigid_physics: failed to create scene terrain actor");
+                return;
+            }
+        }
+        self.materials.push(material);
+        log::info!(
+            "rigid_physics: scene terrain cooked -- {} vertices, {} triangles",
+            patch.positions.len(),
+            patch.indices.len() / 3
+        );
+    }
+
     pub(crate) fn spawn_terrain_colliders(&mut self, obj: &GameObject, def: &TerrainColliderDef, game_dir: &Path) {
         let Some(mesh_ref) = &obj.mesh else {
             log::warn!(
