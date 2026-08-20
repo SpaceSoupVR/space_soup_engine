@@ -41,6 +41,18 @@ pub struct ComponentDescriptor {
 #[derive(Debug, Clone, Serialize)]
 pub struct SchemaDescriptor {
     pub components: Vec<ComponentDescriptor>,
+
+    /// Every key a serialized `GameObject` can carry, in the order serde emits
+    /// them.
+    ///
+    /// `components` deliberately omits `id`, `hidden_parts` and the deprecated
+    /// `grip_pose`, so it is not a complete key list and cannot be used to
+    /// order a file. Anything that WRITES scene JSON needs the complete order —
+    /// notably the editor's Python backend, which is the only writer of
+    /// `game/scenes/*.json` in practice and has no way to see serde's field
+    /// order otherwise. Emitting it here keeps one source of truth instead of a
+    /// hand-copied list that silently drifts the first time a field is added.
+    pub field_order: Vec<&'static str>,
 }
 
 impl SchemaDescriptor {
@@ -83,8 +95,52 @@ macro_rules! field {
     };
 }
 
+/// The complete serialized key order of `GameObject`, matching serde's
+/// declaration-order output.
+///
+/// Kept honest by `field_order_matches_serde` below rather than by review: a
+/// field added to `GameObject` and left out of here fails that test, the same
+/// way the exhaustive destructure in `exhaustive` forces it to be classified.
+pub fn game_object_field_order() -> Vec<&'static str> {
+    vec![
+        "id",
+        // Identity and structure, not authorable components -- see the
+        // exhaustive destructure below. Both are skip_serializing_if, so a
+        // default object carries neither.
+        "uuid",
+        "parent",
+        "cuboid",
+        "mesh",
+        "is_trigger",
+        "hidden",
+        "script",
+        "animations",
+        "animation_bindings",
+        "part_animations",
+        "hidden_parts",
+        "rig_attachment",
+        // `grip_pose_legacy` on the struct; renamed on the wire, and the only
+        // field with skip_serializing_if, so it is absent from a default object.
+        "grip_pose",
+        "grip_pose_left",
+        "grip_pose_right",
+        "rigid_body",
+        "grip_points",
+        "sockets",
+        "slider_joint",
+        "terrain_collider",
+        "lights",
+        "sound",
+        "particle_emitter",
+        "laser",
+        "spawn_point",
+        "teleportal",
+    ]
+}
+
 pub fn game_object_schema() -> SchemaDescriptor {
     SchemaDescriptor {
+        field_order: game_object_field_order(),
         components: vec![
             comp!(cuboid, "CuboidDef", Required),
             comp!(mesh, "MeshRef", Optional),
@@ -229,6 +285,14 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         laser,
         spawn_point,
         teleportal,
+        // Identity and structure rather than components. `id` is the human
+        // name and the scripting handle; `uuid` is the stable identity that
+        // `parent` points at, so a rename cannot restructure the scene. None of
+        // the three is something you "add to an object" in the inspector, which
+        // is what `components` describes. Listed here to satisfy the
+        // exhaustiveness check.
+        uuid,
+        parent,
         // Not an authorable component in its own right: it is per-part state on
         // the model, edited from the Model Editor's part list rather than added
         // to an object as a component. Listed here only to satisfy the
@@ -244,6 +308,43 @@ mod tests {
     #[test]
     fn schema_has_the_twenty_two_authorable_components() {
         assert_eq!(game_object_schema().components.len(), 22);
+    }
+
+    /// `field_order` is consumed by a writer in another language, so a drift
+    /// here reorders every scene file on the next save and produces a diff that
+    /// looks like content changed. Assert it against what serde actually emits
+    /// rather than against a second hand-written list.
+    #[test]
+    fn field_order_matches_serde() {
+        let json = serde_json::to_string_pretty(&crate::scene::GameObject::default())
+            .expect("GameObject serializes");
+
+        // Top-level keys are exactly the lines at one indent level in
+        // to_string_pretty's 2-space output.
+        let emitted: Vec<&str> = json
+            .lines()
+            .filter_map(|line| line.strip_prefix("  \""))
+            .filter_map(|rest| rest.split_once("\":"))
+            .map(|(key, _)| key)
+            .collect();
+
+        // grip_pose is the one skip_serializing_if field, so a default object
+        // never carries it -- but a file that still holds legacy data does, and
+        // the writer needs to know where it sorts.
+        // grip_pose, uuid and parent are the skip_serializing_if fields, so a
+        // default object never carries them -- but a real file does, and the
+        // writer needs to know where they sort.
+        let skipped = ["grip_pose", "uuid", "parent"];
+        let expected: Vec<&str> = game_object_field_order()
+            .into_iter()
+            .filter(|k| !skipped.contains(k))
+            .collect();
+
+        assert_eq!(
+            emitted, expected,
+            "game_object_field_order() no longer matches serde's output -- a \
+             GameObject field was added, removed or reordered"
+        );
     }
 
     #[test]

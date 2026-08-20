@@ -188,7 +188,8 @@ impl GameRuntime {
     pub fn load(game_dir: &Path) -> Result<Self> {
         let manifest = Manifest::load(game_dir)?;
         let scene_path = manifest.entry_scene_path(game_dir);
-        let scene = Scene::load(&scene_path)?;
+        let mut scene = Scene::load(&scene_path)?;
+        scene.resolve_world_transforms();
 
         let mut rt = Self {
             game_dir: game_dir.to_path_buf(),
@@ -280,7 +281,8 @@ impl GameRuntime {
 
     pub fn load_scene(&mut self, scene_name: &str) -> Result<()> {
         let path = Manifest::scene_path(&self.game_dir, scene_name);
-        let scene = Scene::load(&path)?;
+        let mut scene = Scene::load(&path)?;
+        scene.resolve_world_transforms();
 
         self.scene = scene;
         self.players = HashMap::new();
