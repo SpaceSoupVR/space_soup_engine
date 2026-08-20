@@ -230,5 +230,34 @@
         }
       ]
     }
+  ],
+  "field_order": [
+    "id",
+    "uuid",
+    "parent",
+    "cuboid",
+    "mesh",
+    "is_trigger",
+    "hidden",
+    "script",
+    "animations",
+    "animation_bindings",
+    "part_animations",
+    "hidden_parts",
+    "rig_attachment",
+    "grip_pose",
+    "grip_pose_left",
+    "grip_pose_right",
+    "rigid_body",
+    "grip_points",
+    "sockets",
+    "slider_joint",
+    "terrain_collider",
+    "lights",
+    "sound",
+    "particle_emitter",
+    "laser",
+    "spawn_point",
+    "teleportal"
   ]
 }

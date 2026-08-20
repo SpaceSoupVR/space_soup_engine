@@ -23,7 +23,40 @@ pub use crate::scene_rig::{
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GameObject {
+    /// The human name. Displayed in the editor, and the handle every script
+    /// uses: `move_object("m4a1_bolt", ..)`, `get_object_x`, `play_animation`,
+    /// `raycast_hit_object`. Renameable, and NOT what structure hangs off --
+    /// see `uuid`.
     pub id: String,
+
+    /// Stable identity, assigned once and never changed.
+    ///
+    /// Exists because `parent` has to point at something a rename cannot break.
+    /// Structure used to be inferred from the id string -- the editor's
+    /// `familyRoot()` split ids on `_` and asked whether a shorter one existed,
+    /// so `m4a1_mag` was a child of `m4a1` by spelling alone. Renaming an object
+    /// silently reparented it, and two compound props could not share a part
+    /// name.
+    ///
+    /// Deliberately NOT used for script references. The whole scripting surface
+    /// is name-based and there are four structural cross-object references in
+    /// the entire lobby, so migrating those to uuids would break every
+    /// hand-written script to fix four fields. Names stay the scripting
+    /// contract; uuids carry structure.
+    ///
+    /// `None` on a file written before this existed, which loads as a flat
+    /// scene exactly as it did before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+
+    /// The `uuid` of this object's transform parent, if it has one.
+    ///
+    /// When set, `cuboid.position` and `cuboid.rotation` are **parent-relative**
+    /// as stored. `Scene::load` leaves them that way so a load/save round trip
+    /// is lossless; `resolve_world_transforms` composes them into world space,
+    /// and the runtime calls it before anything reads a transform.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 
     #[serde(default)]
     pub cuboid: CuboidDef,
@@ -174,6 +207,111 @@ impl Scene {
         std::fs::write(path, text)
             .with_context(|| format!("failed to write scene {}", path.display()))?;
         Ok(())
+    }
+
+    /// Compose parent-relative transforms into world space, in place.
+    ///
+    /// Stored transforms are parent-relative whenever `parent` is set, because
+    /// that is what makes moving a compound prop one edit rather than N. But
+    /// eleven modules read `cuboid.position` expecting world space, so rather
+    /// than teach all of them about hierarchy, the runtime flattens once at
+    /// load and they carry on unchanged.
+    ///
+    /// The tradeoff that buys: moving a parent AT RUNTIME (a script calling
+    /// `move_object` on it) does not drag its children, because after this call
+    /// there is no hierarchy left in memory to propagate through. Static level
+    /// structure is what this is for. Runtime propagation needs the composition
+    /// to live in the render/physics path instead, which is a much larger
+    /// change and is not needed until something authored moves as a group.
+    ///
+    /// Unknown parents and cycles are dropped with a warning rather than
+    /// failing the load: a scene that is half-broken should still open in the
+    /// editor so it can be fixed there.
+    pub fn resolve_world_transforms(&mut self) {
+        let index_of: std::collections::HashMap<&str, usize> = self
+            .objects
+            .iter()
+            .enumerate()
+            .filter_map(|(i, o)| o.uuid.as_deref().map(|u| (u, i)))
+            .collect();
+
+        // Parent index per object, and the roots to walk down from.
+        let parents: Vec<Option<usize>> = self
+            .objects
+            .iter()
+            .map(|o| {
+                let parent_uuid = o.parent.as_deref()?;
+                match index_of.get(parent_uuid) {
+                    Some(&i) => Some(i),
+                    None => {
+                        log::warn!(
+                            "scene '{}': object '{}' names a parent {parent_uuid} \
+                             that is not in this scene -- treating it as a root",
+                            self.name,
+                            o.id
+                        );
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        let mut parents = parents;
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); self.objects.len()];
+        let mut roots: Vec<usize> = Vec::new();
+        for i in 0..self.objects.len() {
+            match parents[i] {
+                Some(p) if p != i => children[p].push(i),
+                Some(_) => {
+                    log::warn!(
+                        "scene '{}': object '{}' is its own parent -- ignoring",
+                        self.name,
+                        self.objects[i].id
+                    );
+                    // Clearing the link, not just treating it as a root: the
+                    // composition step below reads `parents[i]`, so leaving it
+                    // set made the object compose against itself and double its
+                    // own offset.
+                    parents[i] = None;
+                    roots.push(i);
+                }
+                None => roots.push(i),
+            }
+        }
+
+        // Iterative so a deep hierarchy cannot blow the stack, and so anything
+        // left unvisited is provably in a cycle.
+        let mut visited = vec![false; self.objects.len()];
+        let mut stack: Vec<usize> = roots;
+        while let Some(i) = stack.pop() {
+            if visited[i] {
+                continue;
+            }
+            visited[i] = true;
+
+            if let Some(p) = parents[i] {
+                let (parent_pos, parent_rot) = {
+                    let parent = &self.objects[p];
+                    (parent.cuboid.position, parent.cuboid.rotation)
+                };
+                let child = &mut self.objects[i];
+                child.cuboid.position = parent_pos + parent_rot * child.cuboid.position;
+                child.cuboid.rotation = (parent_rot * child.cuboid.rotation).normalize();
+            }
+
+            stack.extend(children[i].iter().copied());
+        }
+
+        for (i, seen) in visited.iter().enumerate() {
+            if !seen {
+                log::warn!(
+                    "scene '{}': object '{}' is in a parent cycle -- its transform \
+                     was left as authored",
+                    self.name,
+                    self.objects[i].id
+                );
+            }
+        }
     }
 
     pub fn find_object(&self, id: &str) -> Option<&GameObject> {

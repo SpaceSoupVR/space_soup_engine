@@ -35,6 +35,8 @@ mod scene_env;
 mod scene_light;
 mod scene_physics;
 mod scene_rig;
+#[cfg(test)]
+mod scene_tests_hierarchy;
 pub mod schema;
 pub mod script;
 mod script_fns_input;
