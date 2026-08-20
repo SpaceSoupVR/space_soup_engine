@@ -56,8 +56,28 @@ pub struct TerrainDef {
     #[serde(default)]
     pub origin: [f32; 3],
 
+    /// Authored material blend weights over the same footprint, if any.
+    ///
+    /// Optional because slope- and height-driven blending already gives a scene
+    /// plausible ground with nothing authored, and a level that never needs
+    /// hand-painted material should not carry an empty megabyte to say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub splat: Option<SplatDef>,
+
     #[serde(flatten)]
     pub kind: TerrainKind,
+}
+
+/// Where a scene's splat map lives and how finely it is sampled.
+///
+/// No `size` or `origin`: the map covers exactly the terrain's footprint. See
+/// `SplatMap` for why that is locked rather than configurable.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SplatDef {
+    /// Path to the raw RGBA8 file, relative to the game directory.
+    pub path: String,
+    /// Texels along x and z.
+    pub resolution: [u32; 2],
 }
 
 /// A patch of terrain geometry, ready for collision or rendering.
@@ -305,5 +325,208 @@ pub fn load(def: &TerrainDef, game_dir: &std::path::Path) -> Result<Box<dyn Terr
 impl crate::scatter::Ground for Heightfield {
     fn height_at(&self, x: f32, z: f32) -> Option<f32> {
         TerrainSource::height_at(self, x, z)
+    }
+}
+
+/// Number of splat layers. Four because that is what one RGBA8 texel holds and
+/// what one texture fetch returns; a fifth layer costs a second texture and a
+/// second fetch per fragment, which is a real budget decision rather than a
+/// constant to bump casually.
+pub const SPLAT_LAYERS: usize = 4;
+
+/// Authored per-texel blend weights across the terrain's material layers.
+///
+/// Stored as RGBA8 in row-major order with x varying fastest -- deliberately
+/// the same convention as the heightfield, because two bulk grids over the same
+/// ground disagreeing about row order is a bug that looks like an art mistake.
+///
+/// The grid is INDEPENDENT of the heightfield's resolution but covers exactly
+/// the same footprint. Independent because the two want different densities: a
+/// 513x513 heightfield resolves 3mm of elevation, while blend weights that fine
+/// are invisible and cost four times the bytes. Locked to the same footprint
+/// because a splat map free to have its own origin and size is a permanent
+/// source of misalignment that renders as terrain painted slightly off from
+/// where the artist painted it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SplatMap {
+    weights: Vec<u8>,
+    resolution: [u32; 2],
+}
+
+impl SplatMap {
+    /// Build from raw RGBA8 bytes.
+    ///
+    /// Rejects a byte count that does not match the resolution rather than
+    /// padding: a truncated splat read would otherwise paint one edge of the
+    /// level with layer 0 and never report anything.
+    pub fn new(weights: Vec<u8>, resolution: [u32; 2]) -> Result<Self, String> {
+        if resolution[0] < 1 || resolution[1] < 1 {
+            return Err(format!("splat resolution {resolution:?} must be at least 1x1"));
+        }
+        let expected = resolution[0] as usize * resolution[1] as usize * SPLAT_LAYERS;
+        if weights.len() != expected {
+            return Err(format!(
+                "splat map has {} bytes but resolution {resolution:?} needs {expected}",
+                weights.len(),
+            ));
+        }
+        Ok(Self { weights, resolution })
+    }
+
+    /// A map with every texel fully on `layer`.
+    pub fn solid(resolution: [u32; 2], layer: usize) -> Self {
+        let count = resolution[0] as usize * resolution[1] as usize;
+        let mut weights = vec![0u8; count * SPLAT_LAYERS];
+        for texel in 0..count {
+            weights[texel * SPLAT_LAYERS + layer.min(SPLAT_LAYERS - 1)] = 255;
+        }
+        Self { weights, resolution }
+    }
+
+    pub fn resolution(&self) -> [u32; 2] {
+        self.resolution
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.weights
+    }
+
+    /// Weights at a texel, clamped to the grid.
+    pub fn at_index(&self, ix: u32, iz: u32) -> [u8; SPLAT_LAYERS] {
+        let ix = ix.min(self.resolution[0] - 1) as usize;
+        let iz = iz.min(self.resolution[1] - 1) as usize;
+        let base = (iz * self.resolution[0] as usize + ix) * SPLAT_LAYERS;
+        let mut out = [0u8; SPLAT_LAYERS];
+        out.copy_from_slice(&self.weights[base..base + SPLAT_LAYERS]);
+        out
+    }
+
+    /// Weights at a normalised position, `u`/`v` in 0..=1 across the footprint.
+    ///
+    /// Nearest-sample, not bilinear. The GPU filters these when it samples the
+    /// texture; this exists for gameplay queries -- footstep sounds, surface
+    /// friction, whether a grenade landed on rock -- which want the authored
+    /// value at a point, and where interpolating across a material boundary
+    /// would invent a half-gravel-half-water surface that is neither.
+    pub fn sample_uv(&self, u: f32, v: f32) -> [u8; SPLAT_LAYERS] {
+        let fx = (u.clamp(0.0, 1.0) * (self.resolution[0] - 1) as f32).round();
+        let fz = (v.clamp(0.0, 1.0) * (self.resolution[1] - 1) as f32).round();
+        self.at_index(fx as u32, fz as u32)
+    }
+
+    /// The layer with the most weight at a normalised position, and its weight.
+    ///
+    /// The query gameplay actually wants: "what am I standing on".
+    pub fn dominant_uv(&self, u: f32, v: f32) -> (usize, u8) {
+        let w = self.sample_uv(u, v);
+        let mut best = 0usize;
+        for (i, weight) in w.iter().enumerate() {
+            if *weight > w[best] {
+                best = i;
+            }
+        }
+        (best, w[best])
+    }
+}
+
+/// Read a scene's splat map from disk, if it declares one.
+///
+/// Separate from `load` rather than folded into `TerrainSource` on purpose: the
+/// heightfield answers geometry questions and gets swapped wholesale when a
+/// scene moves to voxels or heightfield chunks, while blend weights are a
+/// material concern that outlives that choice. Bolting them onto the geometry
+/// trait would make every future terrain representation reimplement them.
+pub fn load_splat(
+    def: &TerrainDef,
+    game_dir: &std::path::Path,
+) -> Result<Option<SplatMap>, String> {
+    let Some(splat) = &def.splat else {
+        return Ok(None);
+    };
+    let full = game_dir.join(&splat.path);
+    let bytes = std::fs::read(&full)
+        .map_err(|e| format!("failed to read splat map {}: {e}", full.display()))?;
+    Ok(Some(SplatMap::new(bytes, splat.resolution)?))
+}
+
+#[cfg(test)]
+mod splat_tests {
+    use super::*;
+
+    #[test]
+    fn solid_puts_all_weight_on_one_layer() {
+        let m = SplatMap::solid([4, 3], 1);
+        assert_eq!(m.resolution(), [4, 3]);
+        assert_eq!(m.as_bytes().len(), 4 * 3 * SPLAT_LAYERS);
+        assert_eq!(m.at_index(0, 0), [0, 255, 0, 0]);
+        assert_eq!(m.at_index(3, 2), [0, 255, 0, 0]);
+        assert_eq!(m.dominant_uv(0.5, 0.5), (1, 255));
+    }
+
+    /// The byte count must match the resolution exactly. A short read that got
+    /// padded would paint one edge of a level with layer 0 and report nothing,
+    /// which is the same failure mode the heightfield guards against.
+    #[test]
+    fn a_byte_count_that_does_not_match_the_resolution_is_rejected() {
+        assert!(SplatMap::new(vec![0; 4 * 4], [2, 2]).is_ok());
+        let err = SplatMap::new(vec![0; 4 * 3], [2, 2]).unwrap_err();
+        assert!(err.contains("12 bytes"), "error should name the actual count: {err}");
+        assert!(err.contains("16"), "error should name the expected count: {err}");
+    }
+
+    /// Row-major with x varying fastest, matching the heightfield. Two bulk
+    /// grids over the same ground disagreeing about row order reads as an art
+    /// mistake and is nearly impossible to spot from a screenshot.
+    #[test]
+    fn indexing_is_row_major_with_x_fastest() {
+        // 3x2 grid; mark texel (2, 1) -- the last one -- with layer 3.
+        let mut bytes = vec![0u8; 3 * 2 * SPLAT_LAYERS];
+        let last = (1 * 3 + 2) * SPLAT_LAYERS;
+        bytes[last + 3] = 200;
+        let m = SplatMap::new(bytes, [3, 2]).unwrap();
+        assert_eq!(m.at_index(2, 1), [0, 0, 0, 200]);
+        assert_eq!(m.at_index(1, 1), [0, 0, 0, 0]);
+        assert_eq!(m.dominant_uv(1.0, 1.0), (3, 200));
+    }
+
+    /// Out-of-range indices clamp instead of panicking. Gameplay queries arrive
+    /// from positions that can sit a hair outside the footprint after physics,
+    /// and a panic there is far worse than a repeated edge texel.
+    #[test]
+    fn indices_and_uvs_clamp_to_the_grid() {
+        let m = SplatMap::solid([2, 2], 0);
+        assert_eq!(m.at_index(99, 99), [255, 0, 0, 0]);
+        assert_eq!(m.sample_uv(-5.0, 5.0), [255, 0, 0, 0]);
+    }
+
+    /// sample_uv is nearest, NOT bilinear: interpolating across a material
+    /// boundary invents a surface that is half rock and half water and is
+    /// neither, which is wrong for the footstep/friction queries this serves.
+    #[test]
+    fn sampling_is_nearest_so_a_boundary_stays_a_boundary() {
+        // 2x1: left texel all layer 0, right texel all layer 1.
+        let bytes = vec![255, 0, 0, 0, /**/ 0, 255, 0, 0];
+        let m = SplatMap::new(bytes, [2, 1]).unwrap();
+        assert_eq!(m.dominant_uv(0.0, 0.0).0, 0);
+        assert_eq!(m.dominant_uv(1.0, 0.0).0, 1);
+        // Exactly halfway must resolve to one side or the other, never a blend.
+        let (layer, weight) = m.dominant_uv(0.5, 0.0);
+        assert!(layer == 0 || layer == 1, "midpoint resolved to layer {layer}");
+        assert_eq!(weight, 255, "a nearest sample must return an authored value, not a mix");
+    }
+
+    #[test]
+    fn a_scene_with_no_splat_block_loads_as_none() {
+        let def = TerrainDef {
+            origin: [0.0; 3],
+            splat: None,
+            kind: TerrainKind::Heightfield {
+                path: "unused".into(),
+                resolution: [2, 2],
+                size: [1.0, 1.0],
+                height_range: [0.0, 1.0],
+            },
+        };
+        assert_eq!(load_splat(&def, std::path::Path::new("/nonexistent")), Ok(None));
     }
 }
