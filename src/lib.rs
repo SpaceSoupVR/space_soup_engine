@@ -38,6 +38,9 @@ mod scene_rig;
 #[cfg(test)]
 mod scene_tests_hierarchy;
 pub mod schema;
+pub mod terrain;
+#[cfg(test)]
+mod terrain_tests;
 pub mod script;
 mod script_fns_input;
 mod script_fns_interact;
