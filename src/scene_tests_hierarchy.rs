@@ -22,7 +22,7 @@ fn obj(id: &str, uuid: &str, parent: Option<&str>, pos: Vec3, rot: Quat) -> Game
 }
 
 fn scene(objects: Vec<GameObject>) -> Scene {
-    Scene { name: "test".into(), objects }
+    Scene { name: "test".into(), objects, ..Default::default() }
 }
 
 #[test]

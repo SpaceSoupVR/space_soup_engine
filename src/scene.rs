@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::events::Hand;
+pub use crate::terrain::{TerrainDef, TerrainKind};
 
 pub use crate::scene_animation::{
     Animation, AnimationBinding, BindingScope, CompareOp, Condition, Easing, Keyframe,
@@ -190,6 +191,17 @@ impl GameObject {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Scene {
     pub name: String,
+
+    /// The scene's ground, if it has authored terrain.
+    ///
+    /// Optional and skipped when absent, so every existing scene is unchanged.
+    /// A scene without terrain is exactly what the lobby is today: geometry
+    /// made of objects, with `terrain_collider` marking some of it walkable.
+    /// That path is untouched -- this is the ground you sculpt, not the props
+    /// standing on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terrain: Option<TerrainDef>,
+
     #[serde(default)]
     pub objects: Vec<GameObject>,
 }
