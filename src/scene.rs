@@ -70,6 +70,21 @@ pub struct GameObject {
     #[serde(default)]
     pub hidden: bool,
 
+    /// Free-form labels for organising a scene: "cover", "lighting", "audio",
+    /// "blockout", "pass-2".
+    ///
+    /// Organisation rather than behaviour, which is why it is not an authorable
+    /// component: nothing in the runtime reads a tag today. It lives on
+    /// GameObject rather than in an editor sidecar because it is the natural
+    /// seed for data layers -- streaming a district, enabling a lighting pass,
+    /// turning a whole gameplay set on for a mode -- and a sidecar keyed by
+    /// object id would break on exactly the rename that `uuid` exists to
+    /// survive.
+    ///
+    /// Skipped when empty so existing scenes gain nothing on their next save.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+
     #[serde(default)]
     pub script: Option<String>,
 

@@ -113,6 +113,7 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "mesh",
         "is_trigger",
         "hidden",
+        "tags",
         "script",
         "animations",
         "animation_bindings",
@@ -293,6 +294,10 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         // exhaustiveness check.
         uuid,
         parent,
+        // Organisation, not behaviour: nothing in the runtime reads a tag, and
+        // there is no "add a tags component" in the inspector -- it is a label
+        // set on an object that already exists. Same category as uuid/parent.
+        tags,
         // Not an authorable component in its own right: it is per-part state on
         // the model, edited from the Model Editor's part list rather than added
         // to an object as a component. Listed here only to satisfy the
@@ -334,7 +339,7 @@ mod tests {
         // grip_pose, uuid and parent are the skip_serializing_if fields, so a
         // default object never carries them -- but a real file does, and the
         // writer needs to know where they sort.
-        let skipped = ["grip_pose", "uuid", "parent"];
+        let skipped = ["grip_pose", "uuid", "parent", "tags"];
         let expected: Vec<&str> = game_object_field_order()
             .into_iter()
             .filter(|k| !skipped.contains(k))
