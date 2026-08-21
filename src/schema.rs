@@ -136,6 +136,7 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "laser",
         "spawn_point",
         "teleportal",
+        "breakable",
     ]
 }
 
@@ -175,6 +176,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
             comp!(laser, "LaserDef", Optional, laser_fields()),
             comp!(spawn_point, "SpawnPointDef", Optional),
             comp!(teleportal, "TeleportalDef", Optional, teleportal_fields()),
+            comp!(breakable, "BreakableDef", Optional, breakable_fields()),
         ],
     }
 }
@@ -259,6 +261,22 @@ fn teleportal_fields() -> Vec<FieldDescriptor> {
     vec![field!(target_id, Text, opt), field!(target_scene, Text, opt)]
 }
 
+fn breakable_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(b: crate::scene::BreakableDef) {
+        let crate::scene::BreakableDef { health, stages } = b;
+    }
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive_stage(s: crate::scene::DamageStage) {
+        let crate::scene::DamageStage { at, hidden_parts, solid } = s;
+    }
+    // `stages` is deliberately absent: it is a list of structs, which the
+    // generic Layer 0 field renderer cannot express. The editor gives breakable
+    // a bespoke card, and listing a field here that no generic surface can draw
+    // would make the coverage gate pass while the authoring did not exist.
+    vec![field!(health, Number)]
+}
+
 #[allow(dead_code, unused_variables)]
 fn schema_exhaustiveness(o: crate::scene::GameObject) {
     let crate::scene::GameObject {
@@ -286,6 +304,7 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         laser,
         spawn_point,
         teleportal,
+        breakable,
         // Identity and structure rather than components. `id` is the human
         // name and the scripting handle; `uuid` is the stable identity that
         // `parent` points at, so a rename cannot restructure the scene. None of
@@ -311,8 +330,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_has_the_twenty_two_authorable_components() {
-        assert_eq!(game_object_schema().components.len(), 22);
+    fn schema_has_every_authorable_component() {
+        assert_eq!(game_object_schema().components.len(), 23);
     }
 
     /// `field_order` is consumed by a writer in another language, so a drift
@@ -333,13 +352,11 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
 
-        // grip_pose is the one skip_serializing_if field, so a default object
-        // never carries it -- but a file that still holds legacy data does, and
-        // the writer needs to know where it sorts.
-        // grip_pose, uuid and parent are the skip_serializing_if fields, so a
-        // default object never carries them -- but a real file does, and the
-        // writer needs to know where they sort.
-        let skipped = ["grip_pose", "uuid", "parent", "tags"];
+        // The skip_serializing_if fields, which a default object never
+        // carries -- but a real file does, and the writer needs to know where
+        // they sort. Keep this in step when a field gains that attribute, or
+        // the test fails describing a reorder that did not happen.
+        let skipped = ["grip_pose", "uuid", "parent", "tags", "breakable"];
         let expected: Vec<&str> = game_object_field_order()
             .into_iter()
             .filter(|k| !skipped.contains(k))
@@ -414,7 +431,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 22);
+        assert_eq!(v["components"].as_array().unwrap().len(), 23);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }

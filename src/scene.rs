@@ -159,6 +159,10 @@ pub struct GameObject {
 
     #[serde(default)]
     pub teleportal: Option<TeleportalDef>,
+
+    /// How this object comes apart under fire, if it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub breakable: Option<BreakableDef>,
 }
 
 impl GameObject {
@@ -418,4 +422,297 @@ mod dedupe_object_ids_test {
 mod particle_and_laser_scene_test {
     use super::*;
     include!("scene_tests_particle_laser.rs");
+}
+
+/// A structure that changes shape as it takes damage.
+///
+/// Deliberately built on `hidden_parts` rather than on fractured geometry. A
+/// wall model carries its intact courses AND the rubble that replaces them as
+/// ordinary named parts; a damage stage just declares which parts are hidden.
+/// That reuses a rendering path the engine already has -- the same one that
+/// hides a loaded magazine when the empty one should show -- and it means
+/// breaching needs no mesh cutting, no debris simulation and no per-frame
+/// physics cost.
+///
+/// What it cannot do is produce a hole where the artist did not author one.
+/// That is the trade: a fracture system makes any hole and costs a great deal;
+/// this makes the holes a level designer chose, for almost nothing.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BreakableDef {
+    /// Damage the object absorbs before its last stage is reached.
+    ///
+    /// Stages are placed on a 0..1 fraction of this, so retuning how tough
+    /// something is never means re-authoring where its stages sit.
+    pub health: f32,
+
+    /// Damage states, ascending by `at`.
+    ///
+    /// The state BEFORE the first stage is the object as authored -- whatever
+    /// `hidden_parts` already says. So a stage list never has to describe the
+    /// intact object, and adding breakability to an existing prop changes
+    /// nothing until it is actually shot.
+    #[serde(default)]
+    pub stages: Vec<DamageStage>,
+}
+
+/// One step in a structure's collapse.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DamageStage {
+    /// Fraction of `health` at which this stage takes over, in 0..=1.
+    pub at: f32,
+
+    /// The parts hidden while this stage is current.
+    ///
+    /// Replaces `hidden_parts` wholesale rather than adding to it, because a
+    /// stage is a STATE and not a delta. A delta list would make the result
+    /// depend on which stages were passed through, so a wall shot slowly would
+    /// end up looking different from one shot at once.
+    #[serde(default)]
+    pub hidden_parts: Vec<String>,
+
+    /// Whether the object still blocks movement and fire at this stage.
+    ///
+    /// This is the one that matters for breaching: the hole has to be
+    /// shootable and walkable, not just visible.
+    #[serde(default = "default_true")]
+    pub solid: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl BreakableDef {
+    /// The stage a given amount of damage puts this object in, if any.
+    ///
+    /// `None` means undamaged -- the object as authored. Stages are matched by
+    /// the HIGHEST threshold passed rather than the first, so a single large
+    /// hit lands on the same stage that several small ones would accumulate to.
+    /// Anything else makes a tank shell less destructive than a rifle.
+    pub fn stage_for(&self, damage: f32) -> Option<&DamageStage> {
+        if self.health <= 0.0 {
+            // Zero health means every hit is total. Guarding here rather than
+            // rejecting it at load: an author dragging a slider through zero
+            // should not produce a division that yields NaN and a stage list
+            // that silently never matches.
+            return self.stages.last();
+        }
+        let fraction = (damage / self.health).clamp(0.0, 1.0);
+        self.stages
+            .iter()
+            .filter(|s| fraction >= s.at)
+            .max_by(|a, b| a.at.total_cmp(&b.at))
+    }
+
+    /// Whether the object still blocks at this damage level.
+    pub fn is_solid_at(&self, damage: f32) -> bool {
+        self.stage_for(damage).map_or(true, |s| s.solid)
+    }
+
+    /// The parts hidden at this damage level, given the object's authored set.
+    pub fn hidden_parts_at<'a>(&'a self, damage: f32, authored: &'a [String]) -> &'a [String] {
+        match self.stage_for(damage) {
+            Some(stage) => &stage.hidden_parts,
+            None => authored,
+        }
+    }
+}
+
+#[cfg(test)]
+mod breakable_tests {
+    use super::*;
+
+    fn wall() -> BreakableDef {
+        BreakableDef {
+            health: 100.0,
+            stages: vec![
+                DamageStage {
+                    at: 0.4,
+                    hidden_parts: vec!["intact_render".into()],
+                    solid: true,
+                },
+                DamageStage {
+                    at: 0.8,
+                    hidden_parts: vec!["intact_render".into(), "cracked_render".into()],
+                    solid: false,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn an_undamaged_object_is_in_no_stage_and_keeps_its_authored_parts() {
+        let authored = vec!["scaffold".to_string()];
+        let w = wall();
+        assert!(w.stage_for(0.0).is_none());
+        assert_eq!(w.hidden_parts_at(0.0, &authored), authored.as_slice());
+        assert!(w.is_solid_at(0.0));
+    }
+
+    #[test]
+    fn crossing_a_threshold_takes_that_stage() {
+        let w = wall();
+        assert!(w.stage_for(39.0).is_none(), "just under the first threshold");
+        assert_eq!(w.stage_for(40.0).unwrap().at, 0.4);
+        assert_eq!(w.stage_for(79.0).unwrap().at, 0.4);
+        assert_eq!(w.stage_for(80.0).unwrap().at, 0.8);
+    }
+
+    /// THE case. One big hit must land on the same stage that many small hits
+    /// accumulate to -- otherwise a tank shell is less destructive than a
+    /// rifle, which is the kind of thing nobody notices until a playtest.
+    #[test]
+    fn one_large_hit_reaches_the_same_stage_as_many_small_ones() {
+        let w = wall();
+        let one_shell = w.stage_for(95.0).unwrap();
+
+        let mut damage = 0.0;
+        for _ in 0..19 {
+            damage += 5.0;
+        }
+        let many_rounds = w.stage_for(damage).unwrap();
+
+        assert_eq!(one_shell.at, many_rounds.at);
+        assert_eq!(one_shell.hidden_parts, many_rounds.hidden_parts);
+    }
+
+    /// A stage replaces `hidden_parts` wholesale, so the result cannot depend
+    /// on which stages were passed through on the way.
+    #[test]
+    fn a_stage_is_a_state_not_a_delta() {
+        let w = wall();
+        let authored = vec!["scaffold".to_string()];
+        let straight_to_breached = w.hidden_parts_at(100.0, &authored).to_vec();
+
+        // Same object, reached gradually.
+        let _ = w.hidden_parts_at(45.0, &authored);
+        let _ = w.hidden_parts_at(85.0, &authored);
+        let gradually = w.hidden_parts_at(100.0, &authored).to_vec();
+
+        assert_eq!(straight_to_breached, gradually);
+        assert_eq!(gradually, vec!["intact_render", "cracked_render"]);
+    }
+
+    /// The one that makes breaching work: the hole has to be shootable and
+    /// walkable, not merely visible.
+    #[test]
+    fn a_breached_stage_stops_blocking() {
+        let w = wall();
+        assert!(w.is_solid_at(50.0), "cracked but still a wall");
+        assert!(!w.is_solid_at(85.0), "breached");
+    }
+
+    #[test]
+    fn damage_past_full_health_stays_at_the_last_stage() {
+        let w = wall();
+        assert_eq!(w.stage_for(1_000_000.0).unwrap().at, 0.8);
+    }
+
+    /// Zero health must not divide to NaN and silently match no stage -- an
+    /// author dragging a slider through zero should get "everything breaks it",
+    /// not a prop that has quietly become invulnerable.
+    #[test]
+    fn zero_health_breaks_immediately_rather_than_never() {
+        let w = BreakableDef { health: 0.0, ..wall() };
+        assert_eq!(w.stage_for(0.0).unwrap().at, 0.8);
+        assert!(!w.is_solid_at(0.0));
+    }
+
+    #[test]
+    fn a_breakable_with_no_stages_never_changes() {
+        let w = BreakableDef { health: 100.0, stages: vec![] };
+        assert!(w.stage_for(999.0).is_none());
+        assert!(w.is_solid_at(999.0));
+    }
+
+    /// Stages out of order must still resolve by the highest threshold passed,
+    /// because an editor that lets stages be reordered will eventually produce
+    /// an unsorted list.
+    #[test]
+    fn stages_resolve_by_threshold_not_by_list_order() {
+        let w = BreakableDef {
+            health: 100.0,
+            stages: vec![
+                DamageStage { at: 0.9, hidden_parts: vec!["gone".into()], solid: false },
+                DamageStage { at: 0.3, hidden_parts: vec!["chipped".into()], solid: true },
+            ],
+        };
+        assert_eq!(w.stage_for(95.0).unwrap().hidden_parts, vec!["gone"]);
+        assert_eq!(w.stage_for(50.0).unwrap().hidden_parts, vec!["chipped"]);
+    }
+
+    /// Absent on an object that is not breakable, so existing scenes gain
+    /// nothing on their next save.
+    #[test]
+    fn the_component_is_skipped_when_absent() {
+        let obj = GameObject { id: "wall".into(), ..Default::default() };
+        let json = serde_json::to_string(&obj).expect("serialize");
+        assert!(!json.contains("breakable"), "absent component must not be written: {json}");
+    }
+
+    #[test]
+    fn it_round_trips_through_json() {
+        let obj = GameObject {
+            id: "wall".into(),
+            breakable: Some(wall()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&obj).expect("serialize");
+        let back: GameObject = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.breakable, Some(wall()));
+    }
+
+    /// `solid` defaults to true, so a stage authored without it is still a
+    /// wall -- the safe direction, since a stage that silently stopped
+    /// blocking would be a hole nobody put there.
+    #[test]
+    fn solid_defaults_to_true_when_a_stage_omits_it() {
+        let stage: DamageStage =
+            serde_json::from_str(r#"{"at":0.5,"hidden_parts":[]}"#).expect("parse");
+        assert!(stage.solid);
+    }
+}
+
+#[cfg(test)]
+mod breakable_editor_parity {
+    use super::*;
+
+    /// The exact JSON the editor's Breakable card produced, captured from the
+    /// running app after clicking "Add Breakable" and "Add stage" twice.
+    ///
+    /// Pasted verbatim rather than constructed, because the point is to catch
+    /// the editor and the engine disagreeing about the shape -- and a fixture
+    /// built from the Rust types cannot disagree with the Rust types.
+    const FROM_EDITOR: &str = r#"{
+        "health": 100,
+        "stages": [
+            { "at": 0.4, "hidden_parts": [], "solid": true },
+            { "at": 0.8, "hidden_parts": [], "solid": true }
+        ]
+    }"#;
+
+    #[test]
+    fn the_engine_reads_what_the_editor_writes() {
+        let def: BreakableDef = serde_json::from_str(FROM_EDITOR).expect("parse editor output");
+        assert_eq!(def.health, 100.0);
+        assert_eq!(def.stages.len(), 2);
+        assert_eq!(def.stages[0].at, 0.4);
+        assert!(def.stages[1].solid);
+
+        // And it resolves the way the card's labels claim: "at 40% damage (40)".
+        assert!(def.stage_for(39.0).is_none());
+        assert_eq!(def.stage_for(40.0).unwrap().at, 0.4);
+        assert_eq!(def.stage_for(80.0).unwrap().at, 0.8);
+    }
+
+    /// The editor writes integers for whole numbers (`"health": 100`), which
+    /// must still parse into an f32 field. A serde float that rejected an
+    /// integer literal would fail only on the values an author is most likely
+    /// to type.
+    #[test]
+    fn an_integer_health_parses_as_a_float() {
+        let def: BreakableDef =
+            serde_json::from_str(r#"{"health": 250, "stages": []}"#).expect("parse");
+        assert_eq!(def.health, 250.0);
+    }
 }
