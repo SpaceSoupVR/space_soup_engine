@@ -12,7 +12,7 @@ use physx::triangle_mesh::TriangleMesh;
 
 use crate::rigid_physics::{
     calculated_mass, to_px_transform, to_px_vec3, to_raw_transform, DynamicActor, PhysicsWorld,
-    PxFoundation, PxRigidDynamic, DEFAULT_DENSITY,
+    PxFoundation, PxRigidDynamic, PxRigidStatic, DEFAULT_DENSITY,
 };
 use crate::scene::{BodyMode, ColliderShape, GameObject, RigidBodyDef, SliderJointDef, TerrainColliderDef};
 
@@ -152,7 +152,15 @@ impl PhysicsWorld {
                     }
                 };
                 match created {
-                    Some(actor) => self.scene.add_static_actor(actor),
+                    Some(mut actor) => {
+                        // Take the pointer BEFORE handing ownership to the
+                        // scene, exactly as the dynamic path does. The scene
+                        // owns the actor from here; this map only borrows, so
+                        // it can be dropped without releasing anything.
+                        let ptr: *mut PxRigidStatic = &mut *actor as *mut PxRigidStatic;
+                        self.scene.add_static_actor(actor);
+                        self.statics.insert(obj.id.clone(), ptr);
+                    }
                     None => log::warn!(
                         "rigid_physics: failed to create static actor for '{}'",
                         obj.id

@@ -478,7 +478,29 @@ impl GameRuntime {
         amount: f32,
     ) -> Option<crate::damage::StageChange> {
         let object = self.scene.objects.iter().find(|o| o.id == object_id)?;
-        self.damage.apply(object, amount)
+        let change = self.damage.apply(object, amount)?;
+
+        // A breach has to be PASSABLE, not merely visible. Removing the
+        // collider here rather than leaving it to a caller means the physical
+        // and visual halves cannot get out of step -- which is exactly what
+        // happened while `is_solid()` reported the truth and nothing acted on
+        // it.
+        //
+        // Both kinds, because a breakable might be either: a wall is static, a
+        // barricade that can also be shoved is dynamic. Neither call errors on
+        // an object it does not know.
+        if change.breached() {
+            let removed_static = self.rigid_physics.despawn_static(&change.object_id);
+            self.rigid_physics.despawn_actor(&change.object_id);
+            if !removed_static {
+                log::debug!(
+                    "breach: '{}' had no static collider to remove",
+                    change.object_id
+                );
+            }
+        }
+
+        Some(change)
     }
 
     /// Damage an object has taken this match.
