@@ -165,6 +165,13 @@ pub struct GameRuntime {
     pub(crate) sound_stop_requests: HashSet<String>,
     pub(crate) manual_part_blends: HashMap<String, HashMap<String, f32>>,
 
+    /// Damage taken this match, and the structural state it implies.
+    ///
+    /// Server-side and authoritative. Clients learn about it through the parts
+    /// that stop being drawn, which already replicate -- so breaching needed no
+    /// protocol change at all.
+    pub(crate) damage: crate::damage::DamageLedger,
+
     /// Last frame's part blends, so a trigger fires on a CROSSING rather than on
     /// every frame the blend happens to sit past its threshold.
     /// Latest posed part transforms reported by the client, for part-anchored
@@ -210,6 +217,7 @@ impl GameRuntime {
             sound_play_requests: HashSet::new(),
             sound_stop_requests: HashSet::new(),
             manual_part_blends: HashMap::new(),
+            damage: crate::damage::DamageLedger::new(),
             part_transforms: HashMap::new(),
             prev_part_blends: HashMap::new(),
             latched_triggers: std::collections::HashSet::new(),
@@ -285,6 +293,10 @@ impl GameRuntime {
         scene.resolve_world_transforms();
 
         self.scene = scene;
+        // Object ids are only unique within a scene, so damage cannot survive a
+        // scene change -- carrying it across would batter whatever happens to
+        // share a name in the next level.
+        self.damage.reset();
         self.players = HashMap::new();
         self.anim_queues = HashMap::new();
         self.collisions = CollisionTracker::new();
@@ -448,5 +460,92 @@ impl GameRuntime {
     }
     pub fn scene_mut(&mut self) -> &mut Scene {
         &mut self.scene
+    }
+}
+
+impl GameRuntime {
+    /// Deal damage to an object by id, returning a stage change if one happened.
+    ///
+    /// The entry point a weapon system calls once one exists. It is deliberately
+    /// id-based rather than taking a hit position: resolving WHAT was hit is the
+    /// shooter's job (a raycast, a projectile, an explosion radius), and
+    /// deciding what that does to a structure is this one. Keeping them apart
+    /// means an explosion damaging six objects is six calls rather than a second
+    /// implementation of hit resolution.
+    pub fn apply_damage(
+        &mut self,
+        object_id: &str,
+        amount: f32,
+    ) -> Option<crate::damage::StageChange> {
+        let object = self.scene.objects.iter().find(|o| o.id == object_id)?;
+        self.damage.apply(object, amount)
+    }
+
+    /// Damage an object has taken this match.
+    pub fn damage_taken(&self, object_id: &str) -> f32 {
+        self.damage.damage_for(object_id)
+    }
+
+    /// Whether an object still blocks movement and fire.
+    ///
+    /// A breached wall reports false here, which is what a locomotion or
+    /// line-of-sight check should be asking rather than reading the scene.
+    pub fn is_solid(&self, object_id: &str) -> bool {
+        self.scene
+            .objects
+            .iter()
+            .find(|o| o.id == object_id)
+            .map(|o| self.damage.is_solid(o))
+            .unwrap_or(true)
+    }
+
+    /// Forget all damage. Call at the end of a match.
+    ///
+    /// Separate from scene loading because the two are different events: a
+    /// match can restart on the same scene, and a scene can change mid-match.
+    /// Both need the reset; neither implies the other.
+    pub fn reset_damage(&mut self) {
+        self.damage.reset();
+    }
+}
+
+#[cfg(test)]
+mod damage_delivery_tests {
+    use crate::scene::{BreakableDef, DamageStage, GameObject};
+
+    fn breakable_wall() -> GameObject {
+        GameObject {
+            id: "wall".into(),
+            breakable: Some(BreakableDef {
+                health: 100.0,
+                stages: vec![
+                    DamageStage { at: 0.5, hidden_parts: vec!["intact".into()], solid: true },
+                    DamageStage {
+                        at: 0.9,
+                        hidden_parts: vec!["intact".into(), "cracked".into()],
+                        solid: false,
+                    },
+                ],
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The whole delivery path, without a server or a client: damage an object
+    /// and the parts it reports for RENDERING change. That field already
+    /// replicates, so this is the end of the chain rather than the middle.
+    #[test]
+    fn damage_changes_what_the_renderer_is_told_to_hide() {
+        let mut ledger = crate::damage::DamageLedger::new();
+        let wall = breakable_wall();
+
+        assert!(ledger.hidden_parts_for(&wall).is_empty(), "whole wall draws everything");
+
+        ledger.apply(&wall, 60.0);
+        assert_eq!(ledger.hidden_parts_for(&wall), ["intact"]);
+
+        ledger.apply(&wall, 40.0);
+        assert_eq!(ledger.hidden_parts_for(&wall), ["intact", "cracked"]);
+        assert!(!ledger.is_solid(&wall), "and it stops blocking");
     }
 }

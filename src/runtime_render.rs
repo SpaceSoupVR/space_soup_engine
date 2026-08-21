@@ -66,7 +66,11 @@ impl GameRuntime {
                     rotation: o.cuboid.rotation * mesh_ref.rotation_offset,
                     scale: mesh_ref.scale,
                     manual_part_blends: self.manual_part_blends.get(&o.id).cloned().unwrap_or_default(),
-                    hidden_parts: o.hidden_parts.clone(),
+                    // The damage ledger decides this, not the authored list.
+                    // Damage therefore reaches the headset through a field that
+                    // already replicates -- breaching needed no new wire
+                    // message, no new client code and no new decoder.
+                    hidden_parts: self.damage.hidden_parts_for(o).to_vec(),
                     disabled_clips: o
                         .part_animations
                         .iter()
