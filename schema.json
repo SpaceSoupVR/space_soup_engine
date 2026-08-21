@@ -249,6 +249,7 @@
     "parent",
     "cuboid",
     "mesh",
+    "brush",
     "is_trigger",
     "hidden",
     "tags",
