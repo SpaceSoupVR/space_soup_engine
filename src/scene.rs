@@ -66,6 +66,22 @@ pub struct GameObject {
     #[serde(default)]
     pub mesh: Option<MeshRef>,
 
+    /// Level geometry built from planes -- walls, rooms, stairs, structures.
+    ///
+    /// A THIRD shape kind alongside `cuboid` and `mesh`, deliberately living on
+    /// GameObject rather than in an array of its own on Scene. Everything the
+    /// engine already does to an object -- triggers, animation states,
+    /// `breakable` damage stages, physics, parenting, `hidden`, tags -- applies
+    /// to a brush with no system learning what a brush is. That is Source's
+    /// "tie a solid to an entity", except that here there is nothing to tie: it
+    /// was an entity from the start.
+    ///
+    /// `cuboid` is still populated on a brush object, at the brush's bounds, and
+    /// is a REPORT of the geometry rather than an input to it. The renderer must
+    /// not scale by `half_size` when this is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brush: Option<crate::brush::BrushDef>,
+
     #[serde(default)]
     pub is_trigger: bool,
 

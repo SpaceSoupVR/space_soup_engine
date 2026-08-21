@@ -111,6 +111,11 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "parent",
         "cuboid",
         "mesh",
+        // Declaration order, which is serde's output order. `brush` is
+        // skip_serializing_if, so it is in `skipped` below too -- a field that
+        // is absent from BOTH lists passes `field_order_matches_serde` without
+        // being ordered anywhere, which is how this one nearly slipped through.
+        "brush",
         "is_trigger",
         "hidden",
         "tags",
@@ -305,6 +310,12 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         spawn_point,
         teleportal,
         breakable,
+        // Level geometry made of planes -- a third shape kind beside `cuboid`
+        // and `mesh`, not a component you add to an object. Which shape an
+        // object has is authored in the Geometry panel by creating it, the same
+        // way `mesh` is set by choosing a model, so it does not belong in the
+        // inspector's add-component list.
+        brush,
         // Identity and structure rather than components. `id` is the human
         // name and the scripting handle; `uuid` is the stable identity that
         // `parent` points at, so a rename cannot restructure the scene. None of
@@ -356,7 +367,7 @@ mod tests {
         // carries -- but a real file does, and the writer needs to know where
         // they sort. Keep this in step when a field gains that attribute, or
         // the test fails describing a reorder that did not happen.
-        let skipped = ["grip_pose", "uuid", "parent", "tags", "breakable"];
+        let skipped = ["grip_pose", "uuid", "parent", "tags", "breakable", "brush"];
         let expected: Vec<&str> = game_object_field_order()
             .into_iter()
             .filter(|k| !skipped.contains(k))
