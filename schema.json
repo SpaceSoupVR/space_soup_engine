@@ -229,6 +229,18 @@
           "optional": true
         }
       ]
+    },
+    {
+      "name": "breakable",
+      "rust_type": "BreakableDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "health",
+          "kind": "number",
+          "optional": false
+        }
+      ]
     }
   ],
   "field_order": [
@@ -259,6 +271,7 @@
     "particle_emitter",
     "laser",
     "spawn_point",
-    "teleportal"
+    "teleportal",
+    "breakable"
   ]
 }
