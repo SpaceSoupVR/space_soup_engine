@@ -67,6 +67,33 @@ impl PhysicsWorld {
     // Pulls a dynamic actor out of simulation without touching the scene object -- used when a
     // rigid-body object gets kinematically socketed (magazine into a mag well) so PhysX's own
     // gravity/step doesn't fight the socket's per-frame transform override.
+    /// Remove an object's STATIC collider, if it has one.
+    ///
+    /// Separate from `despawn_actor`, which consults only the `dynamic` map --
+    /// calling that for a wall returns immediately and does nothing, which is
+    /// how a breached structure ended up visibly broken and still solid.
+    ///
+    /// Returns whether anything was removed, so a caller can tell "no collider
+    /// to remove" from "collider removed" rather than assuming.
+    pub fn despawn_static(&mut self, id: &str) -> bool {
+        let Some(ptr) = self.statics.remove(id) else {
+            return false;
+        };
+        if ptr.is_null() {
+            return false;
+        }
+        unsafe {
+            self.scene.remove_actor(&mut *ptr, false);
+            physx_sys::PxActor_release_mut(ptr as *mut physx_sys::PxActor);
+        }
+        true
+    }
+
+    /// Whether an object currently has a static collider in the scene.
+    pub fn has_static(&self, id: &str) -> bool {
+        self.statics.contains_key(id)
+    }
+
     pub fn despawn_actor(&mut self, id: &str) {
         let Some(state) = self.dynamic.remove(id) else {
             return;

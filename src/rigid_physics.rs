@@ -131,6 +131,16 @@ pub struct PhysicsWorld {
     pub(crate) materials: Vec<Owner<PxMaterial>>,
     pub(crate) dynamic: HashMap<String, DynamicActor>,
     pub(crate) kinematic: HashMap<String, *mut PxRigidDynamic>,
+    /// Static actors, kept so a breached wall can stop colliding.
+    ///
+    /// These used to be created and handed straight to the scene with no
+    /// handle kept, which made "remove this wall's collider" unrepresentable --
+    /// the reason a breached structure was visibly broken and still solid.
+    ///
+    /// Raw pointers, like `kinematic`: the scene owns the actors, so this map
+    /// borrows rather than owns and its position among the fields does not
+    /// affect the drop order documented below.
+    pub(crate) statics: HashMap<String, *mut PxRigidStatic>,
 
     pub(crate) hand_anchors: HashMap<(PlayerId, Hand), *mut PxRigidDynamic>,
     pub(crate) grabs: HashMap<(PlayerId, String, Hand), GrabState>,
@@ -207,6 +217,7 @@ impl PhysicsWorld {
             materials: Vec::new(),
             dynamic: HashMap::new(),
             kinematic: HashMap::new(),
+            statics: HashMap::new(),
             hand_anchors: HashMap::new(),
             grabs: HashMap::new(),
 

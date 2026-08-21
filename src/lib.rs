@@ -28,6 +28,8 @@ mod runtime_tests_physics;
 mod runtime_tests_scripting;
 #[cfg(test)]
 mod runtime_tests_teleport;
+#[cfg(test)]
+mod breach_physics_tests;
 pub mod damage;
 pub mod scene;
 mod scene_animation;
