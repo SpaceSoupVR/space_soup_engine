@@ -31,6 +31,7 @@ mod runtime_tests_teleport;
 #[cfg(test)]
 mod breach_physics_tests;
 pub mod brush;
+pub mod brush_obj;
 pub mod damage;
 pub mod scene;
 mod scene_animation;
