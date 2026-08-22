@@ -459,6 +459,18 @@ impl GameRuntime {
                     visible,
                 });
             }
+            A::SetObjectVisible { id, visible } => {
+                self.script_host.push_command(EngineCommand::SetObjectVisible {
+                    id: id.unwrap_or_else(|| object_id.to_string()),
+                    visible,
+                });
+            }
+            A::SetObjectSolid { id, solid } => {
+                self.script_host.push_command(EngineCommand::SetObjectSolid {
+                    id: id.unwrap_or_else(|| object_id.to_string()),
+                    solid,
+                });
+            }
             A::SetVar { name, value } => {
                 // Straight into the same store scripts use, so a state set by an
                 // animation and one set by a script are the same thing.

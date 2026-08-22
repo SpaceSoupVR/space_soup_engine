@@ -89,6 +89,15 @@ impl PhysicsWorld {
         true
     }
 
+    /// Whether an object has a collider of EITHER kind in the scene.
+    ///
+    /// The two maps are separate and each despawn consults only its own, which
+    /// has already caused a breached wall to stay solid. Anything asking "is
+    /// this thing collidable right now" wants both.
+    pub fn has_collider(&self, id: &str) -> bool {
+        self.statics.contains_key(id) || self.dynamic.contains_key(id)
+    }
+
     /// Whether an object currently has a static collider in the scene.
     pub fn has_static(&self, id: &str) -> bool {
         self.statics.contains_key(id)

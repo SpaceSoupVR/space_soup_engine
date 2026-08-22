@@ -109,6 +109,27 @@ pub enum EngineCommand {
         part: String,
         visible: bool,
     },
+    /// Show or hide a whole object.
+    ///
+    /// Separate from `SetPartVisible`, which addresses a joint inside a skinned
+    /// mesh. This is the object, and it is INDEPENDENT of whether the object
+    /// collides -- see `SetObjectSolid`. An invisible wall and a decorative
+    /// hologram are both ordinary states, and either would be unrepresentable
+    /// if one switch drove both.
+    SetObjectVisible {
+        id: String,
+        visible: bool,
+    },
+    /// Put an object's collider into or out of the world.
+    ///
+    /// Requires the object to HAVE a `rigid_body`: the definition is what a
+    /// collider is spawned from, so an object authored without one has nothing
+    /// to turn on. Authoring a door as `rigid_body.enabled = false` is how you
+    /// say "starts open".
+    SetObjectSolid {
+        id: String,
+        solid: bool,
+    },
     SpawnParticleBurst {
         id: String,
         count: i64,

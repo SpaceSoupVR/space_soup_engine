@@ -256,6 +256,24 @@ pub enum PartTriggerAction {
     },
     /// Show or hide a part. See GameObject::hidden_parts.
     SetPartVisible { part: String, visible: bool },
+    /// Show or hide a whole OBJECT, independently of whether it collides.
+    ///
+    /// `id` absent means the object the clip belongs to, which is the common
+    /// case and survives a rename; naming another object is how one mechanism
+    /// reveals something elsewhere in the level.
+    SetObjectVisible {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        visible: bool,
+    },
+    /// Put an object's collider into or out of the world, independently of
+    /// whether it is drawn. A door that swings open stops blocking; a force
+    /// field that powers up starts. `id` absent means this object.
+    SetObjectSolid {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        solid: bool,
+    },
     /// Record a state, which other clips can require via `enabled_when` and
     /// scripts can read with get_var. This is what makes a weapon a state
     /// machine rather than a set of independent motions.

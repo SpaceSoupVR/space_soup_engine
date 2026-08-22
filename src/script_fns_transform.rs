@@ -109,6 +109,30 @@ pub(crate) fn register_transform_and_scene_fns(engine: &mut Engine, context: &Sh
 
     {
         let ctx = context.clone();
+        // Visibility and solidity are two switches on purpose. `set_visible`
+        // does not touch the collider and `set_solid` does not touch what is
+        // drawn, so an invisible wall and a walk-through hologram are both
+        // ordinary states rather than things the engine cannot express.
+        engine.register_fn("set_visible", move |id: &str, visible: bool| {
+            ctx.lock().unwrap().commands.push(EngineCommand::SetObjectVisible {
+                id: id.to_string(),
+                visible,
+            });
+        });
+    }
+
+    {
+        let ctx = context.clone();
+        engine.register_fn("set_solid", move |id: &str, solid: bool| {
+            ctx.lock().unwrap().commands.push(EngineCommand::SetObjectSolid {
+                id: id.to_string(),
+                solid,
+            });
+        });
+    }
+
+    {
+        let ctx = context.clone();
         engine.register_fn(
             "play_part_animation",
             move |id: &str, clip: &str, blend: f64| {

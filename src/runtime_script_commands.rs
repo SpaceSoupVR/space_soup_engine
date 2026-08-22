@@ -208,6 +208,52 @@ impl GameRuntime {
                         obj.hidden_parts.push(part);
                     }
                 }
+                EngineCommand::SetObjectVisible { id, visible } => {
+                    let Some(obj) = self.scene.find_object_mut(&id) else {
+                        warn!("set_visible: unknown object '{id}'");
+                        continue;
+                    };
+                    // Nothing else to do: the render lists are rebuilt from
+                    // `hidden` every frame, and those lists are what reaches the
+                    // headset -- so this needs no wire message and no client
+                    // change, exactly as breaching did not.
+                    obj.hidden = !visible;
+                }
+                EngineCommand::SetObjectSolid { id, solid } => {
+                    let Some(obj) = self.scene.find_object_mut(&id) else {
+                        warn!("set_solid: unknown object '{id}'");
+                        continue;
+                    };
+                    let Some(rb) = obj.rigid_body.as_mut() else {
+                        // Not a no-op worth swallowing: the author asked for a
+                        // collider on something that has no definition of one,
+                        // and silence would look exactly like it worked.
+                        warn!("set_solid: '{id}' has no rigid_body to enable or disable");
+                        continue;
+                    };
+                    if rb.enabled == solid {
+                        continue;
+                    }
+                    rb.enabled = solid;
+                    // Cloned before touching physics: `spawn_actor` needs the
+                    // object and the def while `self.scene` is no longer
+                    // borrowed. The clone is one object, once, on a state change.
+                    let obj = obj.clone();
+                    let def = obj.rigid_body.clone().expect("checked above");
+                    if solid {
+                        // At its CURRENT transform, and a dynamic body comes
+                        // back at rest -- momentum is not preserved. Right for a
+                        // door or a force field; not a way to resume a rolling
+                        // barrel mid-roll.
+                        self.rigid_physics.spawn_actor(&obj, &def);
+                    } else {
+                        // BOTH kinds. Each despawn consults only its own map, so
+                        // calling one for the wrong kind returns silently -- the
+                        // exact failure that left a breached wall solid.
+                        self.rigid_physics.despawn_static(&id);
+                        self.rigid_physics.despawn_actor(&id);
+                    }
+                }
                 EngineCommand::SpawnObject { template_id, new_id, x, y, z } => {
                     if self.scene.find_object(&new_id).is_some() {
                         warn!("spawn_object: id '{new_id}' already exists");

@@ -95,6 +95,20 @@ fn cook_triangle_mesh(
 
 impl PhysicsWorld {
     pub(crate) fn spawn_actor(&mut self, obj: &GameObject, def: &RigidBodyDef) {
+        // Gated HERE rather than at each call site, so `enabled` cannot be
+        // honoured on load and forgotten by the spawn path, or the reverse.
+        // Turning collision on at runtime therefore means setting the flag and
+        // calling this -- there is no second way to do it.
+        if !def.enabled {
+            return;
+        }
+        // A second actor under the same id would overwrite this map entry while
+        // its predecessor stayed in the PhysX scene: an invisible collider that
+        // nothing can find to remove, and the object would then be solid twice.
+        if self.statics.contains_key(&obj.id) || self.dynamic.contains_key(&obj.id) {
+            log::debug!("rigid_physics: '{}' already has a collider", obj.id);
+            return;
+        }
         let transform = to_px_transform(obj.cuboid.position, obj.cuboid.rotation);
         let mass = def
             .mass
