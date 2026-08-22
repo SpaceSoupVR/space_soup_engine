@@ -153,6 +153,15 @@ pub struct GameRuntime {
     pub(crate) collisions: CollisionTracker,
     pub(crate) teleport_collisions: CollisionTracker,
     pub(crate) teleport_disarmed: HashSet<(PlayerId, String)>,
+    /// Volume shapes resolved once per scene load, and who is inside each.
+    ///
+    /// Cached because a brush volume's shape is the output of a CSG evaluation,
+    /// which is not something to redo sixty times a second for every zone in a
+    /// level. Occupancy is kept per player so a second player entering a zone
+    /// that is already occupied does not re-fire its on_enter.
+    pub(crate) trigger_volumes: Vec<(String, crate::trigger_volume::VolumeShape)>,
+    pub(crate) volume_occupants: HashMap<String, HashSet<PlayerId>>,
+    pub(crate) volume_fired: HashSet<String>,
     pub(crate) rigid_physics: PhysicsWorld,
     pub(crate) sound_engine: SoundEngine,
 
@@ -208,6 +217,9 @@ impl GameRuntime {
             collisions: CollisionTracker::new(),
             teleport_collisions: CollisionTracker::new(),
             teleport_disarmed: HashSet::new(),
+            trigger_volumes: Vec::new(),
+            volume_occupants: HashMap::new(),
+            volume_fired: HashSet::new(),
             rigid_physics: PhysicsWorld::new(),
             sound_engine: SoundEngine::new(),
             rigs: HashMap::new(),
@@ -229,6 +241,11 @@ impl GameRuntime {
 
         rt.compile_scripts();
         rt.setup_scene_attachments();
+        // Must match `load_scene` below, which does the same three things plus
+        // resetting per-scene state. Two initialisation paths where one is a
+        // superset of the other is how a feature works on every level EXCEPT
+        // the one the game starts on -- which is the hardest place to notice.
+        rt.trigger_volumes = Self::resolve_trigger_volumes(&rt.scene);
         rt.rigid_physics.rebuild(&rt.scene, &rt.game_dir);
         info!(
             "GameRuntime: loaded scene '{}' with {} objects",
@@ -302,6 +319,12 @@ impl GameRuntime {
         self.collisions = CollisionTracker::new();
         self.teleport_collisions = CollisionTracker::new();
         self.teleport_disarmed = HashSet::new();
+        // Rebuilt from the new scene, and `volume_fired` cleared with it: a
+        // once-only ambush that has already sprung must spring again on a
+        // reload, or replaying a level is not replaying it.
+        self.trigger_volumes = Self::resolve_trigger_volumes(&self.scene);
+        self.volume_occupants = HashMap::new();
+        self.volume_fired = HashSet::new();
         self.attachments = AttachmentTable::new();
         self.manual_part_blends = HashMap::new();
         self.particle_bursts = Vec::new();
@@ -412,6 +435,7 @@ impl GameRuntime {
         self.apply_socket_attachments();
         self.dispatch_collisions();
         self.dispatch_teleportals();
+        self.dispatch_trigger_volumes();
 
         for (&player, frame) in inputs {
             self.update_rig_position_cache(player);

@@ -84,6 +84,17 @@ fn safe_div(v: f32) -> f32 {
     }
 }
 
+/// Is a point inside a rotated box?
+///
+/// Rotated, unlike `Aabb::overlaps`, because a trigger zone is usually turned
+/// to face something: an axis-aligned test on a 45-degree volume claims corners
+/// the author can see are outside it, and the symptom is a door that opens
+/// while you are still in the corridor.
+pub fn point_in_obb(p: Vec3, center: Vec3, half_size: Vec3, rotation: Quat) -> bool {
+    let local = rotation.conjugate() * (p - center);
+    local.x.abs() <= half_size.x && local.y.abs() <= half_size.y && local.z.abs() <= half_size.z
+}
+
 pub fn ray_intersect_obb(
     origin: Vec3,
     dir: Vec3,

@@ -179,6 +179,16 @@ pub struct GameObject {
     /// How this object comes apart under fire, if it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub breakable: Option<BreakableDef>,
+
+    /// A region that notices who is inside it without stopping them.
+    ///
+    /// Independent of `rigid_body` on purpose: a zone that also blocks is
+    /// unusual but not nonsense (a pressure plate you stand on), and tying the
+    /// two together would make it unauthorable. The editor's "trigger zone"
+    /// affordance sets the conventional combination -- volume on, collision
+    /// off, hidden -- rather than the engine forbidding the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_volume: Option<crate::trigger_volume::TriggerVolumeDef>,
 }
 
 impl GameObject {

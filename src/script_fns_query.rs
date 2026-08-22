@@ -7,6 +7,16 @@ use crate::script::SharedContext;
 pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedContext) {
     {
         let ctx = context.clone();
+        // The escape hatch from the declarative half. A volume's own on_enter
+        // and on_exit cover the common cases; anything conditional -- "only if
+        // they are carrying the key", "only while the alarm is off" -- is one
+        // line of script asking this.
+        engine.register_fn("is_occupied", move |id: &str| -> bool {
+            ctx.lock().unwrap().occupied_volumes.contains(id)
+        });
+    }
+    {
+        let ctx = context.clone();
         engine.register_fn("get_object_x", move |id: &str| -> f64 {
             ctx.lock()
                 .unwrap()

@@ -142,6 +142,7 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "spawn_point",
         "teleportal",
         "breakable",
+        "trigger_volume",
     ]
 }
 
@@ -182,8 +183,37 @@ pub fn game_object_schema() -> SchemaDescriptor {
             comp!(spawn_point, "SpawnPointDef", Optional),
             comp!(teleportal, "TeleportalDef", Optional, teleportal_fields()),
             comp!(breakable, "BreakableDef", Optional, breakable_fields()),
+            comp!(
+                trigger_volume,
+                "TriggerVolumeDef",
+                Optional,
+                trigger_volume_fields()
+            ),
         ],
     }
+}
+
+fn trigger_volume_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(t: crate::trigger_volume::TriggerVolumeDef) {
+        let crate::trigger_volume::TriggerVolumeDef {
+            enabled,
+            var,
+            on_enter,
+            on_exit,
+            once,
+        } = t;
+    }
+    // Only the fields a generic inspector can render. The action lists have
+    // their own editor, the same way part triggers do -- a text box holding
+    // JSON would be worse than no field at all.
+    vec![
+        field!(enabled, Bool),
+        // Optional: a zone that only runs enter/exit actions needs no state,
+        // and an empty string is not the same answer as "no var".
+        field!(var, Text, opt),
+        field!(once, Bool),
+    ]
 }
 
 fn sound_fields() -> Vec<FieldDescriptor> {
@@ -310,6 +340,7 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         spawn_point,
         teleportal,
         breakable,
+        trigger_volume,
         // Level geometry made of planes -- a third shape kind beside `cuboid`
         // and `mesh`, not a component you add to an object. Which shape an
         // object has is authored in the Geometry panel by creating it, the same
@@ -342,7 +373,7 @@ mod tests {
 
     #[test]
     fn schema_has_every_authorable_component() {
-        assert_eq!(game_object_schema().components.len(), 23);
+        assert_eq!(game_object_schema().components.len(), 24);
     }
 
     /// `field_order` is consumed by a writer in another language, so a drift
@@ -367,7 +398,9 @@ mod tests {
         // carries -- but a real file does, and the writer needs to know where
         // they sort. Keep this in step when a field gains that attribute, or
         // the test fails describing a reorder that did not happen.
-        let skipped = ["grip_pose", "uuid", "parent", "tags", "breakable", "brush"];
+        let skipped = [
+            "grip_pose", "uuid", "parent", "tags", "breakable", "brush", "trigger_volume",
+        ];
         let expected: Vec<&str> = game_object_field_order()
             .into_iter()
             .filter(|k| !skipped.contains(k))
@@ -442,7 +475,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 23);
+        assert_eq!(v["components"].as_array().unwrap().len(), 24);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }
