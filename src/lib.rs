@@ -30,6 +30,8 @@ mod runtime_tests_scripting;
 mod runtime_tests_teleport;
 #[cfg(test)]
 mod breach_physics_tests;
+#[cfg(test)]
+mod visibility_collision_tests;
 pub mod brush;
 pub mod brush_obj;
 pub mod damage;
