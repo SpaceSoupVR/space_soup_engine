@@ -32,7 +32,10 @@ mod runtime_tests_teleport;
 mod breach_physics_tests;
 #[cfg(test)]
 mod visibility_collision_tests;
+#[cfg(test)]
+mod trigger_volume_tests;
 pub mod brush;
+pub mod trigger_volume;
 pub mod brush_obj;
 pub mod damage;
 pub mod scene;

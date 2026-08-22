@@ -241,6 +241,28 @@
           "optional": false
         }
       ]
+    },
+    {
+      "name": "trigger_volume",
+      "rust_type": "TriggerVolumeDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "enabled",
+          "kind": "bool",
+          "optional": false
+        },
+        {
+          "name": "var",
+          "kind": "text",
+          "optional": true
+        },
+        {
+          "name": "once",
+          "kind": "bool",
+          "optional": false
+        }
+      ]
     }
   ],
   "field_order": [
@@ -273,6 +295,7 @@
     "laser",
     "spawn_point",
     "teleportal",
-    "breakable"
+    "breakable",
+    "trigger_volume"
   ]
 }

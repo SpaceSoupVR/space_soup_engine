@@ -169,6 +169,14 @@ pub struct ScriptContext {
     pub last_raycast_hit: Option<(f32, f32, f32)>,
     pub raycast_hit_object: String,
 
+    /// Trigger volumes with somebody in them, refreshed every tick.
+    ///
+    /// Mirrored here rather than queried through the runtime for the same
+    /// reason positions are: a script function holds only this context, and
+    /// reaching back into the runtime from inside a Rhai call would mean
+    /// borrowing it while it is already borrowed to run the script.
+    pub occupied_volumes: std::collections::HashSet<String>,
+
     /// Continuous controller values, mirrored here each frame so scripts can
     /// poll them from on_update. Edges arrive as events; levels are polled.
     pub input_axes: InputAxes,

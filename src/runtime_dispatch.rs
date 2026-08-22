@@ -1,6 +1,6 @@
 use glam::{Quat, Vec3};
 use space_soup_protocol::PlayerId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::events::{Hand, InputFrame};
 use crate::physics::{Aabb, CollisionEvent};
@@ -143,6 +143,181 @@ impl GameRuntime {
             (None, Some(&p)) => Some((p, a.to_string())),
             _ => None,
         }
+    }
+
+    /// Resolve every trigger volume's shape from the scene, once.
+    pub(crate) fn resolve_trigger_volumes(
+        scene: &crate::scene::Scene,
+    ) -> Vec<(String, crate::trigger_volume::VolumeShape)> {
+        scene
+            .objects
+            .iter()
+            .filter(|o| o.trigger_volume.is_some())
+            .map(|o| {
+                (
+                    o.id.clone(),
+                    crate::trigger_volume::VolumeShape::of(o),
+                )
+            })
+            .collect()
+    }
+
+    /// Where a player counts as being, for the purpose of standing in a zone.
+    ///
+    /// Chest height rather than the floor, so a zone can be authored to be
+    /// entered by walking in and not by an ankle clipping its bottom face -- and
+    /// so a volume raised off the ground (a beam you break, a window you lean
+    /// through) is reachable at all.
+    fn player_probe(offset: Vec3) -> Vec3 {
+        const CHEST_HEIGHT: f32 = 1.2;
+        offset + Vec3::new(0.0, CHEST_HEIGHT, 0.0)
+    }
+
+    /// Who is in which volume, and what that changes.
+    pub(crate) fn dispatch_trigger_volumes(&mut self) {
+        if self.trigger_volumes.is_empty() {
+            return;
+        }
+
+        let probes: Vec<(PlayerId, Vec3)> = self
+            .locomotions
+            .iter()
+            .map(|(&p, loco)| (p, Self::player_probe(loco.player_offset)))
+            .collect();
+
+        // Collected before anything is applied. An action can hide, unsolidify
+        // or re-var another object, and one volume's on_enter changing what a
+        // later volume tests against mid-pass would make the result depend on
+        // scene order -- which is invisible in the file and impossible to debug.
+        let mut fired: Vec<(String, bool)> = Vec::new();
+
+        for (id, shape) in &self.trigger_volumes {
+            let enabled = self
+                .scene
+                .objects
+                .iter()
+                .find(|o| &o.id == id)
+                .and_then(|o| o.trigger_volume.as_ref())
+                .map(|v| v.enabled)
+                .unwrap_or(false);
+
+            let now: HashSet<PlayerId> = if enabled {
+                probes
+                    .iter()
+                    .filter(|(_, p)| shape.contains(*p))
+                    .map(|(id, _)| *id)
+                    .collect()
+            } else {
+                // A disarmed volume is EMPTY, not frozen. Otherwise disabling a
+                // zone while someone stands in it leaves them permanently
+                // inside, and re-arming it would never fire an enter again.
+                HashSet::new()
+            };
+
+            let was = self.volume_occupants.get(id).cloned().unwrap_or_default();
+            // Empty -> occupied and occupied -> empty, not per player: "the
+            // door is open while anyone is in the room" is what a level means,
+            // and firing per player would open an already-open door.
+            if was.is_empty() && !now.is_empty() {
+                fired.push((id.clone(), true));
+            } else if !was.is_empty() && now.is_empty() {
+                fired.push((id.clone(), false));
+            }
+            self.volume_occupants.insert(id.clone(), now);
+        }
+
+        // Published for `is_occupied`. Written every tick from the authoritative
+        // map rather than patched on enter/exit, so a script can never see a
+        // volume the dispatcher has already forgotten about.
+        let occupied: HashSet<String> = self
+            .volume_occupants
+            .iter()
+            .filter(|(_, who)| !who.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect();
+        {
+            let context = self.script_host.context();
+            let mut ctx = context.lock().unwrap();
+            ctx.occupied_volumes = occupied;
+        }
+
+        for (id, entered) in fired {
+            let Some(def) = self
+                .scene
+                .objects
+                .iter()
+                .find(|o| o.id == id)
+                .and_then(|o| o.trigger_volume.clone())
+            else {
+                continue;
+            };
+
+            // `once` means SPENT, not "enter once": after it fires, the volume
+            // does nothing ever again, exit included, and its var stays latched
+            // at "1" as a record that this place was visited.
+            //
+            // The alternative -- once on enter, exit still live -- is more
+            // expressive and much harder to state, and a rule an author cannot
+            // recite is one they will be surprised by. A zone that needs both
+            // behaviours is two zones.
+            if def.once {
+                if self.volume_fired.contains(&id) {
+                    continue;
+                }
+                if !entered {
+                    continue;
+                }
+                self.volume_fired.insert(id.clone());
+            }
+
+            if let Some(var) = &def.var {
+                self.script_host
+                    .set_var(var, if entered { "1" } else { "0" });
+            }
+
+            for action in if entered { &def.on_enter } else { &def.on_exit } {
+                self.apply_volume_action(action);
+            }
+        }
+    }
+
+    fn apply_volume_action(&mut self, action: &crate::trigger_volume::VolumeAction) {
+        use crate::trigger_volume::VolumeAction as V;
+        match action {
+            V::SetVar { name, value } => self.script_host.set_var(name, value),
+            V::AddVar { name, delta } => {
+                let cur = self
+                    .script_host
+                    .var_string(name)
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                self.script_host.set_var(name, &(cur + delta).to_string());
+            }
+            V::SetObjectVisible { id, visible } => {
+                self.script_host
+                    .push_command(EngineCommand::SetObjectVisible {
+                        id: id.clone(),
+                        visible: *visible,
+                    });
+            }
+            V::SetObjectSolid { id, solid } => {
+                self.script_host.push_command(EngineCommand::SetObjectSolid {
+                    id: id.clone(),
+                    solid: *solid,
+                });
+            }
+            V::PlaySound { id } => {
+                self.script_host.push_command(EngineCommand::PlaySound { id: id.clone() });
+            }
+        }
+    }
+
+    /// Is anyone standing in this volume right now?
+    pub fn volume_occupied(&self, id: &str) -> bool {
+        self.volume_occupants
+            .get(id)
+            .map(|o| !o.is_empty())
+            .unwrap_or(false)
     }
 
     pub(crate) fn dispatch_teleportals(&mut self) {
