@@ -232,3 +232,94 @@ fn a_chunk_written_by_the_editor_loads_with_the_shape_it_was_given() {
     assert_eq!(hit.len(), 1);
     assert_eq!(hit[0].share, 1.0);
 }
+
+/* ------------------------------------------------ brushes are not boxes -- */
+
+/// A wall built as a BRUSH rather than a bare cuboid, which is what the editor
+/// actually writes -- two solids, so it is visibly not a box.
+fn brush_scene_json() -> String {
+    r#"{
+      "name": "brush_test",
+      "objects": [
+        {
+          "id": "brush_wall",
+          "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [2.0, 1.0, 0.15] },
+          "brush": {
+            "solids": [
+              { "faces": [
+                { "plane": [1, 0, 0, 2.0], "material": "concrete" },
+                { "plane": [-1, 0, 0, 2.0], "material": "concrete" },
+                { "plane": [0, 1, 0, 2.0], "material": "concrete" },
+                { "plane": [0, -1, 0, 0.0], "material": "concrete" },
+                { "plane": [0, 0, 1, 0.15], "material": "concrete" },
+                { "plane": [0, 0, -1, 0.15], "material": "concrete" }
+              ] }
+            ]
+          },
+          "breakable": {
+            "health": 100.0,
+            "stages": [{ "at": 1.0, "removed": true }]
+          }
+        }
+      ]
+    }"#
+    .to_string()
+}
+
+fn brush_runtime(tag: &str) -> GameRuntime {
+    let dir = std::env::temp_dir().join(format!("ss_brush_{tag}_{}", std::process::id()));
+    let scenes = dir.join("scenes");
+    std::fs::create_dir_all(&scenes).expect("scenes dir");
+    std::fs::write(scenes.join("brush_test.json"), brush_scene_json()).expect("write scene");
+    std::fs::write(
+        dir.join("manifest.json"),
+        r#"{"name":"brush","version":"0.1.0","entry_scene":"brush_test","scenes":["brush_test"]}"#,
+    )
+    .expect("write manifest");
+    GameRuntime::load(&dir).expect("runtime loads")
+}
+
+#[test]
+fn a_brush_is_never_sent_as_a_bounding_box() {
+    // It was, and a fractured wall arrived on the headset as a pile of
+    // overlapping crates: every chunk drawn at the size of the box around it.
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let rt = brush_runtime("not_a_box");
+
+    assert!(
+        !drawn(&rt, "brush_wall"),
+        "a brush must not ride the cuboid list -- the client meshes it"
+    );
+    assert!(
+        rt.hidden_brushes().is_empty(),
+        "and an intact wall is not in the skip list either"
+    );
+}
+
+#[test]
+fn a_destroyed_brush_is_named_in_the_list_the_client_skips() {
+    // The client built this wall at scene load and cannot know it has since
+    // been shot. This list is the whole channel that tells it.
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut rt = brush_runtime("skip_list");
+
+    rt.apply_damage_at(Vec3::new(0.0, 1.0, 0.0), 0.0, 100.0);
+    assert_eq!(rt.hidden_brushes(), ["brush_wall"]);
+    assert!(!rt.is_solid("brush_wall"), "and it stopped blocking");
+}
+
+#[test]
+fn a_brush_a_script_hid_is_skipped_too() {
+    // Damage is not the only way a brush stops being drawn, and a client that
+    // only honoured damage would leave a hidden door standing.
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut rt = brush_runtime("script_hidden");
+
+    rt.script_host.push_command(crate::script::EngineCommand::SetObjectVisible {
+        id: "brush_wall".into(),
+        visible: false,
+    });
+    rt.apply_script_commands();
+
+    assert_eq!(rt.hidden_brushes(), ["brush_wall"]);
+}
