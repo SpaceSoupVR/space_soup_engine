@@ -242,8 +242,51 @@ pub struct Scene {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scatter: Vec<ScatterLayer>,
 
+    /// The sky, and therefore most of the lighting.
+    ///
+    /// One per scene rather than per project: the sky is the most
+    /// level-defining choice there is, and two levels routinely want different
+    /// ones. Only the id is stored -- the panorama lives in the shared library
+    /// under game/skies/, so several levels can use one download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sky: Option<SkyDef>,
+
     #[serde(default)]
     pub objects: Vec<GameObject>,
+}
+
+fn default_sky_intensity() -> f32 {
+    1.0
+}
+
+/// Which sky a scene uses, and how it is oriented and exposed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkyDef {
+    /// Library id -- the directory under game/skies/ holding sky.hdr.
+    pub id: String,
+
+    /// Multiplier on the panorama's own values.
+    ///
+    /// An HDRI carries real intensity, so the default is 1.0 and means "as
+    /// photographed". This exists because a level is not obliged to be lit as
+    /// brightly as the day the panorama was shot.
+    #[serde(default = "default_sky_intensity")]
+    pub intensity: f32,
+
+    /// Turn the sky about Y, in degrees.
+    ///
+    /// The single most useful control an HDRI has: it puts the sun where the
+    /// level needs it without going back to the library for another sky.
+    #[serde(default)]
+    pub rotation_deg: f32,
+
+    /// Draw the panorama behind the level, as opposed to only lighting with it.
+    ///
+    /// Separable because an indoor level often wants a studio probe's LIGHT
+    /// with its own ceiling overhead rather than a photographed room visible
+    /// through the windows.
+    #[serde(default = "default_true")]
+    pub show_background: bool,
 }
 
 impl Scene {
