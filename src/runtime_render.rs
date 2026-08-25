@@ -37,7 +37,15 @@ impl GameRuntime {
             // this match has done to it. A chunk shot out of a wall has to stop
             // being drawn, and it has no named parts for `hidden_parts` to
             // reach -- that field is only consulted for meshes below.
-            .filter(|o| !o.hidden && !self.damage.is_removed(o) && o.mesh.is_none())
+            //
+            // Brushes are excluded because they are NOT boxes. Sending one here
+            // drew a wall as its bounding cuboid -- a fractured wall came out as
+            // twelve overlapping crates -- so the client meshes brushes itself
+            // from scene data it already has, and this list would only double
+            // -draw them. See `hidden_brushes` for how it is told which to skip.
+            .filter(|o| {
+                !o.hidden && !self.damage.is_removed(o) && o.mesh.is_none() && o.brush.is_none()
+            })
             .map(|o| RenderCuboid {
                 id: o.id.clone(),
                 position: o.cuboid.position,
@@ -53,6 +61,28 @@ impl GameRuntime {
                     CuboidShape::Box
                 },
             })
+            .collect()
+    }
+
+    /// Brush objects the client must NOT draw this frame.
+    ///
+    /// Brush geometry is static scene data that ships with the game, so the
+    /// client builds it once at scene load rather than receiving triangles over
+    /// the wire -- the same trade terrain makes, and for the same reason: at 64
+    /// players the snapshot budget is the binding constraint.
+    ///
+    /// What that cannot know is what has happened SINCE. A chunk shot out of a
+    /// wall, or a brush a script hid, is a runtime fact, and it is the only part
+    /// of a brush that has to cross per snapshot. Sending ids rather than
+    /// geometry keeps it to a few bytes, and to nothing at all in the ordinary
+    /// case where a level is intact.
+    pub fn hidden_brushes(&self) -> Vec<String> {
+        self.scene
+            .objects
+            .iter()
+            .filter(|o| o.brush.is_some())
+            .filter(|o| o.hidden || self.damage.is_removed(o))
+            .map(|o| o.id.clone())
             .collect()
     }
 
