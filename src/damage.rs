@@ -12,7 +12,8 @@
 
 use std::collections::HashMap;
 
-use crate::scene::{BreakableDef, GameObject};
+use crate::scene::{distance_to_oriented_box, BreakableDef, GameObject};
+use glam::Vec3;
 
 /// A structure moving from one damage stage to another.
 ///
@@ -97,6 +98,19 @@ impl DamageLedger {
         }
     }
 
+    /// Whether an object has been destroyed outright and should not be drawn.
+    ///
+    /// Separate from `is_solid` because they are separate authored fields: a
+    /// wall can be shot through and still standing, and a chunk can be gone.
+    pub fn is_removed(&self, object: &GameObject) -> bool {
+        match &object.breakable {
+            Some(b) => b
+                .stage_for(self.damage_for(&object.id))
+                .is_some_and(|s| s.removed),
+            None => false,
+        }
+    }
+
     /// Whether an object still blocks movement and fire.
     pub fn is_solid(&self, object: &GameObject) -> bool {
         match &object.breakable {
@@ -139,6 +153,82 @@ fn stage_index(breakable: &BreakableDef, damage: f32) -> Option<usize> {
         .position(|s| std::ptr::eq(s, target))
 }
 
+/// One breakable an impact reached, and how hard.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImpactTarget {
+    /// Index into `Scene::objects`.
+    pub index: usize,
+    /// Distance from the impact point to the object's surface; 0 inside it.
+    pub distance: f32,
+    /// Share of the impact's damage this object takes, in 0..=1.
+    pub share: f32,
+}
+
+/// Which breakables an impact at `point` reaches, and how much each one takes.
+///
+/// THE ROUTING STEP. `GameRuntime::apply_damage` is deliberately id-based --
+/// resolving what was hit is the shooter's job -- which is exactly right for a
+/// single authored wall and leaves nothing to call for a FRACTURED one, where
+/// "what was hit" is a question about geometry rather than about aim. A shooter
+/// that had to answer it would be re-implementing this per weapon.
+///
+/// Pure, and separate from the runtime, because everything interesting about it
+/// is geometry and falloff: a test can pose an impact against a wall of chunks
+/// without a physics scene, a renderer or a headset.
+///
+/// # Falloff
+///
+/// Linear from full at the point to nothing at `radius`, measured to each
+/// object's ORIENTED box rather than its centre. Centre distance would mean a
+/// long wall shot at one end takes damage as though it were hit in the middle,
+/// and a rotated chunk would be measured against a box that is not the one on
+/// screen.
+///
+/// `radius <= 0` is the direct-hit case -- a rifle round, not a blast. Only
+/// objects the point is actually inside take anything, and they take it in
+/// full. That is the common case, and it must not divide by zero.
+///
+/// # Damage is not divided between chunks
+///
+/// Each object in range takes `amount * share`, not a slice of one budget.
+/// Dividing would make a wall's toughness depend on how finely it was
+/// fractured: the same grenade against the same wall would do less to each
+/// piece the more pieces there were, so an author improving the look of a
+/// breach would silently be armouring it. Chunk count is a visual decision and
+/// must stay one.
+pub fn impact_targets(objects: &[GameObject], point: Vec3, radius: f32) -> Vec<ImpactTarget> {
+    let mut out = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        // Objects with no `breakable` are skipped rather than reported: there
+        // is nothing to record damage against, and returning them would invite
+        // a caller to think an indestructible wall had absorbed a grenade.
+        if object.breakable.is_none() {
+            continue;
+        }
+        let distance = distance_to_oriented_box(
+            object.cuboid.position,
+            object.cuboid.rotation,
+            object.cuboid.half_size,
+            point,
+        );
+        let share = if radius > 0.0 {
+            1.0 - distance / radius
+        } else if distance <= 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+        if share > 0.0 {
+            out.push(ImpactTarget {
+                index,
+                distance,
+                share,
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,11 +245,13 @@ mod tests {
                         at: 0.5,
                         hidden_parts: vec!["intact".into()],
                         solid: true,
+                        ..Default::default()
                     },
                     DamageStage {
                         at: 0.9,
                         hidden_parts: vec!["intact".into(), "cracked".into()],
                         solid: false,
+                        ..Default::default()
                     },
                 ],
             }),
@@ -292,8 +384,8 @@ mod tests {
             breakable: Some(BreakableDef {
                 health: 100.0,
                 stages: vec![
-                    DamageStage { at: 0.3, hidden_parts: vec!["a".into()], solid: true },
-                    DamageStage { at: 0.6, hidden_parts: vec!["a".into()], solid: true },
+                    DamageStage { at: 0.3, hidden_parts: vec!["a".into()], solid: true, ..Default::default() },
+                    DamageStage { at: 0.6, hidden_parts: vec!["a".into()], solid: true, ..Default::default() },
                 ],
             }),
             ..Default::default()
@@ -313,5 +405,183 @@ mod tests {
         assert_eq!(change.from, None);
         assert_eq!(change.to, Some(1));
         assert!(change.breached());
+    }
+
+    /// A wall fractured into chunks: a row of 1m boxes along x, each its own
+    /// breakable, which is what the editor's Voronoi fracture produces.
+    fn chunk_row(n: usize) -> Vec<GameObject> {
+        (0..n)
+            .map(|i| GameObject {
+                id: format!("wall_chunk_{i}"),
+                cuboid: crate::scene::CuboidDef {
+                    position: Vec3::new(i as f32, 0.0, 0.0),
+                    half_size: Vec3::splat(0.5),
+                    ..Default::default()
+                },
+                breakable: Some(BreakableDef {
+                    health: 100.0,
+                    stages: vec![DamageStage {
+                        at: 1.0,
+                        removed: true,
+                        ..Default::default()
+                    }],
+                }),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_bullet_reaches_only_the_chunk_it_is_inside() {
+        let row = chunk_row(5);
+        let hit = impact_targets(&row, Vec3::new(2.1, 0.0, 0.0), 0.0);
+        assert_eq!(hit.len(), 1, "a round is a point, not a blast");
+        assert_eq!(hit[0].index, 2);
+        assert_eq!(hit[0].share, 1.0, "a direct hit is not reduced");
+    }
+
+    #[test]
+    fn a_bullet_that_misses_every_chunk_damages_nothing() {
+        let row = chunk_row(5);
+        assert!(impact_targets(&row, Vec3::new(2.0, 4.0, 0.0), 0.0).is_empty());
+    }
+
+    #[test]
+    fn a_blast_reaches_several_chunks_and_falls_off_with_distance() {
+        let row = chunk_row(7);
+        let hit = impact_targets(&row, Vec3::new(3.0, 0.0, 0.0), 2.0);
+        let ids: Vec<usize> = hit.iter().map(|t| t.index).collect();
+        assert_eq!(ids, vec![1, 2, 3, 4, 5], "everything within 2m of the centre");
+
+        let centre = hit.iter().find(|t| t.index == 3).unwrap();
+        let near = hit.iter().find(|t| t.index == 4).unwrap();
+        let far = hit.iter().find(|t| t.index == 5).unwrap();
+        assert_eq!(centre.share, 1.0);
+        assert!(
+            centre.share > near.share && near.share > far.share,
+            "the chunk that was hit must come off worst: {centre:?} {near:?} {far:?}"
+        );
+    }
+
+    #[test]
+    fn falloff_is_measured_to_the_surface_not_the_centre() {
+        // One long wall rather than chunks. Shot at its far end, a centre
+        // measurement would read 4m away and score nothing; the surface is
+        // right there.
+        let wall = vec![GameObject {
+            id: "long_wall".into(),
+            cuboid: crate::scene::CuboidDef {
+                position: Vec3::ZERO,
+                half_size: Vec3::new(5.0, 1.5, 0.15),
+                ..Default::default()
+            },
+            breakable: Some(BreakableDef { health: 100.0, stages: vec![] }),
+            ..Default::default()
+        }];
+        let hit = impact_targets(&wall, Vec3::new(4.9, 0.0, 0.0), 1.0);
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].share, 1.0, "the point is inside the wall");
+    }
+
+    #[test]
+    fn an_oriented_chunk_is_measured_against_the_box_that_is_on_screen() {
+        // A thin panel turned 90 degrees. Measured axis-aligned it would still
+        // seem to reach 2m along x; turned, it reaches 0.1m.
+        let turned = vec![GameObject {
+            id: "panel".into(),
+            cuboid: crate::scene::CuboidDef {
+                position: Vec3::ZERO,
+                half_size: Vec3::new(2.0, 1.0, 0.1),
+                rotation: glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                ..Default::default()
+            },
+            breakable: Some(BreakableDef { health: 100.0, stages: vec![] }),
+            ..Default::default()
+        }];
+        assert!(
+            impact_targets(&turned, Vec3::new(1.5, 0.0, 0.0), 0.0).is_empty(),
+            "1.5m along x is outside a panel that was turned to face x"
+        );
+        assert_eq!(
+            impact_targets(&turned, Vec3::new(0.0, 0.0, 1.5), 0.0).len(),
+            1,
+            "and inside it along z"
+        );
+    }
+
+    #[test]
+    fn objects_with_no_breakable_are_never_reported() {
+        let mut row = chunk_row(3);
+        row[1].breakable = None;
+        let hit = impact_targets(&row, Vec3::new(1.0, 0.0, 0.0), 3.0);
+        assert!(
+            hit.iter().all(|t| t.index != 1),
+            "an indestructible object cannot absorb a grenade"
+        );
+    }
+
+    /// One 6m wall divided into `n` chunks, so a finer number really means
+    /// smaller pieces of the same wall rather than a longer wall.
+    fn wall_of(n: usize) -> Vec<GameObject> {
+        let width = 6.0 / n as f32;
+        (0..n)
+            .map(|i| GameObject {
+                id: format!("wall_{i}"),
+                cuboid: crate::scene::CuboidDef {
+                    position: Vec3::new(width * (i as f32 + 0.5), 0.0, 0.0),
+                    half_size: Vec3::new(width / 2.0, 1.5, 0.15),
+                    ..Default::default()
+                },
+                breakable: Some(BreakableDef { health: 100.0, stages: vec![] }),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn finer_fracture_does_not_secretly_armour_a_wall() {
+        // The same blast against the same wall, chunked two ways. Damage is
+        // per-object and NOT divided between them, so the piece that was hit
+        // takes the full amount either way -- otherwise an author making a
+        // breach look better would be quietly making the wall tougher.
+        let at = Vec3::new(3.0, 0.0, 0.0);
+        let coarse = impact_targets(&wall_of(3), at, 1.5);
+        let fine = impact_targets(&wall_of(12), at, 1.5);
+
+        let best = |v: &[ImpactTarget]| v.iter().map(|t| t.share).fold(0.0_f32, f32::max);
+        assert_eq!(best(&coarse), 1.0);
+        assert_eq!(best(&fine), 1.0, "the piece that was hit still takes it all");
+        assert!(
+            fine.len() > coarse.len(),
+            "and the finer wall really does put more pieces in range: {} vs {}",
+            fine.len(),
+            coarse.len()
+        );
+    }
+
+    #[test]
+    fn a_removed_stage_stops_the_object_being_drawn_and_being_solid() {
+        let mut ledger = DamageLedger::new();
+        let chunk = chunk_row(1).remove(0);
+        assert!(!ledger.is_removed(&chunk), "intact until it is shot");
+        assert!(ledger.is_solid(&chunk));
+
+        ledger.apply(&chunk, 100.0);
+        assert!(ledger.is_removed(&chunk));
+        assert!(
+            !ledger.is_solid(&chunk),
+            "an object that is not drawn must not still block fire"
+        );
+    }
+
+    #[test]
+    fn a_removed_stage_is_not_solid_even_when_authored_solid() {
+        // The two fields disagreeing is an invisible wall, so `removed` wins.
+        let b = BreakableDef {
+            health: 10.0,
+            stages: vec![DamageStage { at: 0.5, solid: true, removed: true, ..Default::default() }],
+        };
+        assert!(b.is_solid_at(1.0), "below the threshold, untouched");
+        assert!(!b.is_solid_at(9.0));
     }
 }

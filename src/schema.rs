@@ -303,7 +303,7 @@ fn breakable_fields() -> Vec<FieldDescriptor> {
     }
     #[allow(dead_code, unused_variables)]
     fn exhaustive_stage(s: crate::scene::DamageStage) {
-        let crate::scene::DamageStage { at, hidden_parts, solid } = s;
+        let crate::scene::DamageStage { at, hidden_parts, solid, removed } = s;
     }
     // `stages` is deliberately absent: it is a list of structs, which the
     // generic Layer 0 field renderer cannot express. The editor gives breakable

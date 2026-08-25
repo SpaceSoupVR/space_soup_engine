@@ -33,7 +33,11 @@ impl GameRuntime {
         self.scene
             .objects
             .iter()
-            .filter(|o| !o.hidden && o.mesh.is_none())
+            // `hidden` is what the level author decided; `is_removed` is what
+            // this match has done to it. A chunk shot out of a wall has to stop
+            // being drawn, and it has no named parts for `hidden_parts` to
+            // reach -- that field is only consulted for meshes below.
+            .filter(|o| !o.hidden && !self.damage.is_removed(o) && o.mesh.is_none())
             .map(|o| RenderCuboid {
                 id: o.id.clone(),
                 position: o.cuboid.position,
@@ -56,7 +60,7 @@ impl GameRuntime {
         self.scene
             .objects
             .iter()
-            .filter(|o| !o.hidden)
+            .filter(|o| !o.hidden && !self.damage.is_removed(o))
             .filter_map(|o| {
                 let mesh_ref: &MeshRef = o.mesh.as_ref()?;
                 Some(RenderMesh {

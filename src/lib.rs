@@ -34,6 +34,8 @@ mod breach_physics_tests;
 mod visibility_collision_tests;
 #[cfg(test)]
 mod trigger_volume_tests;
+#[cfg(test)]
+mod fracture_damage_tests;
 pub mod brush;
 pub mod trigger_volume;
 pub mod brush_obj;
