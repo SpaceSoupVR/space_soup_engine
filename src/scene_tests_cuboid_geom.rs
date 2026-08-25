@@ -77,3 +77,32 @@ fn a_hand_on_the_grip_is_in_range_and_one_across_the_room_is_not() {
     let across_the_room = distance_to_oriented_box(ORIGIN, Quat::IDENTITY, RIFLE, Vec3::new(4.0, 1.0, 2.0));
     assert!(across_the_room > GRAB_RANGE);
 }
+
+/// The field is `half_size`, and nothing answers to `size`.
+///
+/// Serde drops an unrecognised key in SILENCE, so a scene that says `size`
+/// loads a 0.5m cube wherever it described a wall -- and every ray test in this
+/// crate fires down its subject's centre line, where a 4m wall and a 1m cube are
+/// indistinguishable. Four test scenes carried that mistake, and nothing in the
+/// suite could tell: shrinking a wall a hundredfold left all 256 tests green.
+///
+/// This is the guard that closes it. It asserts on LOADING rather than on
+/// behaviour, because loading is the step that was wrong.
+#[test]
+fn a_cuboid_loads_the_extent_its_scene_declares() {
+    let declared: crate::scene::CuboidDef =
+        serde_json::from_str(r#"{"position":[0,1,0],"half_size":[2.0,1.0,0.25]}"#)
+            .expect("parses");
+    assert_eq!(declared.half_size, Vec3::new(2.0, 1.0, 0.25));
+
+    // The trap, pinned by name so it cannot come back quietly.
+    let misspelt: crate::scene::CuboidDef =
+        serde_json::from_str(r#"{"position":[0,1,0],"size":[2.0,1.0,0.25]}"#).expect("parses");
+    assert_eq!(
+        misspelt.half_size,
+        Vec3::splat(0.5),
+        "`size` is not a field: it is dropped and the default stands. If this \
+         assertion ever fails because an alias was added, delete it -- but do \
+         not make `size` mean something different from `half_size`."
+    );
+}

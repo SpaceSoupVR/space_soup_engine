@@ -25,7 +25,7 @@ fn scene_json() -> String {
           "id": "wall",
           "cuboid": {
             "position": [0.0, 1.0, 0.0],
-            "size": [2.0, 1.0, 0.25],
+            "half_size": [2.0, 1.0, 0.25],
             "color": [128, 128, 128, 255]
           },
           "rigid_body": { "mode": "Static", "shape": "Box" },
