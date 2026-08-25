@@ -34,7 +34,7 @@ fn scene_json() -> String {
         },
         {
           "id": "door",
-          "cuboid": { "position": [0.0, 1.0, 20.0], "size": [4.0, 2.0, 0.25] },
+          "cuboid": { "position": [0.0, 1.0, 20.0], "half_size": [4.0, 2.0, 0.25] },
           "rigid_body": { "mode": "Static", "shape": "Box" }
         },
         {

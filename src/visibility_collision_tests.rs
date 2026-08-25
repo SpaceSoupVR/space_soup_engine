@@ -27,17 +27,17 @@ fn scene_json() -> String {
       "objects": [
         {
           "id": "wall",
-          "cuboid": { "position": [0.0, 1.0, 0.0], "size": [2.0, 1.0, 0.25] },
+          "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [2.0, 1.0, 0.25] },
           "rigid_body": { "mode": "Static", "shape": "Box" }
         },
         {
           "id": "open_gate",
-          "cuboid": { "position": [0.0, 1.0, 10.0], "size": [2.0, 1.0, 0.25] },
+          "cuboid": { "position": [0.0, 1.0, 10.0], "half_size": [2.0, 1.0, 0.25] },
           "rigid_body": { "mode": "Static", "shape": "Box", "enabled": false }
         },
         {
           "id": "hologram",
-          "cuboid": { "position": [0.0, 1.0, 20.0], "size": [2.0, 1.0, 0.25] }
+          "cuboid": { "position": [0.0, 1.0, 20.0], "half_size": [2.0, 1.0, 0.25] }
         }
       ]
     }"#
@@ -59,8 +59,13 @@ fn runtime(tag: &str) -> GameRuntime {
 
 /// Fires along +z at whatever sits at `z`, from 5m short of it.
 fn ray_hits(rt: &GameRuntime, z: f32) -> bool {
+    ray_hits_at(rt, 0.0, z)
+}
+
+/// The same shot, offset along the wall so its WIDTH decides the answer.
+fn ray_hits_at(rt: &GameRuntime, x: f32, z: f32) -> bool {
     rt.rigid_physics
-        .raycast(Vec3::new(0.0, 1.0, z - 5.0), Vec3::Z, 10.0)
+        .raycast(Vec3::new(x, 1.0, z - 5.0), Vec3::Z, 10.0)
         .is_some()
 }
 
@@ -264,12 +269,12 @@ fn a_script_can_open_and_close_a_gate() {
           "objects": [
             {
               "id": "wall",
-              "cuboid": { "position": [0.0, 1.0, 0.0], "size": [2.0, 1.0, 0.25] },
+              "cuboid": { "position": [0.0, 1.0, 0.0], "half_size": [2.0, 1.0, 0.25] },
               "rigid_body": { "mode": "Static", "shape": "Box" }
             },
             {
               "id": "controller",
-              "cuboid": { "position": [20.0, 0.0, 20.0], "size": [0.1, 0.1, 0.1] },
+              "cuboid": { "position": [20.0, 0.0, 20.0], "half_size": [0.1, 0.1, 0.1] },
               "script": "fn on_update(dt) { if get_var(\"open\") == \"yes\" { set_solid(\"wall\", false); set_visible(\"wall\", false); } }"
             }
           ]
@@ -295,4 +300,25 @@ fn a_script_can_open_and_close_a_gate() {
 
     assert!(!ray_hits(&rt, 0.0), "set_solid must actually remove the collider");
     assert!(!drawn(&rt, "wall"), "and set_visible must actually hide it");
+}
+
+/// The wall is as wide as the scene says it is.
+///
+/// Every other ray in this file is fired at x = 0, straight down the wall's
+/// centre line -- where a 4m wall and a 0.5m cube are the same object. That is
+/// not a hypothetical: these scenes DID declare their walls with a key serde
+/// ignores, so every wall here was a 0.5m cube, and the whole suite stayed
+/// green through it. Shrinking a wall a hundredfold still passed everything
+/// else.
+///
+/// Shots either side of that cube's edge are what makes the declared extent
+/// load-bearing, so the same mistake cannot be silent twice.
+#[test]
+fn a_walls_declared_width_is_the_width_that_blocks() {
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let rt = runtime("declared_width");
+
+    // Half-width is 2m. Well inside it, and well outside a 0.5m cube.
+    assert!(ray_hits_at(&rt, 1.5, 0.0), "1.5m off centre is still wall");
+    assert!(!ray_hits_at(&rt, 2.5, 0.0), "and 2.5m off centre is past its end");
 }
