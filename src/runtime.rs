@@ -527,6 +527,45 @@ impl GameRuntime {
         Some(change)
     }
 
+    /// Deal damage at a POINT in the world, to whatever breakables it reaches.
+    ///
+    /// The entry point for a fractured structure. `apply_damage` is right when
+    /// the shooter already knows what it hit -- a raycast returning one object
+    /// id -- and has nothing to say about a wall that is fifty chunks, where
+    /// which pieces a grenade damaged is a question about geometry rather than
+    /// about aim. Answering it per weapon would mean every weapon growing its
+    /// own copy of this.
+    ///
+    /// Use `radius = 0.0` for a bullet: only the chunk the point is inside
+    /// takes anything, and it takes the full amount. A blast wants a real
+    /// radius, and damage falls off linearly to nothing at its edge.
+    ///
+    /// Returns one `StageChange` per object that actually crossed a threshold,
+    /// in scene order -- so it stays empty for the ordinary case of chipping a
+    /// wall that does not break yet, and a caller can replicate exactly the
+    /// changes that happened.
+    pub fn apply_damage_at(
+        &mut self,
+        point: glam::Vec3,
+        radius: f32,
+        amount: f32,
+    ) -> Vec<crate::damage::StageChange> {
+        // Resolved into ids in a separate pass BEFORE anything is mutated.
+        // Applying inside the walk would borrow the scene immutably while the
+        // ledger and the physics scene need to change, and collecting first
+        // also means a stage change cannot alter what the same impact hits.
+        let targets: Vec<(String, f32)> =
+            crate::damage::impact_targets(&self.scene.objects, point, radius)
+                .into_iter()
+                .map(|t| (self.scene.objects[t.index].id.clone(), t.share))
+                .collect();
+
+        targets
+            .into_iter()
+            .filter_map(|(id, share)| self.apply_damage(&id, amount * share))
+            .collect()
+    }
+
     /// Damage an object has taken this match.
     pub fn damage_taken(&self, object_id: &str) -> f32 {
         self.damage.damage_for(object_id)
@@ -565,11 +604,12 @@ mod damage_delivery_tests {
             breakable: Some(BreakableDef {
                 health: 100.0,
                 stages: vec![
-                    DamageStage { at: 0.5, hidden_parts: vec!["intact".into()], solid: true },
+                    DamageStage { at: 0.5, hidden_parts: vec!["intact".into()], solid: true, ..Default::default() },
                     DamageStage {
                         at: 0.9,
                         hidden_parts: vec!["intact".into(), "cracked".into()],
                         solid: false,
+                        ..Default::default()
                     },
                 ],
             }),

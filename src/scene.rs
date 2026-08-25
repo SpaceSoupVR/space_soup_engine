@@ -545,6 +545,25 @@ pub struct DamageStage {
     /// shootable and walkable, not just visible.
     #[serde(default = "default_true")]
     pub solid: bool,
+
+    /// Whether the object is gone entirely at this stage -- not drawn at all.
+    ///
+    /// `hidden_parts` cannot express this. It names parts INSIDE a model, and
+    /// the renderer only consults it for objects that have a `mesh`; a brush
+    /// has no named parts to hide, so a wall chunk had no way to stop being
+    /// drawn no matter what stage it reached.
+    ///
+    /// That gap did not matter while a breakable was one authored model
+    /// carrying its own rubble. It matters for a FRACTURED wall, where the
+    /// pieces are separate convex brushes and a piece is not a state of a model
+    /// but a thing that is either there or is not.
+    ///
+    /// Deliberately separate from `solid` rather than implied by it. A chunk
+    /// that is shot away is both; a wall left standing but shot through wants
+    /// `solid: false` while still being drawn, and collapsing the two would
+    /// make that unauthorable.
+    #[serde(default)]
+    pub removed: bool,
 }
 
 fn default_true() -> bool {
@@ -574,8 +593,14 @@ impl BreakableDef {
     }
 
     /// Whether the object still blocks at this damage level.
+    ///
+    /// A `removed` stage is never solid, whatever `solid` says. An object that
+    /// is not drawn and still blocks fire is an invisible wall -- the exact
+    /// visual/physical split this system exists to avoid -- and requiring an
+    /// author to set both correctly means one of them will eventually be wrong.
     pub fn is_solid_at(&self, damage: f32) -> bool {
-        self.stage_for(damage).map_or(true, |s| s.solid)
+        self.stage_for(damage)
+            .map_or(true, |s| s.solid && !s.removed)
     }
 
     /// The parts hidden at this damage level, given the object's authored set.
@@ -599,11 +624,13 @@ mod breakable_tests {
                     at: 0.4,
                     hidden_parts: vec!["intact_render".into()],
                     solid: true,
+                    ..Default::default()
                 },
                 DamageStage {
                     at: 0.8,
                     hidden_parts: vec!["intact_render".into(), "cracked_render".into()],
                     solid: false,
+                    ..Default::default()
                 },
             ],
         }
@@ -702,8 +729,8 @@ mod breakable_tests {
         let w = BreakableDef {
             health: 100.0,
             stages: vec![
-                DamageStage { at: 0.9, hidden_parts: vec!["gone".into()], solid: false },
-                DamageStage { at: 0.3, hidden_parts: vec!["chipped".into()], solid: true },
+                DamageStage { at: 0.9, hidden_parts: vec!["gone".into()], solid: false, ..Default::default() },
+                DamageStage { at: 0.3, hidden_parts: vec!["chipped".into()], solid: true, ..Default::default() },
             ],
         };
         assert_eq!(w.stage_for(95.0).unwrap().hidden_parts, vec!["gone"]);
