@@ -542,6 +542,15 @@ pub struct BrushMeshGroup {
     pub positions: Vec<f32>,
     pub normals: Vec<f32>,
     pub uvs: Vec<f32>,
+    /// The face's u axis per vertex, with `w` carrying the bitangent's
+    /// handedness -- four floats each.
+    ///
+    /// Emitted here rather than derived from the triangles' uvs by whoever
+    /// renders this. The usual derivation is an approximation that goes
+    /// degenerate on thin triangles, and it would be approximating something
+    /// this data knows exactly: `uv` was GENERATED from these axes a few lines
+    /// below, so anything that has to undo that is reconstructing an input.
+    pub tangents: Vec<f32>,
     pub indices: Vec<u32>,
 }
 
@@ -595,6 +604,15 @@ pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
             } else {
                 poly
             };
+            let (u_axis, v_axis) = face.axes();
+            // Whether v runs the same way as n x u. Measured rather than
+            // assumed: `default_axes` happens to be consistently left-handed
+            // for all six directions, but a face whose axes were AUTHORED --
+            // which is what aligning a texture in the editor writes -- can be
+            // either. Getting it wrong flips the green channel of that face's
+            // normal map, which reads as light arriving from the wrong side
+            // rather than as a handedness bug.
+            let handed = if dot(cross(n, u_axis), v_axis) < 0.0 { -1.0f32 } else { 1.0 };
             for p in &ordered {
                 g.positions.push(p[0] as f32);
                 g.positions.push(p[1] as f32);
@@ -602,6 +620,10 @@ pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
                 g.normals.push(n[0] as f32);
                 g.normals.push(n[1] as f32);
                 g.normals.push(n[2] as f32);
+                g.tangents.push(u_axis[0] as f32);
+                g.tangents.push(u_axis[1] as f32);
+                g.tangents.push(u_axis[2] as f32);
+                g.tangents.push(handed);
                 let uv = face.uv(*p);
                 g.uvs.push(uv[0] as f32);
                 g.uvs.push(uv[1] as f32);
@@ -618,6 +640,116 @@ pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
         .into_iter()
         .filter_map(|m| groups.remove(&m))
         .collect()
+}
+
+#[cfg(test)]
+mod tangent_tests {
+    use super::*;
+
+    fn wall() -> BrushDef {
+        BrushDef {
+            solids: vec![block_solid([-2.0, 0.0, -0.15], [2.0, 2.0, 0.15], "concrete")],
+            subtract: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn every_vertex_gets_a_tangent() {
+        let groups = brush_mesh(&wall());
+        for g in &groups {
+            assert_eq!(
+                g.tangents.len() / 4,
+                g.positions.len() / 3,
+                "four tangent floats per vertex"
+            );
+        }
+    }
+
+    /// The tangent must lie IN the face, not across it.
+    ///
+    /// A tangent with a component along the normal tilts the whole frame, so a
+    /// normal map would perturb the surface in a direction the surface does not
+    /// have -- lighting that is subtly wrong everywhere rather than obviously
+    /// wrong anywhere.
+    #[test]
+    fn a_tangent_is_perpendicular_to_its_face() {
+        for g in brush_mesh(&wall()) {
+            for i in 0..g.positions.len() / 3 {
+                let n = [g.normals[i * 3], g.normals[i * 3 + 1], g.normals[i * 3 + 2]];
+                let t = [g.tangents[i * 4], g.tangents[i * 4 + 1], g.tangents[i * 4 + 2]];
+                let d = n[0] * t[0] + n[1] * t[1] + n[2] * t[2];
+                assert!(d.abs() < 1e-5, "tangent {t:?} is not in the face of {n:?}: {d}");
+                let len = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
+                assert!((len - 1.0).abs() < 1e-5, "tangent must be unit: {len}");
+            }
+        }
+    }
+
+    /// Handedness is measured, not assumed.
+    ///
+    /// `default_axes` turns out to be consistently left-handed for all six
+    /// directions, so an unauthored box shows one sign -- pinned here so that a
+    /// change to those defaults is noticed rather than silently flipping every
+    /// wall's normal map. What is NOT fixed is an AUTHORED axis pair, which is
+    /// what aligning a texture in the editor writes, and which the next test
+    /// covers.
+    #[test]
+    fn an_unauthored_box_has_one_consistent_handedness() {
+        let mut signs = std::collections::HashSet::new();
+        for g in brush_mesh(&wall()) {
+            for i in 0..g.tangents.len() / 4 {
+                signs.insert(g.tangents[i * 4 + 3].to_bits());
+            }
+        }
+        assert_eq!(signs.len(), 1, "the defaults should agree with each other: {signs:?}");
+        assert_eq!(
+            f32::from_bits(*signs.iter().next().unwrap()),
+            -1.0,
+            "default_axes is left-handed; if this changed, every normal map moved"
+        );
+    }
+
+    #[test]
+    fn an_authored_flip_flips_the_reported_handedness() {
+        // The case the measurement exists for. Reversing v mirrors the basis,
+        // and a renderer told otherwise lights the face from the wrong side.
+        let mut solid = block_solid([-2.0, 0.0, -0.15], [2.0, 2.0, 0.15], "concrete");
+        let (u, v) = solid.faces[0].axes();
+        solid.faces[0].u_axis = Some(u);
+        solid.faces[0].v_axis = Some([-v[0], -v[1], -v[2]]);
+        let flipped = BrushDef { solids: vec![solid], subtract: Vec::new() };
+
+        let mut signs = std::collections::HashSet::new();
+        for g in brush_mesh(&flipped) {
+            for i in 0..g.tangents.len() / 4 {
+                signs.insert(g.tangents[i * 4 + 3].to_bits());
+            }
+        }
+        assert_eq!(
+            signs.len(),
+            2,
+            "one flipped face must differ from the five that were not: {signs:?}"
+        );
+    }
+
+    /// The tangent is the axis the uv was generated from, not a guess at it.
+    ///
+    /// Stepping along the tangent must increase u and leave v alone. If the two
+    /// ever disagreed, a normal map would be applied rotated relative to the
+    /// texture it belongs to.
+    #[test]
+    fn stepping_along_the_tangent_increases_u() {
+        let solid = block_solid([-2.0, 0.0, -0.15], [2.0, 2.0, 0.15], "concrete");
+        for face in &solid.faces {
+            let (u_axis, _) = face.axes();
+            let p = [0.0, 1.0, 0.0];
+            let step = [p[0] + u_axis[0], p[1] + u_axis[1], p[2] + u_axis[2]];
+            let a = face.uv(p);
+            let b = face.uv(step);
+            assert!(b[0] > a[0], "u must increase along the tangent: {a:?} -> {b:?}");
+            assert!((b[1] - a[1]).abs() < 1e-9, "and v must not move: {a:?} -> {b:?}");
+        }
+    }
 }
 
 /// A stable fingerprint of the evaluated geometry.
