@@ -88,6 +88,7 @@ pub use scene::{
     Color3, CuboidDef,
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
     LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
+    SkyDef,
     PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
     BINDING_BUTTONS,
 };
