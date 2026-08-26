@@ -49,6 +49,8 @@ mod scene_physics;
 mod scene_rig;
 #[cfg(test)]
 mod scene_tests_hierarchy;
+#[cfg(test)]
+mod scene_tests_shipped;
 pub mod scatter;
 #[cfg(test)]
 mod scatter_tests;
