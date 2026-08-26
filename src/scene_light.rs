@@ -6,6 +6,13 @@ use crate::scene_cuboid::Color3;
 pub enum LightKind {
     Point,
     Spot,
+    /// The sun. Parallel rays from infinitely far away.
+    ///
+    /// `position` and `range` are ignored -- the beam travels along `direction`
+    /// and does not attenuate, which is what makes a sun a sun rather than a
+    /// very bright bulb a long way up. The renderer treats the FIRST directional
+    /// light in a scene as the shadow caster.
+    Directional,
 }
 
 impl Default for LightKind {
