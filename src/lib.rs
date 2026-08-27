@@ -40,6 +40,7 @@ pub mod brush;
 pub mod trigger_volume;
 pub mod brush_obj;
 pub mod damage;
+pub mod brush_lightmap;
 pub mod lightmaps;
 pub mod scene;
 mod scene_animation;
