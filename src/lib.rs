@@ -40,6 +40,7 @@ pub mod brush;
 pub mod trigger_volume;
 pub mod brush_obj;
 pub mod damage;
+pub mod lightmaps;
 pub mod scene;
 mod scene_animation;
 mod scene_cuboid;
@@ -88,6 +89,7 @@ pub use scene::{
     Color3, CuboidDef,
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
     LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
+    TeleportalDef,
     SkyDef,
     PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
     BINDING_BUTTONS,
