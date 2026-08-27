@@ -16,7 +16,7 @@ pub use crate::scene_cuboid::{
 pub use crate::scene_env::{
     LaserDef, ParticleEmitterDef, SoundSourceDef, SpawnPointDef, TeleportalDef,
 };
-pub use crate::scene_light::{GlareFacesDef, LightDef, LightKind};
+pub use crate::scene_light::{GlareFacesDef, LightDef, LightKind, LightMode};
 pub use crate::scene_physics::{BodyMode, ColliderShape, RigidBodyDef};
 pub use crate::scene_rig::{
     GripKind, GripPointDef, GripPoseDef, RigAttachmentDef, SliderJointDef, SocketDef,
