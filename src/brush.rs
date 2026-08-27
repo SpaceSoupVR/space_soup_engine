@@ -551,6 +551,14 @@ pub struct BrushMeshGroup {
     /// this data knows exactly: `uv` was GENERATED from these axes a few lines
     /// below, so anything that has to undo that is reconstructing an input.
     pub tangents: Vec<f32>,
+    /// Lightmap coordinate, 0..1 over the brush's own atlas -- two floats each.
+    ///
+    /// A SECOND set, unrelated to `uvs`. Texture uv is in tiles and shared
+    /// between faces so brickwork lines up across a corner; lighting needs one
+    /// unshared patch per face, or two walls sample each other's shadows. See
+    /// `brush_lightmap`, which decides the layout for the baker and for this
+    /// together so the two cannot disagree about which texel is which surface.
+    pub uv2: Vec<f32>,
     pub indices: Vec<u32>,
 }
 
@@ -576,8 +584,9 @@ pub fn polygon_winding(poly: &[Vec3], n: Vec3) -> f64 {
 pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: BTreeMap<String, BrushMeshGroup> = BTreeMap::new();
+    let layout = crate::brush_lightmap::brush_lightmap_layout(brush);
 
-    for solid in brush.evaluate() {
+    for (si, solid) in brush.evaluate().into_iter().enumerate() {
         let polys = solid_polygons(&solid);
         for (i, poly) in polys.into_iter().enumerate() {
             let Some(poly) = poly else { continue };
@@ -627,6 +636,16 @@ pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
                 let uv = face.uv(*p);
                 g.uvs.push(uv[0] as f32);
                 g.uvs.push(uv[1] as f32);
+                // A face with no chart -- degenerate, or dropped by the packer
+                // -- samples the atlas's first texel. That is a real texel of
+                // this brush's own bake rather than an out-of-range read, so it
+                // is lit plausibly instead of black or garbage.
+                let uv2 = match layout.chart(si, i) {
+                    Some(c) => c.uv2(*p, layout.width, layout.height),
+                    None => [0.0, 0.0],
+                };
+                g.uv2.push(uv2[0]);
+                g.uv2.push(uv2[1]);
             }
             for k in 1..ordered.len().saturating_sub(1) {
                 g.indices.push(base);
@@ -1054,5 +1073,66 @@ mod tests {
         let brush = wall_with_door();
         assert_eq!(brush.evaluate().len(), 3);
         assert!((brush.volume() - 2.97).abs() < 1e-6, "{}", brush.volume());
+    }
+}
+
+#[cfg(test)]
+mod uv2_tests {
+    use super::*;
+
+    fn room() -> BrushDef {
+        BrushDef {
+            solids: vec![block_solid([-4.0, 0.0, -4.0], [4.0, 3.0, 4.0], "default")],
+            subtract: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn every_vertex_gets_a_lightmap_coordinate() {
+        // One missing pair silently shifts every following vertex's lighting by
+        // one, which looks like a subtly wrong bake rather than a buffer that is
+        // the wrong length.
+        for g in brush_mesh(&room()) {
+            assert_eq!(g.uv2.len() / 2, g.positions.len() / 3, "material {}", g.material);
+        }
+    }
+
+    #[test]
+    fn lightmap_coordinates_stay_inside_the_atlas() {
+        for g in brush_mesh(&room()) {
+            for (i, c) in g.uv2.iter().enumerate() {
+                assert!((0.0..=1.0).contains(c), "uv2[{i}] = {c} is outside the atlas");
+            }
+        }
+    }
+
+    #[test]
+    fn the_two_uv_sets_are_genuinely_different() {
+        // Texture uv is in TILES and repeats; a lightmap coordinate is 0..1 and
+        // must not. If these ever came out equal, the lighting would be tiled
+        // across the wall along with the brickwork.
+        let g = &brush_mesh(&room())[0];
+        assert_ne!(g.uvs, g.uv2, "lightmap uv is just the texture uv");
+        assert!(
+            g.uvs.iter().any(|v| *v > 1.0),
+            "the fixture is too small to tile, so this cannot tell the two apart",
+        );
+    }
+
+    #[test]
+    fn two_faces_do_not_share_lightmap_space() {
+        // The whole point of a second uv set. Sampled at their centres, no two
+        // faces of a box may land on the same texel.
+        let brush = room();
+        let layout = crate::brush_lightmap::brush_lightmap_layout(&brush);
+        let mut seen = std::collections::HashSet::new();
+        for c in &layout.charts {
+            let uv = c.uv2(c.texel_world(c.w / 2, c.h / 2), layout.width, layout.height);
+            let key = (
+                (uv[0] * layout.width as f32) as u32,
+                (uv[1] * layout.height as f32) as u32,
+            );
+            assert!(seen.insert(key), "two faces sample texel {key:?}");
+        }
     }
 }
