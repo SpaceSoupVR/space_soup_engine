@@ -1039,6 +1039,7 @@ dependencies = [
  "avatar_ik",
  "glam 0.29.3",
  "gltf",
+ "image",
  "kira",
  "log",
  "mint",
