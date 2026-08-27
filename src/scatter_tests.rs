@@ -18,6 +18,8 @@ fn proto(mesh: &str) -> ScatterPrototype {
         weight: 1.0,
         scale_range: [1.0, 1.0],
         max_slope_deg: 90.0,
+        yaw_range: [0.0, 360.0],
+        tilt_deg: 0.0,
     }
 }
 
@@ -370,4 +372,77 @@ fn scatter_follows_a_real_heightfield() {
     let on_ridge = all.iter().filter(|i| i.position.x > 8.0).count();
     assert!(on_flat > 0, "the flat half should be planted");
     assert_eq!(on_ridge, 0, "{on_ridge} instances were planted on the steep ridge");
+}
+
+/// Emits the cross-language fixture for the JITTER fields.
+///
+/// The existing reference pins the default path, which proves adding
+/// `yaw_range` and `tilt_deg` moved nothing. It cannot say whether the two
+/// languages agree once those fields are actually used -- and a tilt composed
+/// in a different order, or a yaw lerped in degrees rather than turns, would
+/// look plausible in both and place a forest differently in each.
+///
+/// Run with `cargo test emit_jitter_reference -- --ignored --nocapture` and put
+/// the output in scene_editor_web/frontend/src/lib/__scatter_jitter_reference.json.
+#[test]
+#[ignore]
+fn emit_jitter_reference() {
+    let layer = jitter_reference_layer();
+    println!("[");
+    let all = resolve(&layer, &BumpyGround);
+    for (i, inst) in all.iter().enumerate() {
+        let comma = if i + 1 == all.len() { "" } else { "," };
+        println!(
+            "{{\"stroke\":{},\"slot\":{},\"prototype\":{},\"position\":[{},{},{}],\
+             \"rotation\":[{},{},{},{}],\"scale\":{}}}{comma}",
+            inst.key.stroke, inst.key.slot, inst.prototype,
+            inst.position.x, inst.position.y, inst.position.z,
+            inst.rotation.x, inst.rotation.y, inst.rotation.z, inst.rotation.w,
+            inst.scale,
+        );
+    }
+    println!("]");
+}
+
+/// A layer that actually exercises the jitter fields.
+fn jitter_reference_layer() -> ScatterLayer {
+    ScatterLayer {
+        id: "jitter".into(),
+        name: "jitter".into(),
+        seed: 424242,
+        prototypes: vec![
+            ScatterPrototype {
+                mesh: "rock.glb".into(),
+                weight: 2.0,
+                scale_range: [0.6, 2.2],
+                max_slope_deg: 60.0,
+                // A narrowed yaw, so the turns conversion is doing real work
+                // rather than collapsing to the identity the default gives.
+                yaw_range: [30.0, 150.0],
+                tilt_deg: 12.0,
+            },
+            ScatterPrototype {
+                mesh: "tree.glb".into(),
+                weight: 1.0,
+                scale_range: [1.0, 1.0],
+                max_slope_deg: 60.0,
+                yaw_range: [0.0, 360.0],
+                // Zero tilt alongside a tilted sibling, so the skip path and the
+                // composed path are both covered by one fixture.
+                tilt_deg: 0.0,
+            },
+        ],
+        strokes: vec![
+            ScatterStroke { id: 3, center: [2.0, -4.0], radius: 14.0, density: 0.3 },
+        ],
+        overrides: vec![],
+    }
+}
+
+struct BumpyGround;
+impl Ground for BumpyGround {
+    fn height_at(&self, x: f32, z: f32) -> Option<f32> {
+        if x.abs() > 40.0 || z.abs() > 40.0 { return None; }
+        Some((x * 0.15).sin() * 3.0 + (z * 0.11).cos() * 2.0)
+    }
 }

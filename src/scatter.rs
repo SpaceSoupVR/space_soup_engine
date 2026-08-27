@@ -40,11 +40,31 @@ pub struct ScatterPrototype {
     /// first ridge you look at.
     #[serde(default = "default_max_slope")]
     pub max_slope_deg: f32,
+
+    /// Yaw range in degrees, inclusive. The default is a free spin.
+    ///
+    /// DEGREES, converted to turns before the interpolation, and that ordering
+    /// is load-bearing: for the default `[0, 360]` the conversion is exactly
+    /// `360/360 = 1`, so the whole expression collapses to the one this used to
+    /// compute and every existing scene keeps its placements to the bit. Doing
+    /// the lerp in degrees and converting afterwards would round differently and
+    /// shift a forest by a fraction of a degree for no reason.
+    #[serde(default = "full_turn")]
+    pub yaw_range: [f32; 2],
+
+    /// Greatest random lean away from vertical, in degrees.
+    ///
+    /// Zero is not just the default but a SKIPPED path: at zero the rotation is
+    /// left exactly as the yaw produced it rather than composed with an identity
+    /// quaternion, because composing would round and existing scenes would move.
+    #[serde(default)]
+    pub tilt_deg: f32,
 }
 
 fn one() -> f32 { 1.0 }
 fn unit_range() -> [f32; 2] { [1.0, 1.0] }
 fn default_max_slope() -> f32 { 35.0 }
+fn full_turn() -> [f32; 2] { [0.0, 360.0] }
 
 /// One brush stroke: a disc the author painted over.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -230,8 +250,25 @@ pub fn resolve(layer: &ScatterLayer, ground: &dyn Ground) -> Vec<ScatterInstance
                 let [lo, hi] = layer.prototypes[prototype].scale_range;
                 lo + (hi - lo) * draw(layer.seed, stroke.id, slot, 3)
             };
-            let mut rotation =
-                Quat::from_rotation_y(draw(layer.seed, stroke.id, slot, 4) * std::f32::consts::TAU);
+            let mut rotation = {
+                let proto = &layer.prototypes[prototype];
+                let [lo, hi] = proto.yaw_range;
+                // Turns, not degrees -- see `yaw_range`.
+                let (lo, hi) = (lo / 360.0, hi / 360.0);
+                let turns = lo + (hi - lo) * draw(layer.seed, stroke.id, slot, 4);
+                let yaw = Quat::from_rotation_y(turns * std::f32::consts::TAU);
+                if proto.tilt_deg <= 0.0 {
+                    yaw
+                } else {
+                    // Streams 5 and 6. Channels are INDEXED rather than drawn in
+                    // sequence, so adding these leaves 0..4 producing exactly
+                    // what they did before.
+                    let lean = (draw(layer.seed, stroke.id, slot, 5) * proto.tilt_deg).to_radians();
+                    let az = draw(layer.seed, stroke.id, slot, 6) * std::f32::consts::TAU;
+                    let axis = Vec3::new(az.cos(), 0.0, az.sin());
+                    yaw * Quat::from_axis_angle(axis, lean)
+                }
+            };
 
             // Slope rejection happens BEFORE overrides: a tree the author moved
             // by hand onto a cliff is a decision, not a mistake to undo.
