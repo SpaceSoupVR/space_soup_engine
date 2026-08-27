@@ -91,6 +91,7 @@ pub use scene::{
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
     LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
     TeleportalDef,
+    LightMode,
     SkyDef,
     PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
     BINDING_BUTTONS,

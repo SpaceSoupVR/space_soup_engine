@@ -61,6 +61,7 @@ fn mul(a: Vec3, s: f64) -> Vec3 {
 
 /// One face, measured in its own plane, before anything is packed.
 struct Measured {
+    object: usize,
     solid: usize,
     face: usize,
     w: f64,
@@ -78,6 +79,14 @@ struct Measured {
 /// One face's patch of the atlas, and how it maps to the world.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BrushChart {
+    /// Index into the brush list this layout was built from.
+    ///
+    /// Present because the atlas is SCENE-WIDE rather than per object: every
+    /// brush in a level renders from one vertex buffer in one draw, so a
+    /// lightmap per object would force a draw call per object -- and on a
+    /// tile-based GPU draw calls are exactly the resource this feature is meant
+    /// to respect.
+    pub object: usize,
     pub solid: usize,
     pub face: usize,
     /// Texel rectangle, gutter excluded.
@@ -134,8 +143,10 @@ pub struct BrushLightmapLayout {
 }
 
 impl BrushLightmapLayout {
-    pub fn chart(&self, solid: usize, face: usize) -> Option<&BrushChart> {
-        self.charts.iter().find(|c| c.solid == solid && c.face == face)
+    pub fn chart(&self, object: usize, solid: usize, face: usize) -> Option<&BrushChart> {
+        self.charts
+            .iter()
+            .find(|c| c.object == object && c.solid == solid && c.face == face)
     }
 }
 
@@ -146,10 +157,20 @@ impl BrushLightmapLayout {
 /// relative sizes of unrelated faces -- so adding a small face somewhere could
 /// move every other chart, invalidating a bake that nothing else had changed.
 pub fn brush_lightmap_layout(brush: &BrushDef) -> BrushLightmapLayout {
-    let solids = brush.evaluate();
+    scene_brush_lightmap_layout(&[brush])
+}
 
+/// Pack every face of every brush in a level into a single atlas.
+///
+/// One atlas for the whole level rather than one per object, because the
+/// renderer draws every brush from one vertex buffer. Per-object atlases would
+/// mean per-object draw calls, which costs more on a Quest than the texture
+/// memory it would save.
+pub fn scene_brush_lightmap_layout(brushes: &[&BrushDef]) -> BrushLightmapLayout {
     // First pass: measure every face in its own plane, at its own density.
     let mut measured = Vec::new();
+    for (oi, brush) in brushes.iter().enumerate() {
+    let solids = brush.evaluate();
     for (si, solid) in solids.iter().enumerate() {
         for (fi, poly) in solid_polygons(solid).into_iter().enumerate() {
             let Some(poly) = poly else { continue };
@@ -169,6 +190,7 @@ pub fn brush_lightmap_layout(brush: &BrushDef) -> BrushLightmapLayout {
             }
             let texel = if face.lightmap_scale > 1e-6 { face.lightmap_scale } else { 0.25 };
             measured.push(Measured {
+                object: oi,
                 solid: si,
                 face: fi,
                 w: (max_u - min_u).max(0.0),
@@ -182,6 +204,7 @@ pub fn brush_lightmap_layout(brush: &BrushDef) -> BrushLightmapLayout {
                 texel,
             });
         }
+    }
     }
     if measured.is_empty() {
         return BrushLightmapLayout { width: 1, height: 1, charts: Vec::new(), density_scale: 1.0 };
@@ -266,6 +289,7 @@ fn try_pack(measured: &[Measured], density_scale: f64) -> Option<BrushLightmapLa
         let origin = add(origin, mul(m.normal, m.plane_d - along));
 
         charts.push(BrushChart {
+            object: m.object,
             solid: m.solid,
             face: m.face,
             x: cursor_x + GUTTER,
@@ -313,7 +337,7 @@ mod tests {
         let layout = brush_lightmap_layout(&room());
         assert_eq!(layout.charts.len(), 6);
         for f in 0..6 {
-            assert!(layout.chart(0, f).is_some(), "face {f} has nowhere to put its light");
+            assert!(layout.chart(0, 0, f).is_some(), "face {f} has nowhere to put its light");
         }
     }
 
@@ -450,6 +474,36 @@ mod tests {
         // The bake is keyed to this layout. If it wandered, a rebake would be
         // required after edits that changed nothing about the geometry.
         assert_eq!(brush_lightmap_layout(&room()), brush_lightmap_layout(&room()));
+    }
+
+    #[test]
+    fn two_brushes_share_one_atlas_without_colliding() {
+        // The whole level packs into a single atlas so it can be drawn in one
+        // call. Two brushes writing the same texels would have each lit by the
+        // other's shadows, which looks like a baker bug rather than a packing
+        // one.
+        let a = brush_at([0.0, 0.0, 0.0], [4.0, 3.0, 0.5]);
+        let b = brush_at([10.0, 0.0, 0.0], [12.0, 2.0, 0.5]);
+        let layout = scene_brush_lightmap_layout(&[&a, &b]);
+
+        assert!(layout.charts.iter().any(|c| c.object == 0));
+        assert!(layout.charts.iter().any(|c| c.object == 1));
+        for (i, x) in layout.charts.iter().enumerate() {
+            for y in layout.charts.iter().skip(i + 1) {
+                let apart_x = x.x + x.w + 1 <= y.x || y.x + y.w + 1 <= x.x;
+                let apart_y = x.y + x.h + 1 <= y.y || y.y + y.h + 1 <= x.y;
+                assert!(apart_x || apart_y, "charts of different brushes overlap:\n{x:?}\n{y:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn one_brush_packs_the_same_whether_asked_alone_or_as_a_scene() {
+        // brush_lightmap_layout is the scene function with one brush. If those
+        // ever diverged, the baker and the renderer could disagree simply
+        // because one of them went through the convenience wrapper.
+        let a = room();
+        assert_eq!(brush_lightmap_layout(&a), scene_brush_lightmap_layout(&[&a]));
     }
 
     #[test]

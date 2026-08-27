@@ -120,12 +120,26 @@ impl GameRuntime {
             .collect()
     }
 
+    /// The lights the GPU shades every frame.
+    ///
+    /// `Baked` lights are excluded: their contribution is already in the
+    /// lightmap, and uploading them as well would add the same light twice --
+    /// once occluded by the walls and once through them. The visible result is
+    /// a room that is too bright AND still leaks, which looks like two
+    /// unrelated bugs.
+    ///
+    /// Their index is still taken from the object's full light list, so a
+    /// light's id does not change when a sibling is switched to baked.
     pub(crate) fn collect_render_lights(&self) -> Vec<RenderLight> {
         self.scene
             .objects
             .iter()
             .flat_map(|o| {
-                o.lights.iter().enumerate().map(move |(i, light)| RenderLight {
+                o.lights
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, light)| light.mode == crate::LightMode::Realtime)
+                    .map(move |(i, light)| RenderLight {
                     id: format!("{}#{i}", o.id),
                     position: o.cuboid.position,
                     direction: o.cuboid.rotation * Vec3::NEG_Z,

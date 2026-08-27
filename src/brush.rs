@@ -582,9 +582,23 @@ pub fn polygon_winding(poly: &[Vec3], n: Vec3) -> f64 {
 /// insertion order. Sorting here would be tidier and would break the parity
 /// guarantee.
 pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
+    let layout = crate::brush_lightmap::brush_lightmap_layout(brush);
+    brush_mesh_in_atlas(brush, &layout, 0)
+}
+
+/// The same, for a brush that shares a level-wide lightmap atlas.
+///
+/// `object` is this brush's index in the list the layout was built from. Pass
+/// the wrong one and the geometry is perfect while its lighting is another
+/// brush's -- which looks like a broken bake rather than a mixed-up index, so
+/// the two are always produced from the same list in the same order.
+pub fn brush_mesh_in_atlas(
+    brush: &BrushDef,
+    layout: &crate::brush_lightmap::BrushLightmapLayout,
+    object: usize,
+) -> Vec<BrushMeshGroup> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: BTreeMap<String, BrushMeshGroup> = BTreeMap::new();
-    let layout = crate::brush_lightmap::brush_lightmap_layout(brush);
 
     for (si, solid) in brush.evaluate().into_iter().enumerate() {
         let polys = solid_polygons(&solid);
@@ -640,7 +654,7 @@ pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
                 // -- samples the atlas's first texel. That is a real texel of
                 // this brush's own bake rather than an out-of-range read, so it
                 // is lit plausibly instead of black or garbage.
-                let uv2 = match layout.chart(si, i) {
+                let uv2 = match layout.chart(object, si, i) {
                     Some(c) => c.uv2(*p, layout.width, layout.height),
                     None => [0.0, 0.0],
                 };
