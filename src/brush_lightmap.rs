@@ -77,7 +77,12 @@ struct Measured {
 }
 
 /// One face's patch of the atlas, and how it maps to the world.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Serialisable because the EDITOR needs it. Its brush geometry is built in
+/// JavaScript, and the only alternative to shipping this layout across is
+/// porting the packer -- which would be a second implementation of the one
+/// thing this module exists to keep single.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BrushChart {
     /// Index into the brush list this layout was built from.
     ///
@@ -132,7 +137,7 @@ impl BrushChart {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BrushLightmapLayout {
     pub width: u32,
     pub height: u32,
