@@ -918,3 +918,103 @@ fn per_trigger_condition_and_counter_gate_a_repeated_action() {
         "the counter stops at zero: the third feed is gated out by when mag_rounds>0"
     );
 }
+
+#[test]
+fn a_realtime_light_can_be_flickered_from_a_script() {
+    // The question this answers: does making a light flicker need the baked
+    // channels that do not exist yet? It does not -- a Realtime light is
+    // uploaded every frame, so a script that changes its intensity in
+    // on_update is already a flickering light.
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join("space_soup_engine_flicker_test");
+    let scenes_dir = dir.join("scenes");
+    std::fs::create_dir_all(&scenes_dir).unwrap();
+    std::fs::write(
+        dir.join("manifest.json"),
+        r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+    )
+    .unwrap();
+
+    // `t` accumulates dt, so the value depends on the frame rather than being
+    // a constant a broken implementation could also produce.
+    std::fs::write(
+        scenes_dir.join("test.json"),
+        r#"{
+            "name": "test",
+            "objects": [
+                {
+                    "id": "lamp",
+                    "cuboid": { "position": [0.0, 2.0, 0.0], "half_size": [0.1, 0.1, 0.1] },
+                    "lights": [{ "kind": "Point", "mode": "Realtime", "intensity": 5.0, "range": 10.0 }],
+                    "script": "fn on_update(dt) { set_light_intensity(\"lamp\", get_object_y(\"lamp\") * 10.0); move_object(\"lamp\", 0.0, get_object_y(\"lamp\") + 1.0, 0.0); }"
+                }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let mut rt = GameRuntime::load(&dir).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    let dt = 1.0 / 60.0;
+    let inputs = HashMap::new();
+
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        rt.update(dt, &inputs);
+        let lights = rt.collect_render_lights();
+        let lamp = lights.iter().find(|l| l.id.starts_with("lamp")).cloned();
+        seen.push(lamp.map(|l| l.intensity));
+    }
+
+    // Present every frame, and CHANGING -- a light stuck at its authored value
+    // would still be "present" and would prove nothing.
+    assert!(seen.iter().all(|v| v.is_some()), "the lamp left the render list: {seen:?}");
+    let values: Vec<f32> = seen.into_iter().map(|v| v.unwrap()).collect();
+    assert!(
+        values.windows(2).all(|w| w[1] > w[0]),
+        "a scripted intensity change did not reach the renderer: {values:?}",
+    );
+}
+
+#[test]
+fn a_baked_light_ignores_a_scripted_intensity_change() {
+    // The trap, pinned rather than left to be discovered. A Baked light is not
+    // uploaded -- its contribution is in the lightmap -- so set_light_intensity
+    // succeeds, changes the scene, and changes nothing anyone can see.
+    //
+    // This is the gap per-light baked channels would close. Until then the
+    // answer for a flickering light is to leave it Realtime.
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join("space_soup_engine_flicker_baked_test");
+    let scenes_dir = dir.join("scenes");
+    std::fs::create_dir_all(&scenes_dir).unwrap();
+    std::fs::write(
+        dir.join("manifest.json"),
+        r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scenes_dir.join("test.json"),
+        r#"{
+            "name": "test",
+            "objects": [
+                {
+                    "id": "lamp",
+                    "cuboid": { "position": [0.0, 2.0, 0.0], "half_size": [0.1, 0.1, 0.1] },
+                    "lights": [{ "kind": "Point", "mode": "Baked", "intensity": 5.0, "range": 10.0 }],
+                    "script": "fn on_update(dt) { set_light_intensity(\"lamp\", 99.0); }"
+                }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let mut rt = GameRuntime::load(&dir).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    rt.update(1.0 / 60.0, &HashMap::new());
+
+    assert!(
+        rt.collect_render_lights().iter().all(|l| !l.id.starts_with("lamp")),
+        "a baked light was uploaded for real-time shading, which would double-count it",
+    );
+}
