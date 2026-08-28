@@ -128,6 +128,8 @@ pub fn load_scene_lightmaps(game_dir: &Path, scene_name: &str) -> Vec<LoadedLigh
         return Vec::new();
     }
 
+    warn_if_stale(game_dir, scene_name, &dir);
+
     let mut out = Vec::new();
     for entry in index.entries {
         match std::fs::read(dir.join(&entry.file)) {
@@ -186,6 +188,39 @@ pub fn write_scene_lightmaps(
 /// Index the loaded set by object id, which is how the renderer asks for one.
 pub fn by_object(maps: Vec<LoadedLightmap>) -> HashMap<String, LoadedLightmap> {
     maps.into_iter().map(|m| (m.object_id.clone(), m)).collect()
+}
+
+/// Say so when the scene has been edited since it was baked.
+///
+/// The bake and the scene it came from have to ship together, and nothing
+/// enforces that: a level saved without a rebake, or committed without its
+/// lightmaps, loads perfectly and is lit by the wrong thing. On a headset there
+/// is no editor to notice with, so the only chance of catching it is the log at
+/// load -- which is where anybody debugging "the lighting looks wrong on device"
+/// is already looking.
+///
+/// A warning rather than a refusal. A slightly stale bake still looks far better
+/// than none, and a level that would not load because its lighting was out of
+/// date would be a much worse failure than the one this is about.
+fn warn_if_stale(game_dir: &Path, scene_name: &str, lightmap_dir: &Path) {
+    let scene = game_dir.join("scenes").join(format!("{scene_name}.json"));
+    let (Ok(scene_meta), Ok(index_meta)) = (
+        std::fs::metadata(&scene),
+        std::fs::metadata(lightmap_dir.join("index.json")),
+    ) else {
+        return;
+    };
+    let (Ok(scene_time), Ok(index_time)) = (scene_meta.modified(), index_meta.modified()) else {
+        return;
+    };
+    if scene_time > index_time {
+        log_warn(&format!(
+            "lightmaps: {} was edited after it was baked -- the lighting you are seeing is \
+             from an older version of this level. Re-save it in the editor, or run \
+             `bake lightmap <scene> --write <game-dir>`",
+            scene.display(),
+        ));
+    }
 }
 
 fn decode_png_rgba(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
@@ -333,5 +368,37 @@ mod tests {
         let loaded = by_object(load_scene_lightmaps(&dir, "level"));
         assert_eq!(loaded.len(), 1);
         assert!(loaded.contains_key("b"));
+    }
+}
+
+#[cfg(test)]
+mod staleness_tests {
+    use super::*;
+
+    #[test]
+    fn a_scene_edited_after_its_bake_still_loads() {
+        // A warning, never a refusal: a slightly stale bake looks far better
+        // than none, and a level that would not load because its lighting was
+        // out of date is a worse failure than the one being guarded against.
+        let dir = std::env::temp_dir().join("ss_lm_stale");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([9, 9, 9, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        write_scene_lightmaps(&dir, "level", &[
+            ("wall".to_string(), LightmapTarget::Brush, 1, 1, png),
+        ]).unwrap();
+
+        // Touched after the bake, which is exactly the drift being warned about.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(dir.join("scenes/level.json"), "{}").unwrap();
+
+        let loaded = load_scene_lightmaps(&dir, "level");
+        assert_eq!(loaded.len(), 1, "a stale bake must still load");
+        assert_eq!(loaded[0].rgba[0], 9);
     }
 }
