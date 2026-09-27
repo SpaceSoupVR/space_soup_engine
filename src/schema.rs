@@ -141,8 +141,10 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "laser",
         "spawn_point",
         "teleportal",
+        "reflection_probe",
         "breakable",
         "trigger_volume",
+        "solid",
     ]
 }
 
@@ -182,6 +184,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
             comp!(laser, "LaserDef", Optional, laser_fields()),
             comp!(spawn_point, "SpawnPointDef", Optional),
             comp!(teleportal, "TeleportalDef", Optional, teleportal_fields()),
+            comp!(reflection_probe, "ReflectionProbeDef", Optional, reflection_probe_fields()),
             comp!(breakable, "BreakableDef", Optional, breakable_fields()),
             comp!(
                 trigger_volume,
@@ -189,6 +192,9 @@ pub fn game_object_schema() -> SchemaDescriptor {
                 Optional,
                 trigger_volume_fields()
             ),
+            // `Option<bool>`: absent is automatic (a brush is solid unless it is
+            // a trigger), present is an author's override either way.
+            comp!(solid, "bool", Optional),
         ],
     }
 }
@@ -288,6 +294,13 @@ fn particle_emitter_fields() -> Vec<FieldDescriptor> {
     ]
 }
 
+/// A probe's only authorable knob. Its position and the room it corrects
+/// against both come from the object's own cuboid, so there is nothing else to
+/// type -- move and size the object and the probe follows.
+fn reflection_probe_fields() -> Vec<FieldDescriptor> {
+    vec![field!(resolution, Number)]
+}
+
 fn teleportal_fields() -> Vec<FieldDescriptor> {
     #[allow(dead_code, unused_variables)]
     fn exhaustive(t: crate::scene::TeleportalDef) {
@@ -339,8 +352,10 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         laser,
         spawn_point,
         teleportal,
+        reflection_probe,
         breakable,
         trigger_volume,
+        solid,
         // Level geometry made of planes -- a third shape kind beside `cuboid`
         // and `mesh`, not a component you add to an object. Which shape an
         // object has is authored in the Geometry panel by creating it, the same
@@ -373,7 +388,7 @@ mod tests {
 
     #[test]
     fn schema_has_every_authorable_component() {
-        assert_eq!(game_object_schema().components.len(), 24);
+        assert_eq!(game_object_schema().components.len(), 26);
     }
 
     /// `field_order` is consumed by a writer in another language, so a drift
@@ -400,6 +415,11 @@ mod tests {
         // the test fails describing a reorder that did not happen.
         let skipped = [
             "grip_pose", "uuid", "parent", "tags", "breakable", "brush", "trigger_volume",
+            // `reflection_probe` carries skip_serializing_if too: a scene with
+            // no probes should not gain a null field on its next save.
+            "reflection_probe",
+            // Absent means automatic; see GameObject::solid.
+            "solid",
         ];
         let expected: Vec<&str> = game_object_field_order()
             .into_iter()
@@ -475,7 +495,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 24);
+        assert_eq!(v["components"].as_array().unwrap().len(), 26);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }

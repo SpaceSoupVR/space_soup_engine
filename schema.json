@@ -231,6 +231,18 @@
       ]
     },
     {
+      "name": "reflection_probe",
+      "rust_type": "ReflectionProbeDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "resolution",
+          "kind": "number",
+          "optional": false
+        }
+      ]
+    },
+    {
       "name": "breakable",
       "rust_type": "BreakableDef",
       "cardinality": "optional",
@@ -263,6 +275,11 @@
           "optional": false
         }
       ]
+    },
+    {
+      "name": "solid",
+      "rust_type": "bool",
+      "cardinality": "optional"
     }
   ],
   "field_order": [
@@ -295,7 +312,9 @@
     "laser",
     "spawn_point",
     "teleportal",
+    "reflection_probe",
     "breakable",
-    "trigger_volume"
+    "trigger_volume",
+    "solid"
   ]
 }

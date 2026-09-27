@@ -1049,6 +1049,7 @@ dependencies = [
  "serde",
  "serde_json",
  "space_soup_protocol",
+ "space_soup_sky",
 ]
 
 [[package]]
@@ -1059,6 +1060,14 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "space_soup_sky"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
 ]
 
 [[package]]

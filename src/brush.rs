@@ -144,8 +144,21 @@ fn default_material() -> String {
 fn default_scale() -> [f64; 2] {
     [2.0, 2.0]
 }
+/// Metres per lightmap texel on a face that does not choose its own.
+///
+/// MEASURED, not guessed. At the old 0.25 a wall chart came out 24x80 texels
+/// for a 6 x 20 m surface, so one texel was a 25 cm square -- and every
+/// artefact reported from the headset (the "light rectangles that appear and
+/// disappear", the corner leak on the back wall) measured as flat plateaus with
+/// hard steps between them in the rendered frame, which is the shape of a
+/// lightmap texel and not of any shader gradient. Bilinear filtering then
+/// spreads a wrong texel a full 25 cm into the wall beside it.
+///
+/// 0.125 is the finest that still packs inside `MAX_ATLAS` at this level's
+/// size; Unity's own example scenes bake at 32 texels per unit, so this is
+/// still coarse by contemporary standards rather than extravagant.
 fn default_lightmap() -> f64 {
-    0.25
+    0.125
 }
 
 impl BrushFace {
@@ -387,6 +400,122 @@ pub fn contains_point(solid: &BrushSolid, p: Vec3, tolerance: f64) -> bool {
     solid.faces.iter().all(|f| f.plane().distance(p) <= tolerance)
 }
 
+/* ------------------------------------------------- EXPOSED SURFACE -- */
+
+/// How far in front of a face a point must be to count as the space that face
+/// looks into. Well clear of `EPS`, so a piece that merely TOUCHES the face's
+/// plane from behind is never mistaken for one covering it from in front.
+const EXPOSURE_PROBE: f64 = 1e-3;
+
+/// Twice the signed area of a convex polygon, measured along `n`.
+fn polygon_area(poly: &[Vec3], n: Vec3) -> f64 {
+    polygon_winding(poly, n).abs() * 0.5
+}
+
+fn polygon_centroid(poly: &[Vec3]) -> Vec3 {
+    let mut c = [0.0; 3];
+    for p in poly {
+        c = add(c, *p);
+    }
+    scale(c, 1.0 / poly.len().max(1) as f64)
+}
+
+/// `poly` minus the part of it that `cover` sits directly in front of.
+///
+/// Splits the polygon by each of the cover's planes in turn: the part outside a
+/// plane cannot be under the cover and is kept; what survives every plane lies
+/// within the cover's footprint. That remainder is discarded only if the space
+/// just in front of it is actually INSIDE the cover -- a piece touching the
+/// face from behind shares its footprint and covers nothing.
+///
+/// A cover plane coplanar with the face is skipped rather than split on: every
+/// point of the polygon lies on it, and `clip_polygon` would keep the whole
+/// polygon on BOTH sides.
+fn subtract_cover(poly: &[Vec3], face: Plane, cover: &BrushSolid) -> Vec<Vec<Vec3>> {
+    let mut kept = Vec::new();
+    let mut rest: Vec<Vec3> = poly.to_vec();
+    for f in &cover.faces {
+        let pl = f.plane();
+        let parallel = dot(pl.n, face.n).abs() > 1.0 - 1e-9;
+        if parallel && rest.iter().all(|p| pl.distance(*p).abs() <= EPS) {
+            continue;
+        }
+        let outside = dedupe(clip_polygon(&rest, pl.flipped()));
+        let inside = dedupe(clip_polygon(&rest, pl));
+        if outside.len() >= 3 && polygon_area(&outside, face.n) > EPS * EPS {
+            kept.push(outside);
+        }
+        rest = inside;
+        if rest.len() < 3 {
+            return kept;
+        }
+    }
+    let probe = add(polygon_centroid(&rest), scale(face.n, EXPOSURE_PROBE));
+    if !contains_point(cover, probe, -EPS) {
+        kept.push(rest);
+    }
+    kept
+}
+
+/// Every face of every piece, cut down to the parts that border EMPTY SPACE.
+///
+/// A real solid has surface only where it meets air. `evaluate` returns a
+/// brush as convex pieces that touch one another, and each piece's faces are
+/// whole: the face a piece presses against its neighbour, and the stretch of a
+/// long wall that runs on behind the ceiling slab or into the end wall, are
+/// all still there. Drawn and lightmapped, those hidden parts made every
+/// junction in `test_room` two surfaces passing through each other instead of
+/// one shared edge -- the main hall alone rendered 17 faces that lie entirely
+/// inside solid geometry, and its side walls' inner faces ran 0.3 m up through
+/// the ceiling slab and into both end walls. Edge samples shaded from those
+/// hidden parts are lit from positions inside the walls, which the headset drew
+/// as a dotted seam along the ceiling (2026-09-23).
+///
+/// This is the step map compilers have always taken after CSG (qbsp, vbsp):
+/// clip each face by the pieces in front of it and keep what is left.
+///
+/// Indexed `[solid][face]`, each entry a list of convex fragments (empty for a
+/// face with nothing exposed). `solid_polygons` is deliberately left whole --
+/// physics builds convex hulls from it and needs every piece complete.
+pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
+    let bounds: Vec<Option<(Vec3, Vec3)>> = solids.iter().map(solid_bounds).collect();
+    let overlaps = |a: (Vec3, Vec3), b: (Vec3, Vec3)| {
+        (0..3).all(|k| a.0[k] <= b.1[k] + EPS && b.0[k] <= a.1[k] + EPS)
+    };
+    solids
+        .iter()
+        .enumerate()
+        .map(|(si, solid)| {
+            solid_polygons(solid)
+                .into_iter()
+                .enumerate()
+                .map(|(fi, poly)| {
+                    let Some(poly) = poly else { return Vec::new() };
+                    let face = solid.faces[fi].plane();
+                    let mut frags = vec![poly];
+                    for (oj, other) in solids.iter().enumerate() {
+                        if oj == si {
+                            continue;
+                        }
+                        let (Some(a), Some(b)) = (bounds[si], bounds[oj]) else { continue };
+                        if !overlaps(a, b) {
+                            continue;
+                        }
+                        frags = frags
+                            .iter()
+                            .flat_map(|f| subtract_cover(f, face, other))
+                            .collect();
+                        if frags.is_empty() {
+                            break;
+                        }
+                    }
+                    frags
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /* ------------------------------------------------------------------- CSG -- */
 
 fn face_inheriting(pl: Plane, from: Option<&BrushFace>) -> BrushFace {
@@ -592,6 +721,70 @@ pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
 /// the wrong one and the geometry is perfect while its lighting is another
 /// brush's -- which looks like a broken bake rather than a mixed-up index, so
 /// the two are always produced from the same list in the same order.
+/// One brush face after CSG, with every attribute the renderer needs, its
+/// vertices in winding order.
+///
+/// The per-polygon half of `brush_mesh_in_atlas`, separated so a caller that
+/// needs to work on whole polygons -- T-junction repair, which cannot be done
+/// on triangles -- shares this attribute computation instead of copying it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BrushPolygon {
+    pub material: String,
+    pub positions: Vec<[f32; 3]>,
+    pub normal: [f32; 3],
+    /// The face's u axis; `w` is the bitangent's handedness.
+    pub tangent: [f32; 4],
+    pub uvs: Vec<[f32; 2]>,
+    pub uv2: Vec<[f32; 2]>,
+}
+
+pub fn brush_polygons_in_atlas(
+    brush: &BrushDef,
+    layout: &crate::brush_lightmap::BrushLightmapLayout,
+    object: usize,
+) -> Vec<BrushPolygon> {
+    let mut out = Vec::new();
+    let solids = brush.evaluate();
+    // EXPOSED SURFACE ONLY -- see `exposed_fragments`. A face with several
+    // fragments emits one polygon per fragment, all sharing the face's chart.
+    let exposed = exposed_fragments(&solids);
+    for (si, solid) in solids.iter().enumerate() {
+        for (i, poly) in exposed[si]
+            .iter()
+            .enumerate()
+            .flat_map(|(i, frags)| frags.iter().map(move |f| (i, f.clone())))
+        {
+            let face = &solid.faces[i];
+            let n = face.plane().n;
+            let ordered: Vec<Vec3> = if polygon_winding(&poly, n) < 0.0 {
+                poly.iter().rev().copied().collect()
+            } else {
+                poly
+            };
+            let (u_axis, v_axis) = face.axes();
+            let handed = if dot(cross(n, u_axis), v_axis) < 0.0 { -1.0f32 } else { 1.0 };
+            let mut p = BrushPolygon {
+                material: face.material.clone(),
+                normal: [n[0] as f32, n[1] as f32, n[2] as f32],
+                tangent: [u_axis[0] as f32, u_axis[1] as f32, u_axis[2] as f32, handed],
+                ..Default::default()
+            };
+            let chart = layout.chart(object, si, i);
+            for q in &ordered {
+                p.positions.push([q[0] as f32, q[1] as f32, q[2] as f32]);
+                let uv = face.uv(*q);
+                p.uvs.push([uv[0] as f32, uv[1] as f32]);
+                p.uv2.push(match chart {
+                    Some(c) => c.uv2(*q, layout.width, layout.height),
+                    None => [0.0, 0.0],
+                });
+            }
+            out.push(p);
+        }
+    }
+    out
+}
+
 pub fn brush_mesh_in_atlas(
     brush: &BrushDef,
     layout: &crate::brush_lightmap::BrushLightmapLayout,
@@ -600,72 +793,30 @@ pub fn brush_mesh_in_atlas(
     let mut order: Vec<String> = Vec::new();
     let mut groups: BTreeMap<String, BrushMeshGroup> = BTreeMap::new();
 
-    for (si, solid) in brush.evaluate().into_iter().enumerate() {
-        let polys = solid_polygons(&solid);
-        for (i, poly) in polys.into_iter().enumerate() {
-            let Some(poly) = poly else { continue };
-            let face = &solid.faces[i];
-            let material = face.material.clone();
-            if !groups.contains_key(&material) {
-                order.push(material.clone());
-                groups.insert(
-                    material.clone(),
-                    BrushMeshGroup {
-                        material: material.clone(),
-                        ..Default::default()
-                    },
-                );
-            }
-            let g = groups.get_mut(&material).expect("just inserted");
-            let base = (g.positions.len() / 3) as u32;
-            let n = face.plane().n;
-            // Measure the winding rather than assuming it. The seed polygon's
-            // handedness relative to the outward normal is not guaranteed, and
-            // assuming is how a solid comes out invisible from outside.
-            let ordered: Vec<Vec3> = if polygon_winding(&poly, n) < 0.0 {
-                poly.iter().rev().copied().collect()
-            } else {
-                poly
-            };
-            let (u_axis, v_axis) = face.axes();
-            // Whether v runs the same way as n x u. Measured rather than
-            // assumed: `default_axes` happens to be consistently left-handed
-            // for all six directions, but a face whose axes were AUTHORED --
-            // which is what aligning a texture in the editor writes -- can be
-            // either. Getting it wrong flips the green channel of that face's
-            // normal map, which reads as light arriving from the wrong side
-            // rather than as a handedness bug.
-            let handed = if dot(cross(n, u_axis), v_axis) < 0.0 { -1.0f32 } else { 1.0 };
-            for p in &ordered {
-                g.positions.push(p[0] as f32);
-                g.positions.push(p[1] as f32);
-                g.positions.push(p[2] as f32);
-                g.normals.push(n[0] as f32);
-                g.normals.push(n[1] as f32);
-                g.normals.push(n[2] as f32);
-                g.tangents.push(u_axis[0] as f32);
-                g.tangents.push(u_axis[1] as f32);
-                g.tangents.push(u_axis[2] as f32);
-                g.tangents.push(handed);
-                let uv = face.uv(*p);
-                g.uvs.push(uv[0] as f32);
-                g.uvs.push(uv[1] as f32);
-                // A face with no chart -- degenerate, or dropped by the packer
-                // -- samples the atlas's first texel. That is a real texel of
-                // this brush's own bake rather than an out-of-range read, so it
-                // is lit plausibly instead of black or garbage.
-                let uv2 = match layout.chart(object, si, i) {
-                    Some(c) => c.uv2(*p, layout.width, layout.height),
-                    None => [0.0, 0.0],
-                };
-                g.uv2.push(uv2[0]);
-                g.uv2.push(uv2[1]);
-            }
-            for k in 1..ordered.len().saturating_sub(1) {
-                g.indices.push(base);
-                g.indices.push(base + k as u32);
-                g.indices.push(base + k as u32 + 1);
-            }
+    for poly in brush_polygons_in_atlas(brush, layout, object) {
+        if !groups.contains_key(&poly.material) {
+            order.push(poly.material.clone());
+            groups.insert(
+                poly.material.clone(),
+                BrushMeshGroup {
+                    material: poly.material.clone(),
+                    ..Default::default()
+                },
+            );
+        }
+        let g = groups.get_mut(&poly.material).expect("just inserted");
+        let base = (g.positions.len() / 3) as u32;
+        for k in 0..poly.positions.len() {
+            g.positions.extend_from_slice(&poly.positions[k]);
+            g.normals.extend_from_slice(&poly.normal);
+            g.tangents.extend_from_slice(&poly.tangent);
+            g.uvs.extend_from_slice(&poly.uvs[k]);
+            g.uv2.extend_from_slice(&poly.uv2[k]);
+        }
+        for k in 1..poly.positions.len().saturating_sub(1) {
+            g.indices.push(base);
+            g.indices.push(base + k as u32);
+            g.indices.push(base + k as u32 + 1);
         }
     }
 
@@ -1007,9 +1158,14 @@ mod tests {
             3876927263,
             "plain block disagrees with the editor"
         );
+        // Moved from 2111997196 on 2026-09-23, deliberately and in BOTH
+        // implementations at once: the mesh is now exposed surface only (see
+        // `exposed_fragments` / `exposedFragments`), which drops the faces the
+        // door cut leaves pressed between pieces. Recomputed by running the
+        // editor's `brushChecksum` on this same brush.
         assert_eq!(
             brush_checksum(&wall_with_door()),
-            2111997196,
+            4259575697,
             "wall with a doorway disagrees with the editor"
         );
     }
@@ -1148,5 +1304,104 @@ mod uv2_tests {
             );
             assert!(seen.insert(key), "two faces sample texel {key:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod exposed_surface_tests {
+    use super::*;
+
+    fn front_and_back(frag: &[Vec3], n: Vec3) -> (Vec3, Vec3) {
+        let c = polygon_centroid(frag);
+        (add(c, scale(n, 0.01)), sub(c, scale(n, 0.01)))
+    }
+
+    fn inside_any(solids: &[BrushSolid], p: Vec3) -> bool {
+        solids.iter().any(|s| contains_point(s, p, -1e-4))
+    }
+
+    /// Two blocks pressed together are one solid to anyone standing outside:
+    /// the faces where they meet are inside it and must not survive.
+    #[test]
+    fn faces_two_pieces_press_together_are_gone() {
+        let a = block_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], "default");
+        let b = block_solid([1.0, 0.0, 0.0], [2.0, 1.0, 1.0], "default");
+        let solids = vec![a, b];
+        let exposed = exposed_fragments(&solids);
+        for (si, solid) in solids.iter().enumerate() {
+            for (fi, face) in solid.faces.iter().enumerate() {
+                let n = face.plane().n;
+                for frag in &exposed[si][fi] {
+                    let (front, _) = front_and_back(frag, n);
+                    assert!(
+                        !inside_any(&solids, front),
+                        "solid {si} face {fi} survives facing INTO the other block",
+                    );
+                }
+            }
+        }
+        let total: usize = exposed.iter().flatten().map(|f| f.len()).sum();
+        assert_eq!(total, 10, "a 2x1x1 box has 10 unit faces showing, not {total}");
+    }
+
+    /// A wall that runs on behind a slab keeps only the part below it.
+    #[test]
+    fn a_face_is_trimmed_where_another_piece_covers_it() {
+        // A tall slab with a ceiling slab lying against its inner face.
+        let wall = block_solid([2.7, 0.0, -2.0], [3.0, 3.4, 2.0], "default");
+        let ceiling = block_solid([-2.7, 3.1, -2.0], [2.7, 3.4, 2.0], "default");
+        let solids = vec![wall, ceiling];
+        let exposed = exposed_fragments(&solids);
+        let inner = solids[0]
+            .faces
+            .iter()
+            .position(|f| f.plane().n[0] < -0.9)
+            .expect("the wall's inner face");
+        let frags = &exposed[0][inner];
+        assert!(!frags.is_empty(), "the inner face vanished entirely");
+        let top = frags.iter().flatten().map(|p| p[1]).fold(f64::MIN, f64::max);
+        // The ceiling covers only x < 2.7; the wall face sits AT x = 2.7 and
+        // the ceiling piece touches it from in front for y 3.1..3.4.
+        assert!((top - 3.1).abs() < 1e-6, "inner wall face reaches y = {top}, not 3.1");
+    }
+
+    /// THE LEVEL: every surface the main hall draws must face empty space and
+    /// have solid behind it, and its ceiling must span the room and no more.
+    #[test]
+    fn the_shipped_hall_draws_only_surface_that_borders_empty_space() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../game/scenes/test_room.json");
+        let scene = crate::scene::Scene::load(std::path::Path::new(path)).expect("test_room loads");
+        let hall = scene
+            .objects
+            .iter()
+            .find(|o| o.id == "hall_shell")
+            .and_then(|o| o.brush.as_ref())
+            .expect("hall_shell brush");
+        let solids = hall.evaluate();
+        let exposed = exposed_fragments(&solids);
+        let mut buried = 0;
+        let mut ceiling_z = (f64::MAX, f64::MIN);
+        for (si, solid) in solids.iter().enumerate() {
+            for (fi, face) in solid.faces.iter().enumerate() {
+                let n = face.plane().n;
+                for frag in &exposed[si][fi] {
+                    let (front, back) = front_and_back(frag, n);
+                    if inside_any(&solids, front) || !inside_any(&solids, back) {
+                        buried += 1;
+                    }
+                    if n[1] < -0.9 && (frag[0][1] - 3.1).abs() < 1e-6 {
+                        for p in frag {
+                            ceiling_z = (ceiling_z.0.min(p[2]), ceiling_z.1.max(p[2]));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(buried, 0, "{buried} drawn fragments face into solid or have nothing behind them");
+        assert!(
+            (ceiling_z.0 + 15.7).abs() < 1e-6 && (ceiling_z.1 - 3.7).abs() < 1e-6,
+            "the hall ceiling spans z {:?}; the room is -15.7..3.7",
+            ceiling_z,
+        );
     }
 }

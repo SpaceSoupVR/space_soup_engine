@@ -50,6 +50,9 @@ pub struct RenderMesh {
     pub position: Vec3,
     pub rotation: Quat,
     pub scale: Vec3,
+    /// How hard this mesh's emissive materials are driven -- 0 for anything
+    /// that is not a lit fixture. See `space_soup_engine::scene_light::emissive_drive`.
+    pub emissive_drive: f32,
     pub manual_part_blends: HashMap<String, f32>,
     /// Parts of this model that must not be drawn -- see GameObject::hidden_parts.
     pub hidden_parts: Vec<String>,
@@ -73,6 +76,8 @@ pub struct RenderLight {
     pub intensity: f32,
     pub range: f32,
     pub cone_angle_deg: f32,
+    /// Full angle of the beam's bright core; 0 means no hotspot.
+    pub inner_cone_angle_deg: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -410,7 +415,9 @@ impl GameRuntime {
                 continue;
             }
 
-            let prev_xz = (locomotion.player_offset.x, locomotion.player_offset.z);
+            // No head: this rig was built from the client's offset, not this
+            // one. See `Locomotion::collision_start`.
+            let collision_start = locomotion.collision_start(None);
             locomotion.update(dt, &frame.locomotion_input, &rig, frame.teleport_target);
             // SRV LOCO DIAGNOSTIC: what the SERVER received from the client + the raw
             // result of locomotion.update (BEFORE wall/ground physics). recv~0 while the
@@ -425,7 +432,7 @@ impl GameRuntime {
                     locomotion.player_yaw.to_degrees()
                 );
             }
-            locomotion.apply_collision(&self.rigid_physics, prev_xz);
+            locomotion.apply_collision(&self.rigid_physics, collision_start);
         }
 
         self.update_animations(dt);

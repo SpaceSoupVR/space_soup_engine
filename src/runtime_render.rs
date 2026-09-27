@@ -99,6 +99,19 @@ impl GameRuntime {
                     position: o.cuboid.position,
                     rotation: o.cuboid.rotation * mesh_ref.rotation_offset,
                     scale: mesh_ref.scale,
+                    // A FIXTURE drives its own emissive from the lights it
+                    // carries. The brightest one wins rather than the sum: two
+                    // bulbs in one housing do not make the glass twice as bright,
+                    // and summing would let a chandelier's glass saturate purely
+                    // from the count of its lamps.
+                    //
+                    // Zero for every object with no lights, which is almost all
+                    // of them, so nothing else in any scene changes appearance.
+                    emissive_drive: o
+                        .lights
+                        .iter()
+                        .map(crate::scene_light::emissive_drive)
+                        .fold(0.0f32, f32::max),
                     manual_part_blends: self.manual_part_blends.get(&o.id).cloned().unwrap_or_default(),
                     // The damage ledger decides this, not the authored list.
                     // Damage therefore reaches the headset through a field that
@@ -139,16 +152,39 @@ impl GameRuntime {
                     .iter()
                     .enumerate()
                     .filter(|(_, light)| light.mode == crate::LightMode::Realtime)
-                    .map(move |(i, light)| RenderLight {
+                    .map(move |(i, light)| {
+                    // THROUGH THE SOCKET, exactly as the baker does.
+                    //
+                    // This used to take the object's own position and rotation
+                    // and ignore `light.socket` entirely, so a fixture baked its
+                    // shadows and bounce from the bulb while RENDERING its beam
+                    // from the housing's origin. For the hanging lamp that is
+                    // 1.18m too high -- level with the ceiling it hangs from --
+                    // and, worse, the socket's own rotation is what aims the
+                    // beam DOWN: without it a pendant lamp fires horizontally
+                    // along -Z at ceiling height.
+                    //
+                    // Both rooms in `test_room` were dark for this reason. It
+                    // hid behind a coincidence: every lamp that looked correct
+                    // was a bare wall spot with no socket, which is exactly the
+                    // case this code path got right.
+                    let pose = crate::scene_light::resolve_light_pose(
+                        light,
+                        o.cuboid.position,
+                        o.cuboid.rotation,
+                        light.socket.as_deref().and_then(|n| o.socket(n)),
+                    );
+                    RenderLight {
                     id: format!("{}#{i}", o.id),
-                    position: o.cuboid.position,
-                    direction: o.cuboid.rotation * Vec3::NEG_Z,
+                    position: pose.position,
+                    direction: pose.direction(),
                     kind: light.kind,
                     color: light.color,
                     intensity: light.intensity,
                     range: light.range,
                     cone_angle_deg: light.cone_angle_deg,
-                })
+                    inner_cone_angle_deg: light.inner_cone_angle_deg,
+                }})
             })
             .collect()
     }
@@ -237,5 +273,231 @@ impl GameRuntime {
                 max_distance,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    use crate::runtime_test_support::PHYSX_TEST_LOCK;
+    use crate::GameRuntime;
+
+    /// A lamp: ONE object carrying both a mesh and a light.
+    ///
+    /// The same-entity model, and the reason there is no `LightFixtureDef`:
+    /// `GameObject` already holds both a `mesh` and a `lights` list, so a
+    /// fixture is a scene that uses what is there rather than a new component.
+    fn drive_of(lights_json: &str) -> f32 {
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "ss_fixture_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let scenes = dir.join("scenes");
+        std::fs::create_dir_all(&scenes).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"t","version":"0.1.0","entry_scene":"t","scenes":["t"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes.join("t.json"),
+            format!(
+                r#"{{"name":"t","objects":[{{
+                    "id": "lamp",
+                    "cuboid": {{ "position": [0,0,0], "half_size": [0.2,0.2,0.2] }},
+                    "mesh": {{ "path": "models/lamp.glb" }},
+                    "lights": {lights_json}
+                }}]}}"#
+            ),
+        )
+        .unwrap();
+        let rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        rt.collect_render_meshes()
+            .into_iter()
+            .find(|m| m.id == "lamp")
+            .expect("the lamp has a mesh and so must be drawn")
+            .emissive_drive
+    }
+
+    #[test]
+    fn a_lit_lamp_drives_its_own_mesh() {
+        assert!(
+            drive_of(r#"[{"intensity": 4.0}]"#) > 0.0,
+            "a lamp that is on must light its own bulb",
+        );
+    }
+
+    #[test]
+    fn switching_a_lamp_off_darkens_its_bulb() {
+        // The whole point of the same-entity model: nothing has to keep the
+        // beam and the glass in step, so they cannot disagree.
+        assert_eq!(
+            drive_of(r#"[{"intensity": 4.0, "enabled": false}]"#),
+            0.0,
+            "an off lamp must have a dark bulb",
+        );
+    }
+
+    #[test]
+    fn an_object_with_no_lights_never_glows() {
+        // Almost everything in a level. Adding fixtures must not relight it.
+        assert_eq!(drive_of("[]"), 0.0);
+    }
+
+    #[test]
+    fn two_bulbs_in_one_housing_take_the_brightest_not_the_sum() {
+        // Summing would let a chandelier's glass saturate purely from the COUNT
+        // of its lamps -- brightness decided by how the fixture was modelled
+        // rather than by how bright it actually is.
+        let one = drive_of(r#"[{"intensity": 4.0}]"#);
+        let three = drive_of(
+            r#"[{"intensity": 4.0}, {"intensity": 4.0}, {"intensity": 4.0}]"#,
+        );
+        assert_eq!(one, three, "three equal bulbs must glow like one, not three times as hard");
+    }
+
+    #[test]
+    fn a_dimmed_lamp_dims_its_bulb() {
+        assert!(
+            drive_of(r#"[{"intensity": 1.0}]"#) < drive_of(r#"[{"intensity": 8.0}]"#),
+            "the bulb follows the beam, so dimming and flicker come for free",
+        );
+    }
+}
+
+#[cfg(test)]
+mod socket_light_tests {
+    //! Where a fixture's beam actually comes from.
+    //!
+    //! The baker resolves a light through its socket and always has; the
+    //! renderer did not, so a lamp's shadows and bounce were computed at the
+    //! bulb while its beam was emitted from the housing's origin. Nothing
+    //! errored, and it looked like a lighting bug rather than two subsystems
+    //! disagreeing about a position.
+
+    use crate::scene::{Color3, GameObject, LightDef, LightKind, LightMode};
+    use crate::scene_rig::SocketDef;
+    use glam::{Quat, Vec3};
+
+    /// The hanging lamp as `test_room` authors it: socket 1.18m below the
+    /// housing, rotated a quarter turn so the beam points at the floor.
+    fn pendant_lamp() -> GameObject {
+        let mut o = GameObject::default();
+        o.id = "lamp".to_string();
+        o.cuboid.position = Vec3::new(0.0, 3.1, -4.5);
+        o.cuboid.rotation = Quat::IDENTITY;
+        o.sockets = vec![SocketDef {
+            name: "bulb".to_string(),
+            local_pos: [0.0, -1.18, 0.0],
+            local_rot: [-0.7071068, 0.0, 0.0, 0.7071068],
+            part: None,
+        }];
+        let mut l = LightDef {
+            kind: LightKind::Spot,
+            mode: LightMode::Realtime,
+            color: Color3(255, 244, 214, 255),
+            intensity: 9.0,
+            range: 14.0,
+            cone_angle_deg: 64.0,
+            inner_cone_angle_deg: 30.0,
+            socket: Some("bulb".to_string()),
+            ..Default::default()
+        };
+        l.socket = Some("bulb".to_string());
+        o.lights = vec![l];
+        o
+    }
+
+    /// Through a real `GameRuntime`, because that is the path the headset
+    /// takes -- testing `resolve_light_pose` directly would pass whether or not
+    /// `collect_render_lights` ever called it, which is precisely the bug.
+    fn rendered(o: GameObject) -> (Vec3, Vec3) {
+        let _guard = crate::runtime_test_support::PHYSX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_socket_light_test");
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        let scene = crate::scene::Scene { name: "test".to_string(), objects: vec![o], ..Default::default() };
+        std::fs::write(
+            dir.join("scenes/test.json"),
+            serde_json::to_string(&scene).unwrap(),
+        )
+        .unwrap();
+        let rt = crate::runtime::GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let lights = rt.collect_render_lights();
+        assert_eq!(lights.len(), 1, "the lamp did not produce a render light");
+        (lights[0].position, lights[0].direction)
+    }
+
+    /// THE regression: a pendant lamp points DOWN.
+    ///
+    /// Without the socket's rotation the beam is `object_rot * -Z`, which for
+    /// an unrotated lamp is horizontal -- so both rooms in `test_room` had
+    /// their lamps firing sideways along the ceiling and the floors were black.
+    #[test]
+    fn a_pendant_lamp_aims_at_the_floor() {
+        let (_, dir) = rendered(pendant_lamp());
+        assert!(
+            dir.y < -0.99,
+            "the lamp's beam points {dir:?}, not down; the socket's rotation is \
+             not reaching the renderer",
+        );
+    }
+
+    /// And it emits from the BULB, not from the housing's origin 1.18m above.
+    #[test]
+    fn a_pendant_lamp_emits_from_its_bulb() {
+        let (pos, _) = rendered(pendant_lamp());
+        assert!(
+            (pos - Vec3::new(0.0, 3.1 - 1.18, -4.5)).length() < 1e-3,
+            "the lamp emits from {pos:?} rather than from its socket",
+        );
+    }
+
+    /// The renderer and the baker must agree, because they are the two halves
+    /// of one lamp: the beam you see and the shadow it casts.
+    #[test]
+    fn the_renderer_and_the_baker_place_a_light_identically() {
+        let o = pendant_lamp();
+        let (pos, dir) = rendered(o.clone());
+        let baked = crate::scene_light::resolve_light_pose(
+            &o.lights[0],
+            o.cuboid.position,
+            o.cuboid.rotation,
+            o.socket("bulb"),
+        );
+        assert!(
+            (pos - baked.position).length() < 1e-4,
+            "renderer puts the light at {pos:?}, baker at {:?}",
+            baked.position,
+        );
+        assert!(
+            (dir - baked.direction()).length() < 1e-4,
+            "renderer aims it {dir:?}, baker aims it {:?}",
+            baked.direction(),
+        );
+    }
+
+    /// A bare spot with no socket is untouched -- which is every lamp that
+    /// looked correct while this was broken, and why it stayed hidden.
+    #[test]
+    fn a_socketless_spot_is_unchanged() {
+        let mut o = pendant_lamp();
+        o.sockets.clear();
+        o.lights[0].socket = None;
+        o.cuboid.rotation = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
+        let (pos, dir) = rendered(o);
+        assert!((pos - Vec3::new(0.0, 3.1, -4.5)).length() < 1e-4);
+        assert!((dir - Vec3::X).length() < 1e-3, "got {dir:?}");
     }
 }
