@@ -147,6 +147,14 @@ pub const SCENE_BRUSH_DIRECTION_ID: &str = "__brushes_dir__";
 /// charts, so it is sampled with the same uv2.
 pub const SCENE_BRUSH_SUN_MASK_ID: &str = "__brushes_sun__";
 
+/// The STATIONARY lamps' shadow masks, one image per four lamps under
+/// `__brushes_stationary_<layer>__`: a signed distance per channel, at
+/// `brush_lightmap::STATIONARY_MASK_SCALE` times the lightmap's density on its
+/// charts. Which lamp owns which channel is not stored -- see `stationary`.
+pub fn scene_brush_stationary_id(layer: usize) -> String {
+    format!("__brushes_stationary_{layer}__")
+}
+
 pub struct LoadedLightmap {
     pub object_id: String,
     pub width: u32,

@@ -151,7 +151,7 @@ impl GameRuntime {
                 o.lights
                     .iter()
                     .enumerate()
-                    .filter(|(_, light)| light.mode == crate::LightMode::Realtime)
+                    .filter(|(_, light)| light.mode.is_live())
                     .map(move |(i, light)| {
                     // THROUGH THE SOCKET, exactly as the baker does.
                     //

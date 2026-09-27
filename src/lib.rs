@@ -54,6 +54,7 @@ mod scene_animation;
 mod scene_cuboid;
 mod scene_env;
 pub mod scene_light;
+pub mod stationary;
 mod scene_physics;
 mod scene_rig;
 #[cfg(test)]
