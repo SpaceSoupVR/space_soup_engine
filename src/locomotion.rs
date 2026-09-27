@@ -49,6 +49,10 @@ pub struct Locomotion {
 
     is_teleport_aiming: bool,
     last_turn_stick: f32,
+    /// Where the body stood when the last frame finished. See `apply_collision`.
+    last_body_xz: Option<(f32, f32)>,
+    /// Whether this frame's `update` teleported, so walls do not block it.
+    teleported: bool,
 }
 
 impl Default for Locomotion {
@@ -65,6 +69,8 @@ impl Default for Locomotion {
             max_climb_angle_deg: 45.0,
             is_teleport_aiming: false,
             last_turn_stick: 0.0,
+            last_body_xz: None,
+            teleported: false,
         }
     }
 }
@@ -93,6 +99,7 @@ impl Locomotion {
         rig: &PlayerRig,
         teleport_target: Option<TeleportTarget>,
     ) {
+        self.teleported = false;
         if self.mode != LocomotionMode::Disabled {
             match self.turn_mode {
                 TurnMode::Smooth => self.update_smooth_turn(dt, input),
@@ -159,6 +166,7 @@ impl Locomotion {
                 if let Some(t) = target {
                     if t.valid {
                         self.player_offset = t.position;
+                        self.teleported = true;
                     }
                 }
             }
@@ -173,31 +181,75 @@ impl Locomotion {
         (position, rotation)
     }
 
-    // Stops the player at any static rigid_body geometry hit while moving from `prev_xz`
-    // to the current player_offset, then snaps Y to the ground beneath (or reverts XZ if
-    // the ground there is too steep to climb). Shared by GameRuntime::update (the
-    // authoritative server simulation) and any client that runs its own local movement
-    // simulation -- both need identical collision behavior against the same PhysicsWorld
-    // data, so this lives once here rather than being reimplemented per caller.
-    pub fn apply_collision(&mut self, physics: &PhysicsWorld, prev_xz: (f32, f32)) {
-        self.apply_wall_collision(physics, prev_xz);
-        self.apply_ground_follow(physics, prev_xz);
+    /// Where this frame's movement started, for [`Locomotion::apply_collision`].
+    ///
+    /// Take it BEFORE `update`. `head` is the head's WORLD position as built
+    /// from THIS locomotion's offset and yaw this frame -- a headset's own rig.
+    ///
+    /// `None` collides the rig origin. That is right for anything moving a
+    /// player whose head it did not place: the server simulating a client that
+    /// sends no pose receives a rig built from the CLIENT's offset, and
+    /// subtracting its own offset from that invents a head that runs away from
+    /// the body -- a test walked straight through a wall that way.
+    pub fn collision_start(&self, head: Option<Vec3>) -> CollisionStart {
+        let head_rel = head
+            .map(|h| Vec3::new(h.x - self.player_offset.x, 0.0, h.z - self.player_offset.z))
+            .unwrap_or(Vec3::ZERO);
+        CollisionStart {
+            offset: self.player_offset,
+            yaw: self.player_yaw,
+            head_rel,
+        }
     }
 
-    fn apply_wall_collision(&mut self, physics: &PhysicsWorld, prev_xz: (f32, f32)) {
-        if self.mode == LocomotionMode::Disabled {
+    /// Stops the player's BODY at walls, then stands it on the ground under it.
+    ///
+    /// The body is the floor point under the HEAD, not the rig origin. The
+    /// headset tracks in stage space, so the origin is the centre of the play
+    /// area and the head can be a metre or more from it: colliding the origin
+    /// stopped an invisible point short of the wall while the camera walked on
+    /// through it. Unity's XR character controller and Meta's locomotors centre
+    /// the collider on the head for the same reason.
+    ///
+    /// Walking or leaning into a wall in the real room is stopped too. The rig
+    /// is pushed back by exactly the overlap, measured from where the body stood
+    /// at the end of the last frame -- so a wall is a barrier however the player
+    /// got there, not only when the stick took them.
+    ///
+    /// Shared by GameRuntime::update (the authoritative server simulation) and
+    /// any client that runs its own movement, so both collide identically.
+    pub fn apply_collision(&mut self, physics: &PhysicsWorld, start: CollisionStart) {
+        // A snap turn rotates the play area about the rig origin, which carries
+        // the head round with it.
+        let head_rel = Quat::from_rotation_y(self.player_yaw - start.yaw) * start.head_rel;
+        let start_body = start.offset + start.head_rel;
+        let from = match self.last_body_xz {
+            Some((x, z))
+                if Vec3::new(x - start_body.x, 0.0, z - start_body.z).length() <= MAX_HEAD_JUMP =>
+            {
+                Vec3::new(x, 0.0, z)
+            }
+            _ => start_body,
+        };
+        self.apply_wall_collision(physics, from, head_rel);
+        self.apply_ground_follow(physics, start, head_rel);
+        let body = self.player_offset + head_rel;
+        self.last_body_xz = Some((body.x, body.z));
+    }
+
+    fn apply_wall_collision(&mut self, physics: &PhysicsWorld, from: Vec3, head_rel: Vec3) {
+        // A teleport is not a walk: whatever lies between is not in the way.
+        if self.mode == LocomotionMode::Disabled || self.teleported {
             return;
         }
 
         const PLAYER_RADIUS: f32 = 0.25;
         const PROBE_HEIGHT: f32 = 1.0;
 
-        let prev = Vec3::new(prev_xz.0, self.player_offset.y + PROBE_HEIGHT, prev_xz.1);
-        let curr = Vec3::new(
-            self.player_offset.x,
-            self.player_offset.y + PROBE_HEIGHT,
-            self.player_offset.z,
-        );
+        let y = self.player_offset.y + PROBE_HEIGHT;
+        let body = self.player_offset + head_rel;
+        let prev = Vec3::new(from.x, y, from.z);
+        let curr = Vec3::new(body.x, y, body.z);
         let delta = curr - prev;
         let dist = delta.length();
         if dist < 1e-5 {
@@ -211,17 +263,29 @@ impl Locomotion {
 
         let clear_dist = (prev.distance(hit_point) - PLAYER_RADIUS).max(0.0);
         let stopped = prev + dir * clear_dist;
-        self.player_offset.x = stopped.x;
-        self.player_offset.z = stopped.z;
+        // Move the whole rig by the overlap, so the BODY ends at `stopped`.
+        self.player_offset.x += stopped.x - curr.x;
+        self.player_offset.z += stopped.z - curr.z;
     }
 
-    fn apply_ground_follow(&mut self, physics: &PhysicsWorld, prev_xz: (f32, f32)) {
+    fn apply_ground_follow(&mut self, physics: &PhysicsWorld, start: CollisionStart, head_rel: Vec3) {
         if self.mode == LocomotionMode::Disabled {
             return;
         }
 
-        let offset = self.player_offset;
-        let probe_origin = Vec3::new(offset.x, offset.y + 3.0, offset.z);
+        // Under the body: standing inside a building with the play area's
+        // centre outside it must put you on the building's floor.
+        //
+        // FROM A STEP ABOVE THE FEET, not from 3 m. The ground is the first
+        // thing the ray meets going down, so it must start below every ceiling
+        // the player can stand under. From 3 m it started ABOVE the roof of any
+        // room lower than that -- the 2.6 m hallway added to test_room -- and
+        // stood the player on the roof the moment they walked in (headset,
+        // 2026-09-24). The halls only worked because their ceilings are at
+        // 3.1 m. A step's height still climbs stairs, kerbs and any slope
+        // `max_climb_angle_deg` allows, since a frame's walk rises centimetres.
+        let body = self.player_offset + head_rel;
+        let probe_origin = Vec3::new(body.x, self.player_offset.y + MAX_STEP_UP, body.z);
         let Some((hit_point, normal)) = physics.raycast_down(probe_origin, 50.0) else {
             return;
         };
@@ -230,11 +294,30 @@ impl Locomotion {
         if slope_deg <= self.max_climb_angle_deg {
             self.player_offset.y = hit_point.y;
         } else {
-            self.player_offset.x = prev_xz.0;
-            self.player_offset.z = prev_xz.1;
+            self.player_offset.x = start.offset.x;
+            self.player_offset.z = start.offset.z;
         }
     }
 }
+
+/// Where a frame's movement started. See [`Locomotion::collision_start`].
+#[derive(Debug, Clone, Copy)]
+pub struct CollisionStart {
+    offset: Vec3,
+    yaw: f32,
+    /// The head's floor position relative to the rig origin, in world axes.
+    head_rel: Vec3,
+}
+
+/// The highest ledge a walk steps up onto, in metres: the ground probe starts
+/// this far above the feet. Above a stair riser (~0.18 m) and a kerb, below
+/// any ceiling -- a lower ceiling than this is not a room anyone stands in.
+pub const MAX_STEP_UP: f32 = 0.5;
+
+/// Further than a head can move between two frames. A body found this far from
+/// where the last frame left it was put there -- a respawn, a scene change, a
+/// server correction -- and is not walked from.
+const MAX_HEAD_JUMP: f32 = 1.0;
 
 #[cfg(test)]
 mod turn_test {

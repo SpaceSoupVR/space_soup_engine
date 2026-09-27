@@ -285,6 +285,15 @@ impl PhysicsWorld {
             self.spawn_actor(obj, def);
         }
 
+        // After rigid bodies, so an authored `rigid_body` on a brush keeps the
+        // shape its author chose. See `GameObject::solid`.
+        for obj in &scene.objects {
+            let Some(def) = &obj.brush else { continue };
+            if obj.is_solid_brush() {
+                self.spawn_brush_collider(obj, def);
+            }
+        }
+
         for obj in &scene.objects {
             let Some(def) = &obj.slider_joint else {
                 continue;

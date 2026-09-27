@@ -25,6 +25,8 @@ mod runtime_tests_multiplayer;
 #[cfg(test)]
 mod runtime_tests_physics;
 #[cfg(test)]
+mod rigid_physics_brush_tests;
+#[cfg(test)]
 mod runtime_tests_scripting;
 #[cfg(test)]
 mod runtime_tests_teleport;
@@ -41,12 +43,17 @@ pub mod trigger_volume;
 pub mod brush_obj;
 pub mod damage;
 pub mod brush_lightmap;
+pub mod brush_tjunction;
+pub mod mesh_lightmap;
+pub mod reflection_probe;
+pub mod reflection_proxy;
+pub mod room_graph;
 pub mod lightmaps;
 pub mod scene;
 mod scene_animation;
 mod scene_cuboid;
 mod scene_env;
-mod scene_light;
+pub mod scene_light;
 mod scene_physics;
 mod scene_rig;
 #[cfg(test)]
@@ -58,6 +65,7 @@ pub mod scatter;
 mod scatter_tests;
 pub mod schema;
 pub mod terrain;
+pub mod water;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]
@@ -75,7 +83,9 @@ pub use debug_protocol::{
 };
 pub use events::{ButtonPress, Hand, InputAxes, InputFrame};
 pub use scene_animation::ClipBlendMode;
-pub use locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget, TurnMode};
+pub use locomotion::{
+    CollisionStart, Locomotion, LocomotionInput, LocomotionMode, TeleportTarget, TurnMode,
+};
 pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
 pub use rig_profile::{

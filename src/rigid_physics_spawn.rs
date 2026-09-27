@@ -15,6 +15,42 @@ use crate::rigid_physics::{
     PxFoundation, PxRigidDynamic, PxRigidStatic, DEFAULT_DENSITY,
 };
 use crate::scene::{BodyMode, ColliderShape, GameObject, RigidBodyDef, SliderJointDef, TerrainColliderDef};
+use crate::brush::{self, BrushDef};
+
+/// A brush's collision surface: every face of every convex piece CSG leaves,
+/// fanned into triangles wound so their normal points OUT of the solid.
+///
+/// The winding is load-bearing. PhysX raycasts ignore a triangle mesh's back
+/// faces by default, so a wall wound inside-out is solid from outside and not
+/// there at all from inside the room -- the side a player walks at it from.
+///
+/// Faces between two pieces of one brush are included and harmless: they lie
+/// inside solid material, and nothing starting in open air reaches one without
+/// crossing a real face first.
+pub(crate) fn brush_collision_triangles(def: &BrushDef) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let mut points: Vec<[f32; 3]> = Vec::new();
+    let mut indices = Vec::new();
+    for solid in def.evaluate() {
+        for (i, poly) in brush::solid_polygons(&solid).into_iter().enumerate() {
+            let Some(poly) = poly else { continue };
+            if poly.len() < 3 {
+                continue;
+            }
+            let n = solid.faces[i].plane().n;
+            let ordered: Vec<brush::Vec3> = if brush::polygon_winding(&poly, n) < 0.0 {
+                poly.into_iter().rev().collect()
+            } else {
+                poly
+            };
+            let base = points.len() as u32;
+            points.extend(ordered.iter().map(|q| [q[0] as f32, q[1] as f32, q[2] as f32]));
+            for k in 1..ordered.len() as u32 - 1 {
+                indices.extend([base, base + k, base + k + 1]);
+            }
+        }
+    }
+    (points, indices)
+}
 
 fn collect_terrain_instances(doc: &gltf::Document, node_filter: Option<&str>) -> Vec<(usize, Mat4)> {
     fn walk(node: gltf::Node, parent: Mat4, filter: Option<&str>, out: &mut Vec<(usize, Mat4)>) {
@@ -437,6 +473,82 @@ impl PhysicsWorld {
             "rigid_physics: scene terrain cooked -- {} vertices, {} triangles",
             patch.positions.len(),
             patch.indices.len() / 3
+        );
+    }
+
+    /// Static collider for a solid brush: the surface its CSG leaves, cooked as
+    /// a triangle mesh.
+    ///
+    /// A triangle mesh rather than a convex hull per piece. Godot's CSG makes
+    /// the same choice (a concave trimesh, static only), and it is the cooking
+    /// path the terrain has already proven on the headset. Convex pieces are
+    /// only needed for a brush that MOVES, which a static one never does.
+    ///
+    /// World space, at identity: a brush's planes are already where they are
+    /// drawn, and its `cuboid` is a report of its bounds rather than a transform
+    /// -- the renderer and the trigger volumes read it the same way.
+    ///
+    /// Registered in `statics` under the object's id, so a breach removes it
+    /// through `despawn_static` like any other wall. An object that already has
+    /// a collider -- an authored `rigid_body`, spawned earlier in `rebuild` --
+    /// keeps that one: someone chose the shape on purpose, and two actors under
+    /// one id would leave one that nothing can remove.
+    pub(crate) fn spawn_brush_collider(&mut self, obj: &GameObject, def: &BrushDef) {
+        if self.statics.contains_key(&obj.id)
+            || self.dynamic.contains_key(&obj.id)
+            || self.kinematic.contains_key(&obj.id)
+        {
+            log::debug!("rigid_physics: brush '{}' already has an authored collider", obj.id);
+            return;
+        }
+        let (positions, indices) = brush_collision_triangles(def);
+        if indices.is_empty() {
+            log::warn!("rigid_physics: brush '{}' has no surface to collide with", obj.id);
+            return;
+        }
+        let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
+            log::warn!("rigid_physics: failed to create material for brush '{}'", obj.id);
+            return;
+        };
+        let points: Vec<PxVec3> = positions.iter().map(|p| PxVec3::new(p[0], p[1], p[2])).collect();
+        let Some(owned) = cook_triangle_mesh(&mut self.foundation, &points, &indices) else {
+            log::warn!("rigid_physics: failed to cook brush '{}'", obj.id);
+            return;
+        };
+        self.terrain_meshes.push(owned);
+        let mesh_idx = self.terrain_meshes.len() - 1;
+
+        let scale_px = PxVec3::new(1.0, 1.0, 1.0);
+        let rot_px = PxQuat::new(0.0, 0.0, 0.0, 1.0);
+        let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };
+        let geo = PxTriangleMeshGeometry::new(
+            self.terrain_meshes[mesh_idx].as_mut(),
+            &mesh_scale,
+            MeshGeometryFlags::empty(),
+        );
+        let transform = to_px_transform(Vec3::ZERO, Quat::IDENTITY);
+        match self.foundation.create_rigid_static(
+            transform,
+            &geo,
+            material.as_mut(),
+            PxTransform::default(),
+            (),
+        ) {
+            Some(mut actor) => {
+                let ptr: *mut PxRigidStatic = &mut *actor as *mut PxRigidStatic;
+                self.scene.add_static_actor(actor);
+                self.statics.insert(obj.id.clone(), ptr);
+            }
+            None => {
+                log::warn!("rigid_physics: failed to create static actor for brush '{}'", obj.id);
+                return;
+            }
+        }
+        self.materials.push(material);
+        log::info!(
+            "rigid_physics: brush '{}' is solid -- {} triangles",
+            obj.id,
+            indices.len() / 3
         );
     }
 

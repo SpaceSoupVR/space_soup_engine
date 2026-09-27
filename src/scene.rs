@@ -176,6 +176,12 @@ pub struct GameObject {
     #[serde(default)]
     pub teleportal: Option<TeleportalDef>,
 
+    /// A baked cubemap reflection captured here, with this object's cuboid as
+    /// the room it is parallax-corrected against. See
+    /// [`crate::reflection_probe`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflection_probe: Option<crate::reflection_probe::ReflectionProbeDef>,
+
     /// How this object comes apart under fire, if it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub breakable: Option<BreakableDef>,
@@ -189,9 +195,36 @@ pub struct GameObject {
     /// off, hidden -- rather than the engine forbidding the others.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_volume: Option<crate::trigger_volume::TriggerVolumeDef>,
+
+    /// Whether this object is a physical barrier: players stop at it, bodies
+    /// land on it, rays hit it.
+    ///
+    /// `None` is automatic, and automatic is what almost every object wants: a
+    /// brush is solid unless it is a trigger. That is Unreal's and Quake's
+    /// convention -- level geometry blocks by default and walking through it is
+    /// the thing you opt into (Unreal's Non-solid brush, Source's
+    /// func_illusionary). A room whose walls you can walk through is not a room.
+    ///
+    /// `Some(false)` makes a brush walk-through: a bead curtain, a hedge, a
+    /// hologram. `Some(true)` forces it, even on a trigger, because someone
+    /// wrote it down.
+    ///
+    /// Only brushes build a collider from this. Everything else collides through
+    /// `rigid_body` or `terrain_collider`, which say what shape to use; a brush
+    /// needs no telling, because its planes ARE the shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solid: Option<bool>,
 }
 
 impl GameObject {
+    /// Whether this object's brush is built as a collider. See `solid`.
+    pub fn is_solid_brush(&self) -> bool {
+        self.brush.is_some()
+            && self
+                .solid
+                .unwrap_or(self.trigger_volume.is_none() && !self.is_trigger)
+    }
+
     pub fn find_animation(&self, name: &str) -> Option<&Animation> {
         self.animations.iter().find(|a| a.name == name)
     }
@@ -219,9 +252,55 @@ impl GameObject {
     }
 }
 
+/// Display settings: how unbounded light is mapped to a screen.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PostDef {
+    /// Linear multiplier applied BEFORE the tone curve, like a camera's stop.
+    ///
+    /// Before, because that is what choosing an exposure means: picking which
+    /// part of the scene's range to land on the display. Applied after the
+    /// curve it would only brighten an already-compressed image.
+    #[serde(default = "default_exposure")]
+    pub exposure: f32,
+    #[serde(default)]
+    pub tonemap: ToneMapDef,
+}
+
+/// Mirrors `space_soup::renderer::tonemap::ToneMapping`.
+///
+/// Mirrored rather than shared for the same reason `LightKind` is: the scene
+/// format is the engine's, and it does not depend on the renderer crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ToneMapDef {
+    /// Filmic shoulder -- highlights roll off instead of clipping.
+    #[default]
+    Aces,
+    /// Hard clamp. What every scene did before tone mapping existed.
+    None,
+}
+
+fn default_exposure() -> f32 {
+    1.0
+}
+
+impl Default for PostDef {
+    fn default() -> Self {
+        Self { exposure: default_exposure(), tonemap: ToneMapDef::default() }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Scene {
     pub name: String,
+
+    /// How this scene's radiance becomes pixels: exposure and tone curve.
+    ///
+    /// Per scene rather than global because it is a look, and two levels in one
+    /// project routinely want different ones -- a night exterior and a lit
+    /// interior are not graded the same way. Defaulted, so every scene already
+    /// on disk gets the standard filmic response with no edit.
+    #[serde(default)]
+    pub post: PostDef,
 
     /// The scene's ground, if it has authored terrain.
     ///
@@ -232,6 +311,14 @@ pub struct Scene {
     /// standing on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terrain: Option<TerrainDef>,
+
+    /// Standing water in the scene.
+    ///
+    /// A list, not one body: a level can hold a pond and a flooded basement at
+    /// different heights, and they are independent surfaces. Skipped when empty
+    /// so every scene already on disk is byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub water: Vec<crate::water::WaterDef>,
 
     /// Procedural placement layers -- trees, grass, rocks.
     ///

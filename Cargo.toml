@@ -19,6 +19,11 @@ space_soup_protocol = { path = "../space_soup_protocol" }
 # field shape. avatar_ik is glam+serde only, so this adds nothing heavy.
 avatar_ik = { path = "../avatar_ik" }
 
+# The one sky model, shared with the renderer. The baker has to predict the
+# same value the shader computes; two implementations is how a baked reflection
+# came out brighter than the surface it reflected.
+space_soup_sky = { path = "../space_soup_sky" }
+
 glam = { version = "0.29", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
