@@ -101,6 +101,25 @@ pub enum LightMode {
     /// room it is in, which no real-time point light can manage. Cannot move,
     /// and changing it needs a rebake.
     Baked,
+    /// Shaded every frame, SHADOWED FROM THE BAKE: the direct light is
+    /// evaluated per pixel -- the real cone, falloff and highlight -- while its
+    /// visibility comes from a distance-field mask the baker writes into a
+    /// channel of the brush atlas, and its bounce is baked like any lamp's.
+    ///
+    /// What Unreal calls a stationary light. `Baked` put the whole lamp into
+    /// the lightmap, and a 34-degree pool a few lightmap texels wide was drawn
+    /// by bilinear filtering as a blocky cross -- in the room and in every
+    /// reflection of it (headset, 2026-09-27). Cannot move; changing its
+    /// shadows needs a rebake, changing its colour or intensity does not.
+    Stationary,
+}
+
+impl LightMode {
+    /// Whether the renderer shades this light's DIRECT term every frame --
+    /// true of everything but `Baked`, whose direct light is in the lightmap.
+    pub fn is_live(self) -> bool {
+        self != LightMode::Baked
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

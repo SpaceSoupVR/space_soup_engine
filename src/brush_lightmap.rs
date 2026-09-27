@@ -202,6 +202,18 @@ pub const SUN_MASK_SCALE: u32 = 4;
 /// bilinear tap never reads a saturated value where an edge is close.
 pub const SUN_MASK_DISTANCE_TEXELS: f32 = 4.0;
 
+/// How much denser than the lightmap the STATIONARY lamps' shadow masks are,
+/// on the same charts. Half the sun mask's: a lamp's mask is one byte in an
+/// RGBA layer shared by four lamps, and at the sun's density two layers would
+/// cost 67 MB on test_room alone. The distance field keeps the edge straight
+/// at any magnification; the density only sets how small a shadow's features
+/// can be.
+pub const STATIONARY_MASK_SCALE: u32 = 2;
+
+/// How far a stationary mask's signed distance reaches, in mask texels: the
+/// same encoding as the sun mask's.
+pub const STATIONARY_MASK_DISTANCE_TEXELS: f32 = 4.0;
+
 impl BrushLightmapLayout {
     /// The same charts at `s` times the density, in an atlas `s` times the size.
     ///
