@@ -510,6 +510,65 @@ pub fn load_mesh_parts(path: &std::path::Path) -> Option<Vec<MeshPart>> {
     mesh_parts(&gltf.document, &buffers)
 }
 
+/// The triangles of a model that BLOCK LIGHT, in model space (node transforms
+/// applied): every primitive except glass and bulbs.
+///
+/// A light fixture's housing shadows its own lamp and every other -- a sconce's
+/// back plate keeps its light off the wall behind it -- but its glass lets the
+/// light through, and its bulb IS the light. Glass is a material with
+/// `KHR_materials_transmission`; a bulb is a material that glows as a whole
+/// (an emissive factor and no emissive texture). A housing that carries its
+/// bulb in an emissive TEXTURE -- black everywhere but the filament -- still
+/// blocks; the bake keeps shadow rays clear of the last few centimetres around
+/// a lamp for that case. Read from the file's own JSON because those material
+/// properties are extensions this crate's glTF reader is not built with.
+pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec3; 3]>> {
+    let gltf = gltf::Gltf::open(path).ok()?;
+    let base = path.parent();
+    let buffers = gltf::import_buffers(&gltf.document, base, gltf.blob.clone()).ok()?;
+    let parts = mesh_parts(&gltf.document, &buffers)?;
+    let json: serde_json::Value = serde_json::from_slice(&gltf_json_bytes(path)?).ok()?;
+    let passes_light = |material: Option<usize>| -> bool {
+        let Some(m) = material.and_then(|i| json["materials"].get(i)) else { return false };
+        let transmissive = m["extensions"]["KHR_materials_transmission"]["transmissionFactor"]
+            .as_f64()
+            .is_some_and(|t| t > 0.5);
+        let glows_whole = m["emissiveFactor"]
+            .as_array()
+            .is_some_and(|f| f.iter().filter_map(|v| v.as_f64()).any(|v| v > 0.0))
+            && m.get("emissiveTexture").is_none();
+        transmissive || glows_whole
+    };
+    let mut out = Vec::new();
+    for part in &parts {
+        let material = gltf
+            .document
+            .nodes()
+            .nth(part.node)
+            .and_then(|n| n.mesh())
+            .and_then(|m| m.primitives().nth(part.primitive))
+            .and_then(|p| p.material().index());
+        if passes_light(material) {
+            continue;
+        }
+        for tri in part.indices.chunks_exact(3) {
+            let v = |i: u32| glam::Vec3::from(part.positions[i as usize]);
+            out.push([v(tri[0]), v(tri[1]), v(tri[2])]);
+        }
+    }
+    Some(out)
+}
+
+/// The JSON of a `.gltf` (the file) or a `.glb` (its first chunk).
+fn gltf_json_bytes(path: &std::path::Path) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() >= 20 && &bytes[0..4] == b"glTF" {
+        let len = u32::from_le_bytes(bytes[12..16].try_into().ok()?) as usize;
+        return bytes.get(20..20 + len).map(|b| b.to_vec());
+    }
+    Some(bytes)
+}
+
 /// As [`load_mesh_parts`], for a caller that has already parsed the document.
 ///
 /// The renderer has: it is standing in the middle of building vertex buffers
@@ -1018,4 +1077,31 @@ mod asset_tests {
         dot(e2, q) * inv > 0.01
     }
 
+}
+
+#[cfg(test)]
+mod light_blocking_tests {
+    use super::*;
+
+    fn model(rel: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/models/lights").join(rel)
+    }
+
+    /// The hanging lamp's glass dome lets its light through; its shade and
+    /// cap block it. The sconce's bulb is its light; its cage and back plate
+    /// block it.
+    #[test]
+    fn a_fixture_blocks_with_its_housing_not_its_glass_or_bulb() {
+        let lamp = model("hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf");
+        let sconce = model("industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
+        let (Some(lamp_tris), Some(sconce_tris)) = (light_blocking_triangles(&lamp), light_blocking_triangles(&sconce)) else {
+            eprintln!("skipping: fixture models not present");
+            return;
+        };
+        // Exactly the housing primitives: the lamp's 8812 (its cage wraps the
+        // glass, so the glass cannot be told apart by position) without its
+        // 718-triangle glass; the sconce's 7130 without its 2696-triangle bulb.
+        assert_eq!(lamp_tris.len(), 8812, "the lamp's glass was kept, or its housing dropped");
+        assert_eq!(sconce_tris.len(), 7130, "the sconce's bulb was kept, or its housing dropped");
+    }
 }
