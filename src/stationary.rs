@@ -3,8 +3,14 @@
 //!
 //! A stationary lamp (`LightMode::Stationary`) is shaded every frame -- its
 //! real cone, falloff and highlight -- while its shadows come from the bake: a
-//! signed distance to the shadow's edge, one byte per lamp, in one channel of
-//! an RGBA mask on the brush charts. Four lamps per mask layer.
+//! signed distance to the shadow's edge and the penumbra's width there, two
+//! bytes per lamp, in an RGBA mask on the brush charts. Two lamps per layer.
+//!
+//! The penumbra is the bulb's: a lamp is a few centimetres of glowing glass,
+//! not a point, so a housing's edge casts a soft shadow that widens with
+//! distance -- and a cage's 3 mm wire, two metres from the floor, casts only a
+//! faint band. As a point light it drew a crisp black cross through the pool
+//! (offline_frame, 2026-09-27).
 //!
 //! # Computed, not stored
 //!
@@ -25,7 +31,7 @@
 //! more than [`MAX_STATIONARY_CHANNELS`] lamps lighting one spot.
 //!
 //! This is Unreal's stationary-light channel assignment, which colours with
-//! four; eight here, two RGBA layers.
+//! four; eight here, four RGBA layers.
 
 use std::collections::HashSet;
 
@@ -36,8 +42,18 @@ use crate::brush_lightmap::BrushLightmapLayout;
 use crate::scene::GameObject;
 use crate::scene_light::{LightKind, LightMode};
 
-/// How many stationary lamps may light any one texel: two RGBA mask layers.
+/// How many stationary lamps may light any one texel: four RGBA mask layers.
 pub const MAX_STATIONARY_CHANNELS: usize = 8;
+
+/// Lamps per RGBA mask layer: each takes two bytes, distance and penumbra.
+pub const STATIONARY_LAMPS_PER_LAYER: usize = 2;
+
+/// The most RGBA mask layers a level can have: one per two channels.
+pub const MAX_STATIONARY_LAYERS: usize = MAX_STATIONARY_CHANNELS / STATIONARY_LAMPS_PER_LAYER;
+
+/// The radius of a lamp's glowing part, in metres: its penumbra. A household
+/// bulb is about 6 cm across.
+pub const STATIONARY_BULB_RADIUS: f32 = 0.03;
 
 /// How far past a lamp's range, as a fraction of it, and past its cone, in
 /// cosine, a texel still counts as reached when deciding which lamps may share
@@ -173,10 +189,17 @@ pub fn scene_stationary_channels(objects: &[GameObject]) -> Vec<(StationaryLamp,
     lamps.into_iter().zip(channels).collect()
 }
 
-/// How many RGBA mask layers `channels` need: one per four, at least one when
-/// any lamp has a channel.
+/// How many RGBA mask layers `channels` need: one per two lamps, at least one
+/// when any lamp has a channel.
 pub fn mask_layers(channels: &[Option<u8>]) -> usize {
-    channels.iter().flatten().map(|&c| c as usize / 4 + 1).max().unwrap_or(0)
+    channels.iter().flatten().map(|&c| c as usize / STATIONARY_LAMPS_PER_LAYER + 1).max().unwrap_or(0)
+}
+
+/// Where channel `c` lives: its layer, and the first of its two components
+/// (distance; the penumbra is the next).
+pub fn channel_slot(c: u8) -> (usize, usize) {
+    let c = c as usize;
+    (c / STATIONARY_LAMPS_PER_LAYER, (c % STATIONARY_LAMPS_PER_LAYER) * 2)
 }
 
 #[cfg(test)]
@@ -236,7 +259,7 @@ mod tests {
         }
         let got = scene_stationary_channels(&objects);
         assert_eq!(got.iter().filter(|(_, c)| c.is_some()).count(), MAX_STATIONARY_CHANNELS);
-        assert_eq!(mask_layers(&got.iter().map(|(_, c)| *c).collect::<Vec<_>>()), 2);
+        assert_eq!(mask_layers(&got.iter().map(|(_, c)| *c).collect::<Vec<_>>()), 4);
     }
 
     #[test]
