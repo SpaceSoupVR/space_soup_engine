@@ -156,6 +156,20 @@ pub fn scene_brush_stationary_id(layer: usize) -> String {
     format!("__brushes_stationary_{layer}__")
 }
 
+/// Reserved id for the GROUND's own map: sky visibility in red, the sky sun's
+/// shadow as a signed distance and penumbra in green and blue. One image over
+/// the terrain's footprint, `LightmapTarget::Terrain`.
+pub const SCENE_TERRAIN_SKY_ID: &str = "__terrain_sky__";
+
+/// The STATIONARY lamps' shadows on the GROUND, one image per two lamps under
+/// `__terrain_stationary_<layer>__`: the brush masks' format and channels
+/// (`scene_brush_stationary_id`), on the same footprint and grid as
+/// `SCENE_TERRAIN_SKY_ID`. Also `LightmapTarget::Terrain`, so the id is what
+/// tells a mask from the ground map.
+pub fn scene_terrain_stationary_id(layer: usize) -> String {
+    format!("__terrain_stationary_{layer}__")
+}
+
 pub struct LoadedLightmap {
     pub object_id: String,
     pub width: u32,
