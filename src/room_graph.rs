@@ -511,6 +511,96 @@ pub fn rooms_from_scene(
     (rooms, links)
 }
 
+/// How far apart the points are that test a room's walls, in metres, and how
+/// far outside the room's faces they sit.
+const WALL_SAMPLE_STEP: f32 = 0.1;
+const WALL_SAMPLE_OFFSET: f32 = 0.01;
+
+/// The ROOMS NOTHING OUTSIDE CAN BE SEEN INTO, but through their doorways:
+/// the boxes of the room carves (as [`rooms_from_scene`] finds them) with
+///
+/// 1. NO OTHER CARVE INTO THEM but the level's known doorways: every other
+///    carve reaching into the room's box (within 2 cm) must be doorway-sized
+///    and overlap one of `doorways` (the baked portals). A slit, another
+///    space, or even a niche leaves the room open -- conservative, since a
+///    niche hides nothing; and
+/// 2. A WALL ALL ROUND: points 1 cm outside every face of the room, every
+///    10 cm, each inside some brush's solid -- ANY brush's, so a hallway
+///    whose ends butt against its neighbours' walls counts -- or inside one of
+///    those known doorways.
+///
+/// A renderer may cull anything outside the building from inside such a room
+/// wherever no doorway shows it (the renderer's `portal_cull`). Anything short
+/// of all of this is left open: wrongly calling a room closed deletes what can
+/// be seen through a gap, wrongly calling it open only draws a little more.
+pub fn closed_room_boxes(
+    brushes: &[(&str, &crate::brush::BrushDef)],
+    doorways: &[(Vec3, Vec3)],
+) -> Vec<(Vec3, Vec3)> {
+    use crate::brush::BrushSolid;
+    let bounds = |s: &BrushSolid| crate::brush::solid_bounds(s).map(|(lo, hi)| (v3(lo), v3(hi)));
+    let inside = |s: &BrushSolid, p: Vec3| {
+        s.faces.iter().all(|f| {
+            Vec3::new(f.plane[0] as f32, f.plane[1] as f32, f.plane[2] as f32).dot(p) <= f.plane[3] as f32 + 1e-4
+        })
+    };
+    let overlap = |a: (Vec3, Vec3), b: (Vec3, Vec3)| a.0.cmplt(b.1).all() && b.0.cmplt(a.1).all();
+    let solids: Vec<&BrushSolid> = brushes.iter().flat_map(|(_, b)| b.solids.iter()).collect();
+    let carves: Vec<(&BrushSolid, (Vec3, Vec3))> = brushes
+        .iter()
+        .flat_map(|(_, b)| b.subtract.iter())
+        .filter_map(|c| bounds(c).map(|b| (c, b)))
+        .collect();
+    // The carves that ARE the level's doorways.
+    let known_door = |k: (Vec3, Vec3)| {
+        let thinnest = (k.1 - k.0).min_element();
+        (MIN_PORTAL_EXTENT..MIN_ROOM_EXTENT).contains(&thinnest) && doorways.iter().any(|&d| overlap(k, d))
+    };
+    let mut closed = Vec::new();
+    for &(carve, room) in &carves {
+        if (room.1 - room.0).min_element() < MIN_ROOM_EXTENT {
+            continue;
+        }
+        // 1. Nothing else carved into it but known doorways.
+        let reach = (room.0 - Vec3::splat(0.02), room.1 + Vec3::splat(0.02));
+        let foreign = carves
+            .iter()
+            .any(|&(other, k)| !std::ptr::eq(other, carve) && overlap(k, reach) && !known_door(k));
+        if foreign {
+            continue;
+        }
+        // 2. A wall, or a known doorway, just outside every face.
+        let walled = |p: Vec3| {
+            solids.iter().any(|s| inside(s, p))
+                || carves.iter().any(|&(k, kb)| known_door(kb) && inside(k, p))
+        };
+        let mut open = false;
+        'faces: for axis in 0..3 {
+            let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
+            let steps = |lo: f32, hi: f32| ((hi - lo) / WALL_SAMPLE_STEP).ceil().max(1.0) as usize;
+            let (na, nb) = (steps(room.0[a], room.1[a]), steps(room.0[b], room.1[b]));
+            for side in [room.0[axis] - WALL_SAMPLE_OFFSET, room.1[axis] + WALL_SAMPLE_OFFSET] {
+                for i in 0..=na {
+                    for j in 0..=nb {
+                        let mut p = Vec3::ZERO;
+                        p[axis] = side;
+                        p[a] = room.0[a] + (room.1[a] - room.0[a]) * i as f32 / na as f32;
+                        p[b] = room.0[b] + (room.1[b] - room.0[b]) * j as f32 / nb as f32;
+                        if !walled(p) {
+                            open = true;
+                            break 'faces;
+                        }
+                    }
+                }
+            }
+        }
+        if !open {
+            closed.push(room);
+        }
+    }
+    closed
+}
+
 /// Whether a doorway carve opens onto the volume `min..max`, within
 /// [`ADJACENCY_SLACK`]. The one rule, shared by the room graph and by anything
 /// else asking which spaces a doorway joins -- reflection probe volumes, for one.
@@ -592,6 +682,61 @@ mod derivation_tests {
         })
         .collect();
         BrushSolid { faces }
+    }
+
+    /// A walled room with a doorway the level knows is closed; the same room
+    /// with its roof carved away, with a slit through its wall, or with a
+    /// doorway nobody baked, is not.
+    #[test]
+    fn a_room_is_closed_only_when_walled_all_round_but_its_known_doorways() {
+        let shell = boxy(Vec3::new(-3.0, -0.3, -10.0), Vec3::new(3.0, 3.4, 4.0));
+        let interior = boxy(Vec3::new(-2.7, 0.0, -9.7), Vec3::new(2.7, 3.1, 3.7));
+        let doorway = (Vec3::new(-0.8, 0.0, 3.5), Vec3::new(0.8, 2.2, 4.3));
+        let door_carve = boxy(doorway.0, doorway.1);
+        let room = (Vec3::new(-2.7, 0.0, -9.7), Vec3::new(2.7, 3.1, 3.7));
+        let hall = |subtract: Vec<BrushSolid>| BrushDef { solids: vec![shell.clone()], subtract };
+
+        let b = hall(vec![interior.clone(), door_carve.clone()]);
+        assert_eq!(closed_room_boxes(&[("hall", &b)], &[doorway]), vec![room]);
+
+        // The doorway was not baked: an unknown way in.
+        assert!(closed_room_boxes(&[("hall", &b)], &[]).is_empty());
+
+        // The roof carved away: the interior reaches the solid's top face.
+        let roofless = BrushDef {
+            solids: vec![shell.clone()],
+            subtract: vec![boxy(Vec3::new(-2.7, 0.0, -9.7), Vec3::new(2.7, 3.6, 3.7))],
+        };
+        assert!(closed_room_boxes(&[("hall", &roofless)], &[]).is_empty());
+
+        // A slit window, thinner than any doorway, through the side wall.
+        let slit = boxy(Vec3::new(2.5, 1.0, -2.0), Vec3::new(3.3, 1.2, 0.0));
+        let b = hall(vec![interior.clone(), door_carve.clone(), slit]);
+        assert!(closed_room_boxes(&[("hall", &b)], &[doorway]).is_empty());
+
+        // A niche cut into the wall from inside, not through it, hides
+        // nothing -- but any carve into a room other than a known doorway
+        // leaves it open. Conservative: it only costs drawing more.
+        let niche = boxy(Vec3::new(2.5, 1.0, -2.0), Vec3::new(2.9, 1.3, 0.0));
+        let b = hall(vec![interior.clone(), door_carve.clone(), niche]);
+        assert!(closed_room_boxes(&[("hall", &b)], &[doorway]).is_empty());
+
+        // A HALLWAY OPEN AT BOTH ENDS OF ITS OWN BRUSH, butting against the
+        // hall's wall and a doorway through it: walled by its neighbour, so
+        // closed. And a gap between the two -- the hallway not reaching the
+        // wall -- opens it.
+        let hall_b = hall(vec![interior, door_carve]);
+        let hallway_room = (Vec3::new(-0.8, 0.0, 4.0), Vec3::new(0.8, 2.2, 9.0));
+        let hallway = |start: f32| BrushDef {
+            solids: vec![boxy(Vec3::new(-1.1, -0.3, start), Vec3::new(1.1, 2.5, 9.3))],
+            subtract: vec![boxy(Vec3::new(-0.8, 0.0, start), Vec3::new(0.8, 2.2, 9.0))],
+        };
+        let joined = hallway(4.0);
+        let closed = closed_room_boxes(&[("hall", &hall_b), ("hallway", &joined)], &[doorway]);
+        assert!(closed.contains(&hallway_room), "{closed:?}");
+        let gapped = hallway(4.5);
+        let closed = closed_room_boxes(&[("hall", &hall_b), ("hallway", &gapped)], &[doorway]);
+        assert!(!closed.iter().any(|r| r.0.z == 4.5), "{closed:?}");
     }
 
     /// THE CARVE IS THE ROOM. Nobody authors a second box.
