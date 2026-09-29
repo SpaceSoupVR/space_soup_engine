@@ -631,6 +631,49 @@ pub fn load_scene_probes(game_dir: &std::path::Path, scene_name: &str) -> Vec<Lo
 /// Deliberately not an error when the directory is missing, for the same reason
 /// the lightmap loader is not: a level that has never been probe-baked is a
 /// normal state, and it renders correctly with the sky answering instead.
+/// A scene's BUILDING OUTSIDES: one cube per hollow brush that holds a room,
+/// its six faces the building's six outside faces (the baker's
+/// `probe::capture_exterior`), for reflections that leave one building and
+/// meet another. Each comes back as a [`ProbeEntry`] -- so [`decode_probe`]
+/// reads it -- whose box is the building's and whose volume is `"building"`.
+/// Empty for an older bake, which then reflects only ground and sky outdoors.
+pub fn load_scene_buildings(game_dir: &std::path::Path, scene_name: &str) -> Vec<ProbeEntry> {
+    let dir = probe_dir(game_dir, scene_name);
+    let Ok(raw) = std::fs::read_to_string(dir.join("index.json")) else { return Vec::new() };
+    let Ok(index) = serde_json::from_str::<serde_json::Value>(&raw) else { return Vec::new() };
+    let Some(entries) = index.get("buildings").and_then(|p| p.as_array()) else { return Vec::new() };
+    let vec3 = |e: &serde_json::Value, key: &str| -> Option<[f32; 3]> {
+        let a = e.get(key)?.as_array()?;
+        (a.len() == 3).then_some(())?;
+        Some([a[0].as_f64()? as f32, a[1].as_f64()? as f32, a[2].as_f64()? as f32])
+    };
+    entries
+        .iter()
+        .filter_map(|e| {
+            let id = e.get("object_id")?.as_str()?;
+            let file = e.get("file")?.as_str()?;
+            if e.get("encoding").and_then(|v| v.as_str()) != Some(PROBE_ENCODING) {
+                eprintln!("building {id}: not in {PROBE_ENCODING:?}; re-bake this scene's probes");
+                return None;
+            }
+            let (min, max) = (vec3(e, "min")?, vec3(e, "max")?);
+            Some(ProbeEntry {
+                object_id: id.to_string(),
+                volume: "building".to_string(),
+                path: dir.join(file),
+                resolution: e.get("resolution").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                range: e.get("range").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                min,
+                max,
+                centre: [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5],
+                cell: None,
+                cells: None,
+                depth: None,
+            })
+        })
+        .collect()
+}
+
 pub fn load_scene_probe_index(game_dir: &std::path::Path, scene_name: &str) -> Vec<ProbeEntry> {
     let dir = probe_dir(game_dir, scene_name);
     let Ok(raw) = std::fs::read_to_string(dir.join("index.json")) else {
