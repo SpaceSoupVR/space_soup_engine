@@ -523,13 +523,31 @@ pub fn load_mesh_parts(path: &std::path::Path) -> Option<Vec<MeshPart>> {
 /// a lamp for that case. Read from the file's own JSON because those material
 /// properties are extensions this crate's glTF reader is not built with.
 pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec3; 3]>> {
+    fixture_light_geometry(path).map(|g| g.blocking)
+}
+
+/// A fixture model's light-blocking triangles (see [`light_blocking_triangles`])
+/// and whether its bulb was among what was dropped.
+pub struct FixtureLightGeometry {
+    pub blocking: Vec<[glam::Vec3; 3]>,
+    /// A primitive that glows as a whole was dropped: the bulb is modelled on
+    /// its own, so nothing left in `blocking` is the bulb -- every triangle
+    /// there, however close to the lamp, is housing that really shades it.
+    /// False for a housing that paints its filament into an emissive texture
+    /// (the hanging lamp), whose bulb glass is still in `blocking`.
+    pub bulb_is_separate: bool,
+}
+
+/// [`light_blocking_triangles`], and whether the bulb was its own primitive.
+pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeometry> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let base = path.parent();
     let buffers = gltf::import_buffers(&gltf.document, base, gltf.blob.clone()).ok()?;
     let parts = mesh_parts(&gltf.document, &buffers)?;
     let json: serde_json::Value = serde_json::from_slice(&gltf_json_bytes(path)?).ok()?;
-    let passes_light = |material: Option<usize>| -> bool {
-        let Some(m) = material.and_then(|i| json["materials"].get(i)) else { return false };
+    // (lets light through, is the bulb)
+    let passes_light = |material: Option<usize>| -> (bool, bool) {
+        let Some(m) = material.and_then(|i| json["materials"].get(i)) else { return (false, false) };
         let transmissive = m["extensions"]["KHR_materials_transmission"]["transmissionFactor"]
             .as_f64()
             .is_some_and(|t| t > 0.5);
@@ -537,9 +555,10 @@ pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec
             .as_array()
             .is_some_and(|f| f.iter().filter_map(|v| v.as_f64()).any(|v| v > 0.0))
             && m.get("emissiveTexture").is_none();
-        transmissive || glows_whole
+        (transmissive || glows_whole, glows_whole)
     };
     let mut out = Vec::new();
+    let mut bulb_is_separate = false;
     for part in &parts {
         let material = gltf
             .document
@@ -548,7 +567,9 @@ pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec
             .and_then(|n| n.mesh())
             .and_then(|m| m.primitives().nth(part.primitive))
             .and_then(|p| p.material().index());
-        if passes_light(material) {
+        let (passes, bulb) = passes_light(material);
+        if passes {
+            bulb_is_separate |= bulb && !part.indices.is_empty();
             continue;
         }
         for tri in part.indices.chunks_exact(3) {
@@ -556,7 +577,7 @@ pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec
             out.push([v(tri[0]), v(tri[1]), v(tri[2])]);
         }
     }
-    Some(out)
+    Some(FixtureLightGeometry { blocking: out, bulb_is_separate })
 }
 
 /// The JSON of a `.gltf` (the file) or a `.glb` (its first chunk).
@@ -1103,5 +1124,20 @@ mod light_blocking_tests {
         // 718-triangle glass; the sconce's 7130 without its 2696-triangle bulb.
         assert_eq!(lamp_tris.len(), 8812, "the lamp's glass was kept, or its housing dropped");
         assert_eq!(sconce_tris.len(), 7130, "the sconce's bulb was kept, or its housing dropped");
+    }
+
+    /// The sconce models its bulb on its own, so its whole housing shades the
+    /// lamp; the hanging lamp paints its filament into the housing's texture,
+    /// so the glass round its lamp is still in the housing.
+    #[test]
+    fn a_fixture_says_whether_its_bulb_is_its_own_part() {
+        let lamp = model("hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf");
+        let sconce = model("industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
+        let (Some(lamp), Some(sconce)) = (fixture_light_geometry(&lamp), fixture_light_geometry(&sconce)) else {
+            eprintln!("skipping: fixture models not present");
+            return;
+        };
+        assert!(sconce.bulb_is_separate, "the sconce's bulb primitive was not recognised");
+        assert!(!lamp.bulb_is_separate, "the hanging lamp's glass was taken for a bulb");
     }
 }
