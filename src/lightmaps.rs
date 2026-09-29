@@ -170,6 +170,40 @@ pub fn scene_terrain_stationary_id(layer: usize) -> String {
     format!("__terrain_stationary_{layer}__")
 }
 
+/// A MESH's stationary lamps' shadow masks, layer `layer`: the brush masks'
+/// format and channels exactly, on the mesh's own atlas (`mesh_lightmap`) at
+/// its density. Without them a fixture is lit by its own bulb straight through
+/// its shade -- live lamps on a mesh had no baked visibility at all (headset,
+/// 2026-09-29). `LightmapTarget::Object`, so a runtime that does not know them
+/// must pick them out by id; see [`mesh_stationary_of`].
+pub fn mesh_stationary_id(object_id: &str, layer: usize) -> String {
+    format!("{object_id}{MESH_STATIONARY_SEPARATOR}{layer}")
+}
+
+const MESH_STATIONARY_SEPARATOR: &str = "#stationary_";
+
+/// The object and layer a [`mesh_stationary_id`] names, or `None` for any
+/// other map.
+pub fn mesh_stationary_of(id: &str) -> Option<(&str, usize)> {
+    let (object, layer) = id.rsplit_once(MESH_STATIONARY_SEPARATOR)?;
+    Some((object, layer.parse().ok()?))
+}
+
+#[cfg(test)]
+mod mesh_stationary_id_tests {
+    use super::*;
+
+    #[test]
+    fn a_mesh_mask_id_names_its_object_and_layer_and_nothing_else_does() {
+        let id = mesh_stationary_id("hallway_sconce_2", 1);
+        assert_eq!(mesh_stationary_of(&id), Some(("hallway_sconce_2", 1)));
+        assert_eq!(mesh_stationary_of("hallway_sconce_2"), None);
+        assert_eq!(mesh_stationary_of(&scene_brush_stationary_id(0)), None);
+        assert_eq!(mesh_stationary_of(&scene_terrain_stationary_id(0)), None);
+        assert_eq!(mesh_stationary_of(SCENE_BRUSH_SUN_MASK_ID), None);
+    }
+}
+
 pub struct LoadedLightmap {
     pub object_id: String,
     pub width: u32,
