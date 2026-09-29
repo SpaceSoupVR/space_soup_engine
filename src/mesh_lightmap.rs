@@ -545,18 +545,7 @@ pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeom
     let buffers = gltf::import_buffers(&gltf.document, base, gltf.blob.clone()).ok()?;
     let parts = mesh_parts(&gltf.document, &buffers)?;
     let json: serde_json::Value = serde_json::from_slice(&gltf_json_bytes(path)?).ok()?;
-    // (lets light through, is the bulb)
-    let passes_light = |material: Option<usize>| -> (bool, bool) {
-        let Some(m) = material.and_then(|i| json["materials"].get(i)) else { return (false, false) };
-        let transmissive = m["extensions"]["KHR_materials_transmission"]["transmissionFactor"]
-            .as_f64()
-            .is_some_and(|t| t > 0.5);
-        let glows_whole = m["emissiveFactor"]
-            .as_array()
-            .is_some_and(|f| f.iter().filter_map(|v| v.as_f64()).any(|v| v > 0.0))
-            && m.get("emissiveTexture").is_none();
-        (transmissive || glows_whole, glows_whole)
-    };
+    let passes_light = |material: Option<usize>| material_passes_light(&json, material);
     let mut out = Vec::new();
     let mut bulb_is_separate = false;
     for part in &parts {
@@ -578,6 +567,165 @@ pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeom
         }
     }
     Some(FixtureLightGeometry { blocking: out, bulb_is_separate })
+}
+
+/// Whether a material lets light through, and whether it is a bulb: glass is
+/// `KHR_materials_transmission`; a bulb glows as a whole (an emissive factor
+/// and no emissive texture). See [`light_blocking_triangles`].
+fn material_passes_light(json: &serde_json::Value, material: Option<usize>) -> (bool, bool) {
+    let Some(m) = material.and_then(|i| json["materials"].get(i)) else { return (false, false) };
+    let transmissive = m["extensions"]["KHR_materials_transmission"]["transmissionFactor"]
+        .as_f64()
+        .is_some_and(|t| t > 0.5);
+    let glows_whole = m["emissiveFactor"]
+        .as_array()
+        .is_some_and(|f| f.iter().filter_map(|v| v.as_f64()).any(|v| v > 0.0))
+        && m.get("emissiveTexture").is_none();
+    (transmissive || glows_whole, glows_whole)
+}
+
+/// A MODEL'S MEAN SURFACE COLOUR, in linear light: each light-blocking
+/// primitive's base colour -- its factor times its texture's mean -- weighted
+/// by the primitive's area. Bulbs and glass are left out: one glows, the other
+/// shows what lies behind it. `None` when the model cannot be read.
+///
+/// For the reflection trace, where a reflection meets a model somewhere no
+/// probe photographed: the top of a lamp, when every photograph is taken from
+/// below it. Read from the nearest photograph instead, that direction showed
+/// the lamp's glowing mouth, and the ceiling above each sconce reflected a
+/// bright ghost of it (headset, 2026-09-29).
+pub fn model_albedo(path: &std::path::Path) -> Option<glam::Vec3> {
+    let gltf = gltf::Gltf::open(path).ok()?;
+    let buffers = gltf::import_buffers(&gltf.document, path.parent(), gltf.blob.clone()).ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&gltf_json_bytes(path)?).ok()?;
+    let mut texture_means: std::collections::HashMap<usize, Option<glam::Vec3>> = std::collections::HashMap::new();
+    // A SKINNED model -- a character -- has no static geometry to weigh by
+    // area (`mesh_parts` declines it): each primitive counts once instead.
+    let Some(parts) = mesh_parts(&gltf.document, &buffers) else {
+        let (mut sum, mut n) = (glam::Vec3::ZERO, 0u32);
+        for primitive in gltf.document.meshes().flat_map(|m| m.primitives()) {
+            let material = primitive.material().index();
+            if material_passes_light(&json, material).0 {
+                continue;
+            }
+            sum += material_base_colour(&json, material, &gltf.document, &buffers, path, &mut texture_means);
+            n += 1;
+        }
+        return (n > 0).then(|| sum / n as f32);
+    };
+    let (mut sum, mut total) = (glam::Vec3::ZERO, 0.0f32);
+    for part in &parts {
+        let material = gltf
+            .document
+            .nodes()
+            .nth(part.node)
+            .and_then(|n| n.mesh())
+            .and_then(|m| m.primitives().nth(part.primitive))
+            .and_then(|p| p.material().index());
+        if material_passes_light(&json, material).0 {
+            continue;
+        }
+        let area: f32 = part
+            .indices
+            .chunks_exact(3)
+            .map(|t| {
+                let v = |i: u32| glam::Vec3::from(part.positions[i as usize]);
+                0.5 * (v(t[1]) - v(t[0])).cross(v(t[2]) - v(t[0])).length()
+            })
+            .sum();
+        if area <= 0.0 {
+            continue;
+        }
+        sum += material_base_colour(&json, material, &gltf.document, &buffers, path, &mut texture_means) * area;
+        total += area;
+    }
+    (total > 0.0).then(|| sum / total)
+}
+
+/// A material's base colour, linear: its factor times its texture's mean.
+fn material_base_colour(
+    json: &serde_json::Value,
+    material: Option<usize>,
+    doc: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    path: &std::path::Path,
+    texture_means: &mut std::collections::HashMap<usize, Option<glam::Vec3>>,
+) -> glam::Vec3 {
+    let pbr = material.map(|i| &json["materials"][i]["pbrMetallicRoughness"]);
+    let factor = pbr
+        .and_then(|p| p["baseColorFactor"].as_array())
+        .map(|f| {
+            glam::Vec3::new(
+                f.first().and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                f.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                f.get(2).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+            )
+        })
+        .unwrap_or(glam::Vec3::ONE);
+    let texture = pbr
+        .and_then(|p| p["baseColorTexture"]["index"].as_u64())
+        .and_then(|t| json["textures"][t as usize]["source"].as_u64())
+        .map(|s| s as usize);
+    let mean = match texture {
+        Some(image) => *texture_means.entry(image).or_insert_with(|| gltf_image_mean(doc, buffers, path, image)),
+        None => None,
+    };
+    factor * mean.unwrap_or(glam::Vec3::ONE)
+}
+
+/// The mean of image `index` of a glTF, in linear light: every fourth texel
+/// each way, which for a 1K colour map is 65 thousand samples and a fraction
+/// of the decode. From its file beside the model or from the binary buffer.
+fn gltf_image_mean(
+    doc: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    path: &std::path::Path,
+    index: usize,
+) -> Option<glam::Vec3> {
+    let image = doc.images().nth(index)?;
+    let decoded = match image.source() {
+        gltf::image::Source::Uri { uri, .. } => {
+            let file = path.parent()?.join(percent_decode(uri));
+            image::load_from_memory(&std::fs::read(file).ok()?).ok()?
+        }
+        gltf::image::Source::View { view, .. } => {
+            let data = &buffers.get(view.buffer().index())?.0;
+            image::load_from_memory(data.get(view.offset()..view.offset() + view.length())?).ok()?
+        }
+    };
+    let rgb = decoded.to_rgb8();
+    let linear = |b: u8| {
+        let c = b as f32 / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let (mut sum, mut n) = (glam::Vec3::ZERO, 0u32);
+    for y in (0..rgb.height()).step_by(4) {
+        for x in (0..rgb.width()).step_by(4) {
+            let p = rgb.get_pixel(x, y).0;
+            sum += glam::Vec3::new(linear(p[0]), linear(p[1]), linear(p[2]));
+            n += 1;
+        }
+    }
+    (n > 0).then(|| sum / n as f32)
+}
+
+/// A glTF uri's `%20` and friends, as a file name.
+fn percent_decode(uri: &str) -> String {
+    let bytes = uri.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The JSON of a `.gltf` (the file) or a `.glb` (its first chunk).
@@ -1139,5 +1287,39 @@ mod light_blocking_tests {
         };
         assert!(sconce.bulb_is_separate, "the sconce's bulb primitive was not recognised");
         assert!(!lamp.bulb_is_separate, "the hanging lamp's glass was taken for a bulb");
+    }
+
+    /// The fixtures' mean colours are read from their textures, not their
+    /// factors alone, and the bulb is not in them: a black iron sconce comes
+    /// out dark, where a white bulb counted in would have lifted it.
+    #[test]
+    fn a_fixture_has_the_mean_colour_of_its_housing() {
+        let sconce = model("industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
+        let lamp = model("hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf");
+        let (Some(s), Some(l)) = (model_albedo(&sconce), model_albedo(&lamp)) else {
+            eprintln!("skipping: fixture models not present");
+            return;
+        };
+        eprintln!("sconce albedo {s:?}, hanging lamp albedo {l:?}");
+        for a in [s, l] {
+            assert!(a.min_element() > 0.0 && a.max_element() < 1.0, "not a surface colour: {a:?}");
+        }
+        // A texture read as all-white (the decode failing into the factor)
+        // would make both exactly their factors, which glTF writes as 1.
+        assert!(s.max_element() < 0.9 && l.max_element() < 0.9, "the textures were not read: {s:?} {l:?}");
+    }
+
+    /// A CHARACTER has a colour too, for its reflection: the skinned avatar,
+    /// which has no static geometry to weigh by area, averages its materials.
+    #[test]
+    fn a_skinned_character_has_a_mean_colour() {
+        let boy = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/models/boy/boy.glb");
+        if !boy.exists() {
+            eprintln!("skipping: boy.glb not present");
+            return;
+        }
+        let a = model_albedo(&boy).expect("the avatar's materials");
+        eprintln!("avatar albedo {a:?}");
+        assert!(a.min_element() > 0.0 && a.max_element() < 1.0, "not a surface colour: {a:?}");
     }
 }
