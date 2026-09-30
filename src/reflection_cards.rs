@@ -23,7 +23,18 @@
 //! `(a + 2) % 3`, both from the box's minimum to its maximum. A texel's `t` is
 //! how far in the surface it saw lies, as a fraction of the box's depth along
 //! `a`: 0 at the card's own face, 1 at the opposite one. In the file the six
-//! cards are stacked top to bottom in card order, row `y` of a card at `v`.
+//! cards are stacked top to bottom in card order, row `y` of a card at `v`,
+//! and below them, in the same order, the six cards' NORMALS: which way, in
+//! the box's frame, each texel's surface faces -- turned toward its card.
+//!
+//! WHY NORMALS. A lampshade is a shell millimetres thick, lit inside by its
+//! bulb and dark outside. Where a reflection meets the outside, the card
+//! looking up into the shade saw the glowing inside at the same place, within
+//! any depth tolerance a card can afford -- and the underside of the collar
+//! above the shade, which no card sees, sat a few millimetres behind that same
+//! glowing inside. Each leak drew a white speck in the sconce's reflection
+//! that came and went as the head moved (headset, 2026-09-29 23:25). What the
+//! card saw there faces AWAY from the ray, and only its normal can say so.
 
 use glam::Vec3;
 
@@ -38,8 +49,10 @@ pub const CARD_RESOLUTION: u32 = 64;
 
 /// The index's name for the cards' pixel format: RGB the probes' square-rooted
 /// sixteen bits over a linear `range`; A the depth, 0 for a texel whose rays
-/// met nothing, else `1 + t * 65534`.
-pub const CARD_ENCODING: &str = "sqrt16+depth16";
+/// met nothing, else `1 + t * 65534`. Then the normal cards: RGB the normal's
+/// components mapped from -1..1 to 0..65535, A 65535 where the card saw
+/// something. See [`encode_normal`].
+pub const CARD_ENCODING: &str = "sqrt16+depth16+normal16";
 
 /// `t` for a texel whose rays met nothing: past the box, so no hit ever
 /// matches it.
@@ -89,6 +102,27 @@ pub fn encode_texel(rgb: Vec3, t: Option<f32>, range: f32) -> [u16; 4] {
     [unit(rgb.x), unit(rgb.y), unit(rgb.z), depth]
 }
 
+/// One normal texel as the file stores it: the unit normal, box frame, of the
+/// surface the texel saw, turned toward its card; `None` for nothing.
+pub fn encode_normal(n: Option<Vec3>) -> [u16; 4] {
+    match n {
+        Some(n) => {
+            let unit = |v: f32| (((v.clamp(-1.0, 1.0) + 1.0) * 0.5) * 65535.0).round() as u16;
+            [unit(n.x), unit(n.y), unit(n.z), u16::MAX]
+        }
+        None => [0; 4],
+    }
+}
+
+/// [`encode_normal`] undone: the normal, or zero where the card saw nothing.
+pub fn decode_normal(texel: [u16; 4]) -> [f32; 3] {
+    if texel[3] == 0 {
+        return [0.0; 3];
+    }
+    let c = |v: u16| v as f32 / 65535.0 * 2.0 - 1.0;
+    [c(texel[0]), c(texel[1]), c(texel[2])]
+}
+
 /// [`encode_texel`] undone: linear RGB and `t`, [`CARD_MISS`] for nothing.
 pub fn decode_texel(texel: [u16; 4], range: f32) -> [f32; 4] {
     let linear = |v: u16| {
@@ -109,6 +143,9 @@ pub struct LoadedCards {
     /// `CARD_FACES * resolution^2` texels, card after card, row after row:
     /// linear RGB and `t` (see [`decode_texel`]).
     pub texels: Vec<[f32; 4]>,
+    /// Which way each texel's surface faces, in the box's frame, laid out as
+    /// `texels`: zero where the card saw nothing (see [`decode_normal`]).
+    pub normals: Vec<[f32; 3]>,
 }
 
 /// Every model's cards a scene's probe bake wrote, or none: an older bake has
@@ -129,12 +166,15 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
             let range = e.get("range").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
             let img = image::open(dir.join(e.get("file")?.as_str()?)).ok()?.to_rgba16();
             let res = img.width();
-            if res == 0 || img.height() != res * CARD_FACES as u32 {
-                eprintln!("cards of {id}: {}x{} is not six square cards", img.width(), img.height());
+            if res == 0 || img.height() != 2 * res * CARD_FACES as u32 {
+                eprintln!("cards of {id}: {}x{} is not six square cards and their normals", img.width(), img.height());
                 return None;
             }
-            let texels = img.pixels().map(|p| decode_texel(p.0, range)).collect();
-            Some(LoadedCards { object_id: id.to_string(), resolution: res, texels })
+            let half = (res * res) as usize * CARD_FACES;
+            let pixels: Vec<[u16; 4]> = img.pixels().map(|p| p.0).collect();
+            let texels = pixels[..half].iter().map(|&p| decode_texel(p, range)).collect();
+            let normals = pixels[half..].iter().map(|&p| decode_normal(p)).collect();
+            Some(LoadedCards { object_id: id.to_string(), resolution: res, texels, normals })
         })
         .collect()
 }
@@ -194,5 +234,16 @@ mod tests {
         assert_eq!(decode_texel(encode_texel(rgb, None, range), range)[3], CARD_MISS);
         // A surface on the card's own face is a hit, not a miss.
         assert_eq!(decode_texel(encode_texel(rgb, Some(0.0), range), range)[3], 0.0);
+    }
+
+    /// A normal comes back to within the file's precision, and a texel that
+    /// saw nothing comes back as no direction at all.
+    #[test]
+    fn a_normal_survives_the_file() {
+        for n in [Vec3::X, -Vec3::Y, Vec3::new(0.48, -0.6, 0.64)] {
+            let back = Vec3::from(decode_normal(encode_normal(Some(n))));
+            assert!((back - n).abs().max_element() < 1e-4, "{n} came back as {back}");
+        }
+        assert_eq!(decode_normal(encode_normal(None)), [0.0; 3]);
     }
 }
