@@ -324,20 +324,39 @@ pub fn resolve_light_pose(
     ResolvedLightPose { position, rotation }
 }
 
-/// How hard a fixture's emissive material should be driven right now.
+/// The radius the lighting gives every lamp: the renderer's and the baker's
+/// `LAMP_RADIUS`, inside which a lamp's inverse square stops growing -- a ball
+/// of this radius, not a point. Pinned to both by the baker's tests.
+pub const LAMP_RADIUS: f32 = 0.05;
+
+/// How hard a fixture's emissive material should be driven right now: the
+/// RADIANCE of its bulb, in the renderer's units, which the material's
+/// `emissiveFactor` colours (`mesh_pipeline`: factor x mask x drive).
 ///
 /// The bridge between a light entity and the mesh around it: zero when the lamp
-/// is off, and its intensity when on, so a bulb brightens and dims with its own
-/// beam without anything having to synchronise the two.
+/// is off, and set by its intensity when on, so a bulb brightens and dims with
+/// its own beam without anything having to synchronise the two.
 ///
-/// Normalised against [`default_light_intensity`] so a lamp at the standard
-/// brightness drives its emissive at 1.0 -- the value a glTF `emissiveFactor`
-/// is authored to look right at.
+/// SET BY THE LIGHT IT GIVES OFF. The lighting treats a lamp as a ball of
+/// [`LAMP_RADIUS`]: a surface at distance `d` facing it is lit to
+/// `albedo x intensity / max(d^2, LAMP_RADIUS^2)`. A ball that gives off that
+/// light has, in the same units, the radiance `intensity / LAMP_RADIUS^2` -- so
+/// its bulb, drawn so, is brighter than anything its light lights by at least
+/// `1 / albedo`, as a real bulb is. Driven at the intensity alone, 400 times
+/// dimmer, the inside of a sconce's shade, lit from five centimetres, outshone
+/// its own bulb twenty to eighty times, and every reflection showed the bulb as
+/// a grey disc in a white mouth (user, 2026-09-30: "make the bulb brighter than
+/// the shade's inside, like a real bulb"). A spot's bulb is the same ball; its
+/// cone only aims what it gives off. The sun has no bulb: a directional light
+/// drives at its intensity, as before.
 pub fn emissive_drive(light: &LightDef) -> f32 {
     if !light.enabled {
         return 0.0;
     }
-    (light.intensity / default_light_intensity()).max(0.0)
+    match light.kind {
+        LightKind::Point | LightKind::Spot => (light.intensity / (LAMP_RADIUS * LAMP_RADIUS)).max(0.0),
+        LightKind::Directional => (light.intensity / default_light_intensity()).max(0.0),
+    }
 }
 
 #[cfg(test)]
@@ -432,10 +451,31 @@ mod fixture_tests {
         let dim = LightDef { intensity: default_light_intensity() * 0.25, ..Default::default() };
         let bright = LightDef { intensity: default_light_intensity() * 2.0, ..Default::default() };
         assert!(emissive_drive(&dim) < emissive_drive(&bright));
-        assert!(
-            (emissive_drive(&LightDef::default()) - 1.0).abs() < 1e-6,
-            "a lamp at the standard intensity must drive emissive at 1.0",
-        );
+        assert!((emissive_drive(&bright) / emissive_drive(&dim) - 8.0).abs() < 1e-4, "in proportion");
+    }
+
+    /// A BULB OUTSHINES WHAT IT LIGHTS: for a point or a spot of any intensity,
+    /// the brightest a white surface can be lit -- at or inside the lamp's
+    /// radius, where the lighting stops growing -- is exactly the bulb's
+    /// radiance, and anything farther or darker is dimmer. The sun keeps its
+    /// old drive.
+    #[test]
+    fn a_bulb_is_as_bright_as_the_light_it_gives_off_at_its_own_radius() {
+        for kind in [LightKind::Point, LightKind::Spot] {
+            for intensity in [0.5f32, 3.0, 12.0] {
+                let l = LightDef { kind, intensity, ..Default::default() };
+                let bulb = emissive_drive(&l);
+                // The lighting's inverse square, clamped at the lamp's radius
+                // (the renderer's `light_contribution_split`), window 1.
+                let lit = |albedo: f32, d: f32| albedo * intensity / (d * d).max(LAMP_RADIUS * LAMP_RADIUS);
+                assert!((lit(1.0, LAMP_RADIUS) - bulb).abs() < 1e-3 * bulb, "{kind:?} {intensity}: a white wall at the bulb");
+                for (albedo, d) in [(1.0, 0.01), (0.8, 0.05), (0.5, 0.1), (0.9, 1.0)] {
+                    assert!(lit(albedo, d) <= bulb * (1.0 + 1e-6), "{kind:?} {intensity}: lit at {d} m outshone the bulb");
+                }
+            }
+        }
+        let sun = LightDef { kind: LightKind::Directional, intensity: 2.0, ..Default::default() };
+        assert_eq!(emissive_drive(&sun), 2.0);
     }
 
     #[test]

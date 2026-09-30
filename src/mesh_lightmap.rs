@@ -642,19 +642,30 @@ pub fn model_albedo(path: &std::path::Path) -> Option<glam::Vec3> {
     (total > 0.0).then(|| sum / total)
 }
 
-/// One material's light-blocking triangles in a model, in model space (node
-/// transforms applied), with that material's base colour, linear.
+/// One material's triangles in a model, in model space (node transforms
+/// applied), with that material's base colour, linear, and the glow it gives
+/// off at a drive of one (see `scene_light::emissive_drive`).
 pub struct AlbedoPart {
     pub triangles: Vec<[glam::Vec3; 3]>,
     pub albedo: glam::Vec3,
+    /// The material's `emissiveFactor` where it glows whole -- no emissive
+    /// texture, the glTF way of saying "this part is the bulb". Zero for a
+    /// part that does not glow, and for one whose glow a texture places (the
+    /// hanging lamp's housing): a whole-part mean of the mask would light the
+    /// housing. The renderer draws the glow as factor x mask x drive
+    /// (`mesh_pipeline`).
+    pub emissive: glam::Vec3,
 }
 
-/// A MODEL AS ITS SURFACES LOOK, part by part: its light-blocking triangles
-/// (see [`light_blocking_triangles`]) grouped by material, each with that
-/// material's base colour. [`model_albedo`] is one colour for the whole model;
-/// the baker's reflection cards (`reflection_cards`) colour a lamp's dark shade
-/// and its pale plate apart. `None` when the model cannot be read, or is
-/// skinned.
+/// A MODEL AS A REFLECTION SEES IT, part by part: every triangle but glass's,
+/// grouped by material, each with that material's base colour and glow.
+/// [`model_albedo`] is one colour for the whole model; the baker's reflection
+/// cards (`reflection_cards`) colour a lamp's dark shade and its pale plate
+/// apart. BULBS INCLUDED, unlike the light-blocking triangles
+/// ([`light_blocking_triangles`]): a bulb must not shadow its own lamp, but a
+/// reflection sees it -- left off the cards, a sconce's bulb reflected as a
+/// dark hole in its glowing mouth, "the bulb showing as a shadow" (user,
+/// 2026-09-30). `None` when the model cannot be read, or is skinned.
 pub fn model_albedo_parts(path: &std::path::Path) -> Option<Vec<AlbedoPart>> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let buffers = gltf::import_buffers(&gltf.document, path.parent(), gltf.blob.clone()).ok()?;
@@ -670,14 +681,17 @@ pub fn model_albedo_parts(path: &std::path::Path) -> Option<Vec<AlbedoPart>> {
             .and_then(|n| n.mesh())
             .and_then(|m| m.primitives().nth(part.primitive))
             .and_then(|p| p.material().index());
-        if material_passes_light(&json, material).0 {
+        // Glass shows what lies behind it; a bulb is seen.
+        let (passes_light, glows_whole) = material_passes_light(&json, material);
+        if passes_light && !glows_whole {
             continue;
         }
         let at = match by_material.iter().position(|(m, _)| *m == material) {
             Some(at) => at,
             None => {
                 let albedo = material_base_colour(&json, material, &gltf.document, &buffers, path, &mut texture_means);
-                by_material.push((material, AlbedoPart { triangles: Vec::new(), albedo }));
+                let emissive = if glows_whole { material_emissive_factor(&json, material) } else { glam::Vec3::ZERO };
+                by_material.push((material, AlbedoPart { triangles: Vec::new(), albedo, emissive }));
                 by_material.len() - 1
             }
         };
@@ -685,6 +699,13 @@ pub fn model_albedo_parts(path: &std::path::Path) -> Option<Vec<AlbedoPart>> {
         by_material[at].1.triangles.extend(part.indices.chunks_exact(3).map(|t| [v(t[0]), v(t[1]), v(t[2])]));
     }
     Some(by_material.into_iter().map(|(_, p)| p).filter(|p| !p.triangles.is_empty()).collect())
+}
+
+/// A material's `emissiveFactor`, or zero.
+fn material_emissive_factor(json: &serde_json::Value, material: Option<usize>) -> glam::Vec3 {
+    let Some(f) = material.and_then(|i| json["materials"][i]["emissiveFactor"].as_array()) else { return glam::Vec3::ZERO };
+    let c = |k: usize| f.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    glam::Vec3::new(c(0), c(1), c(2))
 }
 
 /// A material's base colour, linear: its factor times its texture's mean.
@@ -1352,6 +1373,28 @@ mod light_blocking_tests {
         // A texture read as all-white (the decode failing into the factor)
         // would make both exactly their factors, which glTF writes as 1.
         assert!(s.max_element() < 0.9 && l.max_element() < 0.9, "the textures were not read: {s:?} {l:?}");
+    }
+
+    /// A REFLECTION SEES THE BULB: the sconce's parts for its reflection cards
+    /// are its housing and its bulb -- the bulb glowing its own warm white at a
+    /// drive of one, the housing not at all -- and the hanging lamp's glass is
+    /// left out (it shows what lies behind it). Left off the cards, the bulb
+    /// reflected as a dark hole in the glowing mouth.
+    #[test]
+    fn a_fixtures_parts_for_reflections_include_its_glowing_bulb() {
+        let sconce = model("industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
+        let lamp = model("hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf");
+        let (Some(s), Some(l)) = (model_albedo_parts(&sconce), model_albedo_parts(&lamp)) else {
+            eprintln!("skipping: fixture models not present");
+            return;
+        };
+        let tris = |parts: &[AlbedoPart]| parts.iter().map(|p| p.triangles.len()).sum::<usize>();
+        assert_eq!(tris(&s), 7130 + 2696, "the sconce's housing and bulb");
+        let glowing: Vec<&AlbedoPart> = s.iter().filter(|p| p.emissive != glam::Vec3::ZERO).collect();
+        assert_eq!(glowing.len(), 1, "one glowing part, the bulb");
+        assert_eq!(glowing[0].triangles.len(), 2696);
+        assert!((glowing[0].emissive - glam::Vec3::new(1.0, 0.86, 0.62)).length() < 1e-5, "{:?}", glowing[0].emissive);
+        assert_eq!(tris(&l), 8812, "the hanging lamp without its glass");
     }
 
     /// A CHARACTER has a colour too, for its reflection: the skinned avatar,
