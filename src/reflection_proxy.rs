@@ -308,6 +308,44 @@ pub fn reflection_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec
     out
 }
 
+/// How many distinct models -- one model file at one scale -- a level's
+/// reflections follow by their own shape. The renderer holds one distance field
+/// for each (`space_soup::renderer::proxy_field::MAX_PROXY_FIELDS`, pinned equal
+/// to this by a test in quest_app, which sees both crates).
+pub const MAX_SHAPED_MODELS: usize = 8;
+
+/// WHICH PROXIES THE TRACE FOLLOWS BY THEIR OWN SHAPE: per proxy, its model's
+/// number among the level's shaped models -- one per model file and scale,
+/// numbered in order of first appearance -- or `None` for a brush piece, or for
+/// a model past [`MAX_SHAPED_MODELS`], which is traced by its bounds and the
+/// photographs.
+///
+/// ONE RULE FOR THE BAKER AND THE APP. A shaped model is left out of the room
+/// photographs and coloured from its own cards (`reflection_cards`), and the app
+/// gives it a distance field. A model the baker left out and the app then traced
+/// by its bounds would be missing from every reflection, so both ask this.
+pub fn shaped_models(proxies: &[ReflectionProxy], objects: &[GameObject]) -> Vec<Option<u32>> {
+    let mut keys: Vec<(String, [u32; 3])> = Vec::new();
+    proxies
+        .iter()
+        .map(|p| {
+            if p.solid {
+                return None;
+            }
+            let mesh = objects.get(p.object)?.mesh.as_ref()?;
+            let key = (mesh.path.clone(), mesh.scale.to_array().map(f32::to_bits));
+            if let Some(i) = keys.iter().position(|k| *k == key) {
+                return Some(i as u32);
+            }
+            if keys.len() >= MAX_SHAPED_MODELS {
+                return None;
+            }
+            keys.push(key);
+            Some(keys.len() as u32 - 1)
+        })
+        .collect()
+}
+
 /// HOW DEEP A DOORWAY'S JAMBS ARE along its axis: the extent of the wall the
 /// opening is cut through, from the brush pieces around its rim.
 ///
@@ -394,6 +432,50 @@ mod tests {
     fn object(json: &str) -> GameObject {
         serde_json::from_str(json).expect("the test object parses")
     }
+
+    /// ONE MODEL, ONE FIELD, HOWEVER MANY PLACE IT: two sconces share a number,
+    /// a pillar has none, and a ninth distinct model is past the budget -- so the
+    /// baker leaves out of the photographs exactly what the app will trace.
+    #[test]
+    fn shaped_models_are_numbered_per_model_and_scale_within_the_budget() {
+        let mut objects = vec![object(r#"{"id":"pillar"}"#)];
+        let mut proxies = vec![ReflectionProxy {
+            centre: Vec3::ZERO,
+            half_size: Vec3::ONE,
+            rotation: Quat::IDENTITY,
+            room: 0,
+            solid: true,
+            object: 0,
+        }];
+        let mut place = |json: &str| {
+            objects.push(object(json));
+            proxies.push(ReflectionProxy {
+                centre: Vec3::ZERO,
+                half_size: Vec3::ONE,
+                rotation: Quat::IDENTITY,
+                room: 0,
+                solid: false,
+                object: objects.len() - 1,
+            });
+        };
+        place(r#"{"id":"sconce_a","mesh":{"path":"sconce.gltf"}}"#);
+        place(r#"{"id":"lamp","mesh":{"path":"lamp.gltf"}}"#);
+        place(r#"{"id":"sconce_b","mesh":{"path":"sconce.gltf"}}"#);
+        place(r#"{"id":"big_sconce","mesh":{"path":"sconce.gltf","scale":[2.0,2.0,2.0]}}"#);
+        for i in 0..MAX_SHAPED_MODELS {
+            place(&format!(r#"{{"id":"prop_{i}","mesh":{{"path":"prop_{i}.gltf"}}}}"#));
+        }
+        let shaped = shaped_models(&proxies, &objects);
+        assert_eq!(shaped[0], None, "a brush piece is its box");
+        assert_eq!(shaped[1], Some(0));
+        assert_eq!(shaped[2], Some(1));
+        assert_eq!(shaped[3], Some(0), "a second sconce is the first one's model");
+        assert_eq!(shaped[4], Some(2), "at another scale it is another field");
+        let within = shaped[5..].iter().filter(|s| s.is_some()).count();
+        assert_eq!(within, MAX_SHAPED_MODELS - 3, "{shaped:?}");
+        assert_eq!(shaped.last().copied().flatten(), None, "past the budget: traced by its bounds");
+    }
+
 
     const HALL: (Vec3, Vec3) = (Vec3::new(-2.7, 0.0, -15.7), Vec3::new(2.7, 3.1, 3.7));
 
