@@ -213,6 +213,9 @@ pub struct MeshPart {
     /// Per-vertex normals, likewise transformed. Used by the baker to shade a
     /// smooth surface smoothly instead of faceting it.
     pub normals: Vec<[f32; 3]>,
+    /// Per-vertex texture coordinates (`TEXCOORD_0`), for a texture that says
+    /// where a part glows (see [`GlowMap`]); empty when the primitive has none.
+    pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
 }
 
@@ -655,6 +658,51 @@ pub struct AlbedoPart {
     /// housing. The renderer draws the glow as factor x mask x drive
     /// (`mesh_pipeline`).
     pub emissive: glam::Vec3,
+    /// Where a TEXTURE places the glow -- the hanging lamp's one material
+    /// covers housing and bulb alike, and its emissive texture is black but
+    /// for the bulb -- the texture and each triangle's coordinates on it.
+    /// `None` for a part that glows whole or not at all.
+    pub glow_map: Option<GlowMap>,
+}
+
+/// A glow placed by an emissive texture: the texture times the material's
+/// `emissiveFactor`, linear, as the renderer draws it at a drive of one
+/// (`mesh::texture`: factor x mask; `KHR_materials_emissive_strength` is left
+/// to the light's intensity, as there), and each triangle's texture
+/// coordinates in its part's `triangles` order.
+pub struct GlowMap {
+    pub width: u32,
+    pub height: u32,
+    /// Row by row from the image's top, as glTF's `v` runs.
+    pub texels: Vec<glam::Vec3>,
+    pub uvs: Vec<[[f32; 2]; 3]>,
+}
+
+impl GlowMap {
+    /// The glow on triangle `triangle` at barycentric `u`, `v` -- the weights
+    /// of its second and third corners, as a ray-triangle test returns them --
+    /// read bilinearly, the texture repeating as glTF's default sampler does.
+    pub fn at(&self, triangle: usize, u: f32, v: f32) -> glam::Vec3 {
+        let Some(t) = self.uvs.get(triangle) else { return glam::Vec3::ZERO };
+        if self.width == 0 || self.height == 0 {
+            return glam::Vec3::ZERO;
+        }
+        let w = 1.0 - u - v;
+        let s = w * t[0][0] + u * t[1][0] + v * t[2][0];
+        let r = w * t[0][1] + u * t[1][1] + v * t[2][1];
+        let x = s * self.width as f32 - 0.5;
+        let y = r * self.height as f32 - 0.5;
+        let (x0, y0) = (x.floor(), y.floor());
+        let (fx, fy) = (x - x0, y - y0);
+        let texel = |xi: f32, yi: f32| {
+            let xi = (xi as i64).rem_euclid(self.width as i64) as usize;
+            let yi = (yi as i64).rem_euclid(self.height as i64) as usize;
+            self.texels[yi * self.width as usize + xi]
+        };
+        let top = texel(x0, y0) * (1.0 - fx) + texel(x0 + 1.0, y0) * fx;
+        let bottom = texel(x0, y0 + 1.0) * (1.0 - fx) + texel(x0 + 1.0, y0 + 1.0) * fx;
+        top * (1.0 - fy) + bottom * fy
+    }
 }
 
 /// A MODEL AS A REFLECTION SEES IT, part by part: every triangle but glass's,
@@ -691,14 +739,49 @@ pub fn model_albedo_parts(path: &std::path::Path) -> Option<Vec<AlbedoPart>> {
             None => {
                 let albedo = material_base_colour(&json, material, &gltf.document, &buffers, path, &mut texture_means);
                 let emissive = if glows_whole { material_emissive_factor(&json, material) } else { glam::Vec3::ZERO };
-                by_material.push((material, AlbedoPart { triangles: Vec::new(), albedo, emissive }));
+                let glow_map = if glows_whole { None } else { material_glow_map(&json, material, &gltf.document, &buffers, path) };
+                by_material.push((material, AlbedoPart { triangles: Vec::new(), albedo, emissive, glow_map }));
                 by_material.len() - 1
             }
         };
         let v = |i: u32| glam::Vec3::from(part.positions[i as usize]);
-        by_material[at].1.triangles.extend(part.indices.chunks_exact(3).map(|t| [v(t[0]), v(t[1]), v(t[2])]));
+        let into = &mut by_material[at].1;
+        into.triangles.extend(part.indices.chunks_exact(3).map(|t| [v(t[0]), v(t[1]), v(t[2])]));
+        if let Some(map) = into.glow_map.as_mut() {
+            // Aligned with the triangles; a primitive with no coordinates is
+            // read at the texture's corner, which is what the renderer does.
+            let uv = |i: u32| part.uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]);
+            map.uvs.extend(part.indices.chunks_exact(3).map(|t| [uv(t[0]), uv(t[1]), uv(t[2])]));
+        }
     }
     Some(by_material.into_iter().map(|(_, p)| p).filter(|p| !p.triangles.is_empty()).collect())
+}
+
+/// A material's emissive texture times its `emissiveFactor`, linear -- the
+/// glow a texture places -- with no triangles yet; `None` without an emissive
+/// texture, or with a black factor (glTF's default: no glow whatever the
+/// texture says).
+fn material_glow_map(
+    json: &serde_json::Value,
+    material: Option<usize>,
+    doc: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    path: &std::path::Path,
+) -> Option<GlowMap> {
+    let m = &json["materials"][material?];
+    let factor = material_emissive_factor(json, material);
+    if factor.max_element() <= 0.0 {
+        return None;
+    }
+    let texture = m["emissiveTexture"]["index"].as_u64()?;
+    let image = json["textures"][texture as usize]["source"].as_u64()? as usize;
+    let rgb = gltf_image_decode(doc, buffers, path, image)?.to_rgb8();
+    let linear = |b: u8| {
+        let c = b as f32 / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let texels = rgb.pixels().map(|p| glam::Vec3::new(linear(p.0[0]), linear(p.0[1]), linear(p.0[2])) * factor).collect();
+    Some(GlowMap { width: rgb.width(), height: rgb.height(), texels, uvs: Vec::new() })
 }
 
 /// A material's `emissiveFactor`, or zero.
@@ -748,18 +831,7 @@ fn gltf_image_mean(
     path: &std::path::Path,
     index: usize,
 ) -> Option<glam::Vec3> {
-    let image = doc.images().nth(index)?;
-    let decoded = match image.source() {
-        gltf::image::Source::Uri { uri, .. } => {
-            let file = path.parent()?.join(percent_decode(uri));
-            image::load_from_memory(&std::fs::read(file).ok()?).ok()?
-        }
-        gltf::image::Source::View { view, .. } => {
-            let data = &buffers.get(view.buffer().index())?.0;
-            image::load_from_memory(data.get(view.offset()..view.offset() + view.length())?).ok()?
-        }
-    };
-    let rgb = decoded.to_rgb8();
+    let rgb = gltf_image_decode(doc, buffers, path, index)?.to_rgb8();
     let linear = |b: u8| {
         let c = b as f32 / 255.0;
         if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
@@ -773,6 +845,27 @@ fn gltf_image_mean(
         }
     }
     (n > 0).then(|| sum / n as f32)
+}
+
+/// Image `index` of a glTF, decoded: from its file beside the model or from
+/// the binary buffer.
+fn gltf_image_decode(
+    doc: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    path: &std::path::Path,
+    index: usize,
+) -> Option<image::DynamicImage> {
+    let image = doc.images().nth(index)?;
+    match image.source() {
+        gltf::image::Source::Uri { uri, .. } => {
+            let file = path.parent()?.join(percent_decode(uri));
+            image::load_from_memory(&std::fs::read(file).ok()?).ok()
+        }
+        gltf::image::Source::View { view, .. } => {
+            let data = &buffers.get(view.buffer().index())?.0;
+            image::load_from_memory(data.get(view.offset()..view.offset() + view.length())?).ok()
+        }
+    }
 }
 
 /// A glTF uri's `%20` and friends, as a file name.
@@ -839,11 +932,17 @@ pub fn mesh_parts(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Optio
                     Some(i) => i.into_u32().collect(),
                     None => (0..positions.len() as u32).collect(),
                 };
+                let uvs: Vec<[f32; 2]> = reader
+                    .read_tex_coords(0)
+                    .map(|t| t.into_f32().collect())
+                    .filter(|t: &Vec<[f32; 2]>| t.len() == positions.len())
+                    .unwrap_or_default();
                 out.push(MeshPart {
                     node: node.index(),
                     primitive: pi,
                     positions,
                     normals,
+                    uvs,
                     indices,
                 });
             }
@@ -1394,7 +1493,36 @@ mod light_blocking_tests {
         assert_eq!(glowing.len(), 1, "one glowing part, the bulb");
         assert_eq!(glowing[0].triangles.len(), 2696);
         assert!((glowing[0].emissive - glam::Vec3::new(1.0, 0.86, 0.62)).length() < 1e-5, "{:?}", glowing[0].emissive);
+        assert!(s.iter().all(|p| p.glow_map.is_none()), "the sconce's glow is whole, not placed by a texture");
         assert_eq!(tris(&l), 8812, "the hanging lamp without its glass");
+        // THE HANGING LAMP'S GLOW IS PLACED BY ITS TEXTURE: one material for
+        // housing and bulb, its emissive texture black but for the bulb. The
+        // map has a coordinate triple per triangle, and read through them it
+        // lights some triangles -- the bulb's -- and leaves most dark.
+        let map = l.iter().find_map(|p| p.glow_map.as_ref().map(|m| (m, p.triangles.len()))).expect("a glow map");
+        let (map, triangles) = map;
+        assert_eq!(map.uvs.len(), triangles, "a coordinate triple per triangle");
+        assert_eq!((map.width, map.height), (1024, 1024));
+        let lit = (0..triangles).filter(|&t| map.at(t, 1.0 / 3.0, 1.0 / 3.0).max_element() > 0.5).count();
+        eprintln!("hanging lamp: {lit} of {triangles} triangles glow at their centres");
+        assert!(lit > 50 && lit < triangles / 4, "the bulb's triangles only: {lit} of {triangles}");
+    }
+
+    /// A glow map reads between its texels and repeats past its edges, as the
+    /// renderer's sampler does.
+    #[test]
+    fn a_glow_map_reads_bilinearly_and_repeats() {
+        let map = GlowMap {
+            width: 2,
+            height: 1,
+            texels: vec![glam::Vec3::ZERO, glam::Vec3::ONE],
+            uvs: vec![[[0.5, 0.5], [0.5, 0.5], [0.5, 0.5]], [[0.25, 0.5], [0.25, 0.5], [0.25, 0.5]], [[1.25, 0.5]; 3]],
+        };
+        // u 0.5 is half way between the two texel centres (0.25 and 0.75).
+        assert!((map.at(0, 0.2, 0.3).x - 0.5).abs() < 1e-6);
+        assert!(map.at(1, 0.0, 0.0).x.abs() < 1e-6, "on the dark texel's centre");
+        assert!((map.at(2, 0.0, 0.0).x - map.at(1, 0.0, 0.0).x).abs() < 1e-6, "one texture width on, the same");
+        assert_eq!(map.at(9, 0.0, 0.0), glam::Vec3::ZERO, "no such triangle");
     }
 
     /// A CHARACTER has a colour too, for its reflection: the skinned avatar,
