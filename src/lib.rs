@@ -45,6 +45,7 @@ pub mod damage;
 pub mod brush_lightmap;
 pub mod brush_tjunction;
 pub mod mesh_lightmap;
+pub mod reflection_cards;
 pub mod reflection_probe;
 pub mod reflection_proxy;
 pub mod room_graph;

@@ -642,6 +642,51 @@ pub fn model_albedo(path: &std::path::Path) -> Option<glam::Vec3> {
     (total > 0.0).then(|| sum / total)
 }
 
+/// One material's light-blocking triangles in a model, in model space (node
+/// transforms applied), with that material's base colour, linear.
+pub struct AlbedoPart {
+    pub triangles: Vec<[glam::Vec3; 3]>,
+    pub albedo: glam::Vec3,
+}
+
+/// A MODEL AS ITS SURFACES LOOK, part by part: its light-blocking triangles
+/// (see [`light_blocking_triangles`]) grouped by material, each with that
+/// material's base colour. [`model_albedo`] is one colour for the whole model;
+/// the baker's reflection cards (`reflection_cards`) colour a lamp's dark shade
+/// and its pale plate apart. `None` when the model cannot be read, or is
+/// skinned.
+pub fn model_albedo_parts(path: &std::path::Path) -> Option<Vec<AlbedoPart>> {
+    let gltf = gltf::Gltf::open(path).ok()?;
+    let buffers = gltf::import_buffers(&gltf.document, path.parent(), gltf.blob.clone()).ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&gltf_json_bytes(path)?).ok()?;
+    let parts = mesh_parts(&gltf.document, &buffers)?;
+    let mut texture_means: std::collections::HashMap<usize, Option<glam::Vec3>> = std::collections::HashMap::new();
+    let mut by_material: Vec<(Option<usize>, AlbedoPart)> = Vec::new();
+    for part in &parts {
+        let material = gltf
+            .document
+            .nodes()
+            .nth(part.node)
+            .and_then(|n| n.mesh())
+            .and_then(|m| m.primitives().nth(part.primitive))
+            .and_then(|p| p.material().index());
+        if material_passes_light(&json, material).0 {
+            continue;
+        }
+        let at = match by_material.iter().position(|(m, _)| *m == material) {
+            Some(at) => at,
+            None => {
+                let albedo = material_base_colour(&json, material, &gltf.document, &buffers, path, &mut texture_means);
+                by_material.push((material, AlbedoPart { triangles: Vec::new(), albedo }));
+                by_material.len() - 1
+            }
+        };
+        let v = |i: u32| glam::Vec3::from(part.positions[i as usize]);
+        by_material[at].1.triangles.extend(part.indices.chunks_exact(3).map(|t| [v(t[0]), v(t[1]), v(t[2])]));
+    }
+    Some(by_material.into_iter().map(|(_, p)| p).filter(|p| !p.triangles.is_empty()).collect())
+}
+
 /// A material's base colour, linear: its factor times its texture's mean.
 fn material_base_colour(
     json: &serde_json::Value,
