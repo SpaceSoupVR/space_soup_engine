@@ -158,6 +158,15 @@ pub const GLARE_BRIGHT: f32 = 4.0;
 pub const GLARE_ROWS: usize = 18;
 pub const GLARE_COLS: usize = 36;
 
+/// THE BULB'S OWN LIGHT IN FINER STEPS OF HEIGHT: 1 degree apart, the
+/// table's columns round. A shade cuts its bulb off within a degree or two,
+/// and read between rows 10 degrees apart a hidden bulb glared at up to 80%
+/// of its visible neighbour's: a hanging lamp's veil showed some 9 degrees
+/// above where its shade hides the bulb (headset, 2026-10-01). Only the
+/// bulb's light needs it: it is the tight, bright veil, and the lit inside of
+/// a shade fades out over its own width. See [`GlareSplit::bulb_fine`].
+pub const GLARE_BULB_ROWS: usize = 180;
+
 /// The direction toward the eye, in the box's own frame, that entry
 /// `(row, col)` of a `rows` x `cols` glare table describes. See [`GLARE_ROWS`].
 pub fn glare_direction(row: usize, col: usize, rows: usize, cols: usize) -> Vec3 {
@@ -214,6 +223,22 @@ pub struct GlareSplit {
     /// How far they spread round `lit_centre` across the view: the bright
     /// area's root-mean-square radius, in metres.
     pub lit_spread: Vec<f32>,
+    /// The bulb's part again in finer rows: what an eye between the table's
+    /// rows reads the bulb from. `None` in bakes before 2026-10-01 noon. See
+    /// [`GlareBulbRows`].
+    pub bulb_fine: Option<GlareBulbRows>,
+}
+
+/// THE BULB IN FINER ROWS ([`GLARE_BULB_ROWS`] as baked) and the table's
+/// columns, row after row: its light, as [`GlareSplit::bulb`] is, and where
+/// that shows, as [`GlareSplit::bulb_centre`] is. Where its shade's rim cuts
+/// it off, what shows is a sliver under the rim, and its middle moves with
+/// the eye a degree at a time.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlareBulbRows {
+    pub rows: usize,
+    pub flux: Vec<f32>,
+    pub centre: Vec<Vec3>,
 }
 
 impl GlareTable {
@@ -232,6 +257,14 @@ impl GlareTable {
             out["bulb_centre"] = serde_json::json!(flat(&split.bulb_centre));
             out["lit_centre"] = serde_json::json!(flat(&split.lit_centre));
             out["lit_spread"] = serde_json::json!(split.lit_spread);
+            if let Some(fine) = &split.bulb_fine {
+                // To a tenth of a millimetre and as fine in light: 6480
+                // entries, written short.
+                let short = |v: &[f32]| v.iter().map(|x| (*x as f64 * 1e4).round() / 1e4).collect::<Vec<f64>>();
+                out["bulb_rows"] = serde_json::json!(fine.rows);
+                out["bulb_fine"] = serde_json::json!(short(&fine.flux));
+                out["bulb_fine_centre"] = serde_json::json!(short(&flat(&fine.centre)));
+            }
         }
         out
     }
@@ -256,8 +289,15 @@ impl GlareTable {
         let split = (|| {
             let (bulb, bulb_centre) = (numbers("bulb")?, numbers("bulb_centre")?);
             let (lit_centre, lit_spread) = (numbers("lit_centre")?, numbers("lit_spread")?);
+            // The bulb's finer rows, where the bake wrote them whole.
+            let bulb_fine = (|| {
+                let rows = v.get("bulb_rows")?.as_u64()? as usize;
+                let (flux, centre) = (numbers("bulb_fine")?, numbers("bulb_fine_centre")?);
+                (rows > 0 && flux.len() == rows * cols && centre.len() == 3 * rows * cols)
+                    .then(|| GlareBulbRows { rows, flux, centre: points(centre) })
+            })();
             (bulb.len() == n && bulb_centre.len() == 3 * n && lit_centre.len() == 3 * n && lit_spread.len() == n).then(|| {
-                GlareSplit { bulb, bulb_centre: points(bulb_centre), lit_centre: points(lit_centre), lit_spread }
+                GlareSplit { bulb, bulb_centre: points(bulb_centre), lit_centre: points(lit_centre), lit_spread, bulb_fine }
             })
         })();
         Some(Self { rows, cols, flux, centre, split })
@@ -373,6 +413,13 @@ mod tests {
                 bulb_centre: (0..n).map(|i| Vec3::new(0.0, -0.1 * i as f32, 0.01)).collect(),
                 lit_centre: (0..n).map(|i| Vec3::new(0.02 * i as f32, 0.03, 0.0)).collect(),
                 lit_spread: (0..n).map(|i| 0.1 + 0.01 * i as f32).collect(),
+                bulb_fine: Some(GlareBulbRows {
+                    rows: 5,
+                    // Values a tenth of a millimetre holds exactly: the
+                    // finer rows are written to that.
+                    flux: (0..5 * cols).map(|i| 0.25 * i as f32).collect(),
+                    centre: (0..5 * cols).map(|i| Vec3::new(0.0, -0.5 * i as f32, 0.0125)).collect(),
+                }),
             }),
             ..t.clone()
         };
