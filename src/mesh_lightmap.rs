@@ -533,13 +533,18 @@ pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec
 /// and whether its bulb was among what was dropped.
 pub struct FixtureLightGeometry {
     pub blocking: Vec<[glam::Vec3; 3]>,
-    /// A primitive that glows as a whole was dropped: the bulb is modelled on
-    /// its own, so nothing left in `blocking` is the bulb -- every triangle
-    /// there, however close to the lamp, is housing that really shades it.
-    /// False for a housing that paints its filament into an emissive texture
-    /// (the hanging lamp), whose bulb glass is still in `blocking`.
-    pub bulb_is_separate: bool,
+    /// The bulb was dropped -- a primitive that glows as a whole (the
+    /// sconce's), or the triangles an emissive texture paints the glow on
+    /// (the hanging lamp's) -- so nothing left in `blocking` is the bulb:
+    /// every triangle there, however close to the lamp, is housing that
+    /// really shades it.
+    pub bulb_dropped: bool,
 }
+
+/// A triangle of a housing whose emissive texture glows at its middle past
+/// this share of the texture's brightest is the bulb painted there. Relative,
+/// so a JPEG mask's noise in the black never counts.
+const PAINTED_BULB_SHARE: f32 = 0.1;
 
 /// [`light_blocking_triangles`], and whether the bulb was its own primitive.
 pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeometry> {
@@ -550,7 +555,8 @@ pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeom
     let json: serde_json::Value = serde_json::from_slice(&gltf_json_bytes(path)?).ok()?;
     let passes_light = |material: Option<usize>| material_passes_light(&json, material);
     let mut out = Vec::new();
-    let mut bulb_is_separate = false;
+    let mut bulb_dropped = false;
+    let mut glow_maps: std::collections::HashMap<Option<usize>, Option<(GlowMap, f32)>> = std::collections::HashMap::new();
     for part in &parts {
         let material = gltf
             .document
@@ -561,15 +567,39 @@ pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeom
             .and_then(|p| p.material().index());
         let (passes, bulb) = passes_light(material);
         if passes {
-            bulb_is_separate |= bulb && !part.indices.is_empty();
+            bulb_dropped |= bulb && !part.indices.is_empty();
             continue;
         }
+        // A BULB PAINTED INTO THE HOUSING'S TEXTURE, as the hanging lamp's is:
+        // the triangles its emissive texture lights. Dropped as a bulb
+        // primitive is, so the housing round it shades the lamp to within
+        // the last few centimetres -- with the bulb kept, a 12 cm clearance
+        // had to keep shadow rays off it, and once the lamp sat in its bulb
+        // the outside of the bell's crown, inside those 12 cm, saw the lamp
+        // through the metal: a glowing ring round the neck (2026-10-01).
+        let glow = glow_maps
+            .entry(material)
+            .or_insert_with(|| {
+                let map = material_glow_map(&json, material, &gltf.document, &buffers, path)?;
+                let brightest = map.texels.iter().map(|t| t.max_element()).fold(0.0f32, f32::max);
+                (brightest > 0.0).then_some((map, brightest))
+            })
+            .as_ref();
         for tri in part.indices.chunks_exact(3) {
+            if let Some((map, brightest)) = glow {
+                let uv = |i: u32| part.uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]);
+                let (a, b, c) = (uv(tri[0]), uv(tri[1]), uv(tri[2]));
+                let middle = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0];
+                if map.sample(middle).max_element() > PAINTED_BULB_SHARE * brightest {
+                    bulb_dropped = true;
+                    continue;
+                }
+            }
             let v = |i: u32| glam::Vec3::from(part.positions[i as usize]);
             out.push([v(tri[0]), v(tri[1]), v(tri[2])]);
         }
     }
-    Some(FixtureLightGeometry { blocking: out, bulb_is_separate })
+    Some(FixtureLightGeometry { blocking: out, bulb_dropped })
 }
 
 /// Whether a material lets light through, and whether it is a bulb: glass is
@@ -690,8 +720,16 @@ impl GlowMap {
         let w = 1.0 - u - v;
         let s = w * t[0][0] + u * t[1][0] + v * t[2][0];
         let r = w * t[0][1] + u * t[1][1] + v * t[2][1];
-        let x = s * self.width as f32 - 0.5;
-        let y = r * self.height as f32 - 0.5;
+        self.sample([s, r])
+    }
+
+    /// The glow at texture coordinates `uv`, read as [`Self::at`] reads it.
+    pub fn sample(&self, uv: [f32; 2]) -> glam::Vec3 {
+        if self.width == 0 || self.height == 0 {
+            return glam::Vec3::ZERO;
+        }
+        let x = uv[0] * self.width as f32 - 0.5;
+        let y = uv[1] * self.height as f32 - 0.5;
         let (x0, y0) = (x.floor(), y.floor());
         let (fx, fy) = (x - x0, y - y0);
         let texel = |xi: f32, yi: f32| {
@@ -1432,10 +1470,11 @@ mod light_blocking_tests {
             eprintln!("skipping: fixture models not present");
             return;
         };
-        // Exactly the housing primitives: the lamp's 8812 (its cage wraps the
-        // glass, so the glass cannot be told apart by position) without its
-        // 718-triangle glass; the sconce's 7130 without its 2696-triangle bulb.
-        assert_eq!(lamp_tris.len(), 8812, "the lamp's glass was kept, or its housing dropped");
+        // Exactly the housing: the lamp's 8812 (its cage wraps the glass, so
+        // the glass cannot be told apart by position) without its 718-triangle
+        // glass, and without the 318 its emissive texture paints its bulb on;
+        // the sconce's 7130 without its 2696-triangle bulb.
+        assert_eq!(lamp_tris.len(), 8494, "the lamp's glass or bulb was kept, or its housing dropped");
         assert_eq!(sconce_tris.len(), 7130, "the sconce's bulb was kept, or its housing dropped");
     }
 
@@ -1450,8 +1489,49 @@ mod light_blocking_tests {
             eprintln!("skipping: fixture models not present");
             return;
         };
-        assert!(sconce.bulb_is_separate, "the sconce's bulb primitive was not recognised");
-        assert!(!lamp.bulb_is_separate, "the hanging lamp's glass was taken for a bulb");
+        assert!(sconce.bulb_dropped, "the sconce's bulb primitive was not recognised");
+        assert!(lamp.bulb_dropped, "the hanging lamp's painted bulb was kept");
+    }
+
+    /// The hanging lamp's bulb is PAINTED into its housing's emissive
+    /// texture, and its triangles go with it: from the bulb's middle, every
+    /// level ray runs past the bulb's 4.5 cm radius before it meets housing.
+    /// With the bulb kept, each stopped on the bulb's own glass -- and the 12
+    /// cm clearance that had to excuse that let the outside of the bell's
+    /// crown see the lamp through the metal (2026-10-01).
+    #[test]
+    fn a_painted_bulb_leaves_nothing_round_its_lamp() {
+        let lamp = model("hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf");
+        let Some(lamp) = fixture_light_geometry(&lamp) else {
+            eprintln!("skipping: fixture models not present");
+            return;
+        };
+        // The middle of its emissive faces (Blender, 2026-10-01).
+        let bulb = glam::Vec3::new(0.0, -1.0647, 0.0);
+        let hit = |dir: glam::Vec3| {
+            lamp.blocking
+                .iter()
+                .filter_map(|t| {
+                    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
+                    let p = dir.cross(e2);
+                    let det = e1.dot(p);
+                    if det.abs() < 1e-12 {
+                        return None;
+                    }
+                    let s = bulb - t[0];
+                    let u = s.dot(p) / det;
+                    let q = s.cross(e1);
+                    let v = dir.dot(q) / det;
+                    let d = e2.dot(q) / det;
+                    (u >= 0.0 && v >= 0.0 && u + v <= 1.0 && d > 0.0).then_some(d)
+                })
+                .fold(f32::INFINITY, f32::min)
+        };
+        for i in 0..16 {
+            let a = i as f32 * std::f32::consts::TAU / 16.0;
+            let d = hit(glam::Vec3::new(a.cos(), 0.0, a.sin()));
+            assert!(d > 0.047, "{i}/16 round: housing {d:.3} m from the bulb's middle -- the bulb's glass was kept");
+        }
     }
 
     /// The fixtures' mean colours are read from their textures, not their
