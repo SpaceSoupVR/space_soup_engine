@@ -1619,3 +1619,44 @@ mod light_blocking_tests {
         assert!(a.min_element() > 0.0 && a.max_element() < 1.0, "not a surface colour: {a:?}");
     }
 }
+
+/// DIAGNOSTIC, ignored: `MASK_OBJ_OUT=<dir>` writes the wall sconce with its
+/// lightmap layout as OBJ texture coordinates, to look at a baked atlas on the
+/// model it belongs to.
+#[cfg(test)]
+mod layout_on_model {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn write_the_sconce_with_its_atlas_coordinates() {
+        let Ok(dir) = std::env::var("MASK_OBJ_OUT") else { return };
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../game/models/lights/industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
+        let parts = load_mesh_parts(&path).expect("the sconce loads");
+        let layout = mesh_lightmap_layout(&parts, DEFAULT_TEXEL).expect("a layout");
+        let mut obj = String::new();
+        let mut n = 1usize;
+        for chart in &layout.charts {
+            for k in 0..3 {
+                let c = chart.corners[k];
+                let p = chart.texel_local(c[0], c[1]);
+                let uv = chart.uv2(k, layout.width, layout.height);
+                obj.push_str(&format!("v {} {} {}\nvt {} {}\n", p[0], p[1], p[2], uv[0], 1.0 - uv[1]));
+            }
+            obj.push_str(&format!("f {0}/{0} {1}/{1} {2}/{2}\n", n, n + 1, n + 2));
+            n += 3;
+        }
+        std::fs::write(format!("{dir}/sconce_atlas.obj"), obj).unwrap();
+        let tiny = layout.charts.iter().filter(|c| c.w * c.h <= 4).count();
+        // The bake's own test (`MESH_EDGE_SLACK` in tools/bake): a texel is
+        // baked when its centre is within a fifth of a texel of the triangle.
+        let unbaked = layout
+            .charts
+            .iter()
+            .filter(|c| !(0..c.h).any(|ty| (0..c.w).any(|tx| c.barycentric(tx, ty).iter().all(|w| *w >= -0.2))))
+            .count();
+        eprintln!("LAYOUT charts with no texel on their triangle: {unbaked}");
+        eprintln!("LAYOUT {}x{} atlas, {} charts, {} of them 2x2 or less, density x{}", layout.width, layout.height, layout.charts.len(), tiny, layout.density_scale);
+    }
+}
