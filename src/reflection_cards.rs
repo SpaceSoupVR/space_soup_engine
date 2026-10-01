@@ -133,6 +133,90 @@ pub fn decode_texel(texel: [u16; 4], range: f32) -> [f32; 4] {
     [linear(texel[0]), linear(texel[1]), linear(texel[2]), t]
 }
 
+/// A displayed value this many times the renderer's white is past anything the
+/// display shows at any exposure the eye adapts to; only light beyond it
+/// counts toward a fixture's glare. The rest -- a shade's outside, lit like a
+/// wall -- the display draws, and the eye's own veil already answers it.
+pub const GLARE_BRIGHT: f32 = 4.0;
+
+/// THE GLARE TABLE: how much of a model's light shows, and where, from every
+/// direction round it -- what an eye there sees glowing past [`GLARE_BRIGHT`].
+///
+/// WHY NOT THE CARDS. They see the model from six directions only, and a
+/// direction between them was a blend of theirs: from the side of a hanging
+/// lamp, a quarter of what the card below saw -- its bulb in plain view --
+/// glared through the shade that hides it, and from below a sconce at an
+/// angle the veil grew from up inside the shade, where the card straight
+/// below saw the middle of its light (headset, 2026-09-30). A shade cuts its
+/// bulb off within a few degrees; only a picture taken from about there can
+/// say so.
+///
+/// Rows run from `+y` down to `-y` at the middles of equal polar bands,
+/// columns round `+y` from `+x` toward `+z`, in the box's own frame: 10
+/// degrees apart, so a fixture's bulb goes behind its shade over a step or
+/// two, about as fast as its own width does it.
+pub const GLARE_ROWS: usize = 18;
+pub const GLARE_COLS: usize = 36;
+
+/// The direction toward the eye, in the box's own frame, that entry
+/// `(row, col)` of a `rows` x `cols` glare table describes. See [`GLARE_ROWS`].
+pub fn glare_direction(row: usize, col: usize, rows: usize, cols: usize) -> Vec3 {
+    let theta = (row as f32 + 0.5) / rows.max(1) as f32 * std::f32::consts::PI;
+    let phi = (col as f32 + 0.5) / cols.max(1) as f32 * std::f32::consts::TAU;
+    Vec3::new(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin())
+}
+
+/// One model's glare table. See [`GLARE_ROWS`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlareTable {
+    pub rows: usize,
+    pub cols: usize,
+    /// Per entry, row after row: the light past [`GLARE_BRIGHT`] the model
+    /// shows toward that direction -- each visible surface's luminance over
+    /// it, summed over the model's projected area (radiance x square metres).
+    /// Over `pi` times a lamp's luminance it is the share of that bare lamp's
+    /// light the eye gets: `quest_app::glare_fixtures`.
+    pub flux: Vec<f32>,
+    /// Where that light shows: the middle of the bright surfaces those rays
+    /// met, each weighed by how much of it the display shows bright rather
+    /// than by its light (see `tools/bake`'s `GlareLook::glowing`), in the
+    /// box's own frame from its centre. Seen from its direction it lies in the
+    /// middle of the glowing part of the picture -- a sconce's open mouth,
+    /// wherever in it the eye looks in.
+    pub centre: Vec<Vec3>,
+}
+
+impl GlareTable {
+    /// As the bake writes it beside the cards: rows, columns, the fluxes and
+    /// the centres as one flat `x, y, z` list.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "rows": self.rows,
+            "cols": self.cols,
+            "flux": self.flux,
+            "centre": self.centre.iter().flat_map(|c| c.to_array()).collect::<Vec<f32>>(),
+        })
+    }
+
+    /// [`Self::to_json`] undone; `None` for anything that is not a whole
+    /// table.
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let rows = v.get("rows")?.as_u64()? as usize;
+        let cols = v.get("cols")?.as_u64()? as usize;
+        let numbers = |key: &str| -> Option<Vec<f32>> {
+            v.get(key)?.as_array()?.iter().map(|x| x.as_f64().map(|x| x as f32)).collect()
+        };
+        let flux = numbers("flux")?;
+        let flat = numbers("centre")?;
+        let n = rows * cols;
+        if n == 0 || flux.len() != n || flat.len() != 3 * n {
+            return None;
+        }
+        let centre = flat.chunks_exact(3).map(|c| Vec3::new(c[0], c[1], c[2])).collect();
+        Some(Self { rows, cols, flux, centre })
+    }
+}
+
 /// One placed model's six cards, decoded.
 #[derive(Clone, Debug)]
 pub struct LoadedCards {
@@ -146,6 +230,9 @@ pub struct LoadedCards {
     /// Which way each texel's surface faces, in the box's frame, laid out as
     /// `texels`: zero where the card saw nothing (see [`decode_normal`]).
     pub normals: Vec<[f32; 3]>,
+    /// The model's glare from every direction, where the bake wrote one. See
+    /// [`GlareTable`].
+    pub glare: Option<GlareTable>,
 }
 
 /// Every model's cards a scene's probe bake wrote, or none: an older bake has
@@ -174,7 +261,19 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
             let pixels: Vec<[u16; 4]> = img.pixels().map(|p| p.0).collect();
             let texels = pixels[..half].iter().map(|&p| decode_texel(p, range)).collect();
             let normals = pixels[half..].iter().map(|&p| decode_normal(p)).collect();
-            Some(LoadedCards { object_id: id.to_string(), resolution: res, texels, normals })
+            // Its glare table, a file of its own beside the cards: absent
+            // from bakes before 2026-10-01.
+            let glare = e.get("glare").and_then(|f| f.as_str()).and_then(|f| {
+                let table = std::fs::read_to_string(dir.join(f))
+                    .ok()
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                    .and_then(|v| GlareTable::from_json(&v));
+                if table.is_none() {
+                    eprintln!("cards of {id}: glare table {f} did not load; re-bake this scene's probes");
+                }
+                table
+            });
+            Some(LoadedCards { object_id: id.to_string(), resolution: res, texels, normals, glare })
         })
         .collect()
 }
@@ -182,6 +281,43 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The table's directions are unit vectors from the top pole round to the
+    /// bottom one, and its columns go round from +x toward +z.
+    #[test]
+    fn a_glare_tables_directions_run_pole_to_pole_and_round() {
+        let (rows, cols) = (GLARE_ROWS, GLARE_COLS);
+        for row in 0..rows {
+            for col in 0..cols {
+                assert!((glare_direction(row, col, rows, cols).length() - 1.0).abs() < 1e-5);
+            }
+        }
+        assert!(glare_direction(0, 0, rows, cols).y > 0.98, "row 0 looks down from above");
+        assert!(glare_direction(rows - 1, 0, rows, cols).y < -0.98, "the last row looks up from below");
+        let equator = rows / 2;
+        let first = glare_direction(equator, 0, rows, cols);
+        let quarter = glare_direction(equator, cols / 4, rows, cols);
+        assert!(first.x > 0.98 && first.z > 0.0, "column 0 is just past +x: {first}");
+        assert!(quarter.z > 0.98, "a quarter round is +z: {quarter}");
+    }
+
+    /// A table written as the bake writes it reads back exactly; a short one
+    /// does not read at all.
+    #[test]
+    fn a_glare_table_round_trips_through_its_file() {
+        let (rows, cols) = (3, 4);
+        let t = GlareTable {
+            rows,
+            cols,
+            flux: (0..rows * cols).map(|i| 0.125 * i as f32 + 0.003).collect(),
+            centre: (0..rows * cols).map(|i| Vec3::new(i as f32 * 0.01, -0.07, 0.25 - i as f32 * 0.02)).collect(),
+        };
+        let back = GlareTable::from_json(&serde_json::from_str(&t.to_json().to_string()).unwrap());
+        assert_eq!(back.as_ref(), Some(&t));
+        let mut short = t.to_json();
+        short["flux"].as_array_mut().unwrap().pop();
+        assert_eq!(GlareTable::from_json(&short), None);
+    }
 
     /// Each card stands on its own face and looks through the box to the
     /// opposite one.
