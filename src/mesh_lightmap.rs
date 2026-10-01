@@ -1651,12 +1651,19 @@ mod layout_on_model {
         let tiny = layout.charts.iter().filter(|c| c.w * c.h <= 4).count();
         // The bake's own test (`MESH_EDGE_SLACK` in tools/bake): a texel is
         // baked when its centre is within a fifth of a texel of the triangle.
+        // A chart with none is a sliver the baker shades by moving its texels
+        // onto the triangle (`chart_texels`); the sconce's six are its plate's
+        // chamfers.
         let unbaked = layout
             .charts
             .iter()
             .filter(|c| !(0..c.h).any(|ty| (0..c.w).any(|tx| c.barycentric(tx, ty).iter().all(|w| *w >= -0.2))))
             .count();
         eprintln!("LAYOUT charts with no texel on their triangle: {unbaked}");
+        for c in layout.charts.iter().filter(|c| !(0..c.h).any(|ty| (0..c.w).any(|tx| c.barycentric(tx, ty).iter().all(|w| *w >= -0.2)))) {
+            let p = [0, 1, 2].map(|k| c.texel_local(c.corners[k][0], c.corners[k][1]));
+            eprintln!("UNBAKED {}x{} at ({}, {}): {:?}", c.w, c.h, c.x, c.y, p);
+        }
         eprintln!("LAYOUT {}x{} atlas, {} charts, {} of them 2x2 or less, density x{}", layout.width, layout.height, layout.charts.len(), tiny, layout.density_scale);
     }
 }
