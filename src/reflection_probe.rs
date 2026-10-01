@@ -513,6 +513,30 @@ pub struct ProbeEntry {
     /// Its per-texel distances, when the bake wrote them: the file, and the
     /// distance its full scale stands for. See [`decode_probe_depth`].
     pub depth: Option<(std::path::PathBuf, f32)>,
+    /// THE ROOM'S LIGHT ROUND ITS CAPTURE POINT, for the models standing in it:
+    /// the photograph projected onto nine spherical harmonics of radiance --
+    /// L00, L1-1, L10, L11, L2-2, L2-1, L20, L21, L22, linear RGB, the order
+    /// and basis of `space_soup_sky::SkyIrradiance` -- its sky texels as
+    /// nothing, since the sky reaches a model by its own term. What a hand or a
+    /// lamp's shade there gets from the lit walls, floor and ceiling round it:
+    /// without it a character in a room took only the lamps that reach it
+    /// directly and went black in their shadow (headset, 2026-09-30). `None`
+    /// from a bake before 2026-10-01.
+    pub irradiance: Option<[[f32; 3]; 9]>,
+}
+
+/// [`ProbeEntry::irradiance`] as the index stores it: 27 numbers, coefficient
+/// after coefficient, each red, green, blue.
+pub fn parse_probe_irradiance(v: &serde_json::Value) -> Option<[[f32; 3]; 9]> {
+    let a = v.as_array()?;
+    if a.len() != 27 {
+        return None;
+    }
+    let mut out = [[0.0f32; 3]; 9];
+    for (i, x) in a.iter().enumerate() {
+        out[i / 3][i % 3] = x.as_f64()? as f32;
+    }
+    Some(out)
 }
 
 /// A doorway between two probe volumes, as the baker found it in the level's
@@ -669,6 +693,7 @@ pub fn load_scene_buildings(game_dir: &std::path::Path, scene_name: &str) -> Vec
                 cell: None,
                 cells: None,
                 depth: None,
+                irradiance: None,
             })
         })
         .collect()
@@ -773,6 +798,7 @@ pub fn load_scene_probe_index(game_dir: &std::path::Path, scene_name: &str) -> V
                 .filter(|_| e.get("depth_encoding").and_then(|v| v.as_str()) == Some(PROBE_DEPTH_ENCODING))
                 .zip(e.get("depth_far").and_then(|v| v.as_f64()))
                 .map(|(f, far)| (dir.join(f), far as f32)),
+            irradiance: e.get("irradiance").and_then(parse_probe_irradiance),
         });
     }
     out
