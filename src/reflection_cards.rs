@@ -184,18 +184,56 @@ pub struct GlareTable {
     /// middle of the glowing part of the picture -- a sconce's open mouth,
     /// wherever in it the eye looks in.
     pub centre: Vec<Vec3>,
+    /// The same light told apart: the bulb's own and the lit surfaces'.
+    /// `None` in bakes before 2026-10-01. See [`GlareSplit`].
+    pub split: Option<GlareSplit>,
+}
+
+/// A GLARE TABLE'S LIGHT TOLD APART: what the bulb itself sends, and what the
+/// surfaces it lights do -- a shade's white inside -- with where each shows.
+///
+/// WHY. One veil for both, centred on the middle of everything bright, put the
+/// veil's hot core up inside a hanging lamp's shade, its lit enamel, when the
+/// lamp was seen from below: the bulb hangs at the shade's mouth, and the
+/// veil lay over the shade's dark outside, "making it look like the light is
+/// bleeding through what should be opaque and blocking" (user, headset
+/// 2026-10-01). A bulb is a small source as bright as a light gets, and its
+/// veil is a tight one, centred on it; a lit inside is a wide surface ten
+/// times dimmer, and its veil is a soft glow over its own area, with no core.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlareSplit {
+    /// Per entry: the part of [`GlareTable::flux`] the bulb's own glow sends
+    /// (its emissive surface, a material's or a glow map's); the rest is the
+    /// lit surfaces'.
+    pub bulb: Vec<f32>,
+    /// Where the bulb shows, the middle of its visible glow weighed by light,
+    /// in the box's own frame from its centre.
+    pub bulb_centre: Vec<Vec3>,
+    /// Where the lit surfaces show, weighed as [`GlareTable::centre`] is.
+    pub lit_centre: Vec<Vec3>,
+    /// How far they spread round `lit_centre` across the view: the bright
+    /// area's root-mean-square radius, in metres.
+    pub lit_spread: Vec<f32>,
 }
 
 impl GlareTable {
     /// As the bake writes it beside the cards: rows, columns, the fluxes and
     /// the centres as one flat `x, y, z` list.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let flat = |v: &[Vec3]| v.iter().flat_map(|c| c.to_array()).collect::<Vec<f32>>();
+        let mut out = serde_json::json!({
             "rows": self.rows,
             "cols": self.cols,
             "flux": self.flux,
-            "centre": self.centre.iter().flat_map(|c| c.to_array()).collect::<Vec<f32>>(),
-        })
+            "centre": flat(&self.centre),
+        });
+        if let Some(split) = &self.split {
+            out["bulb"] = serde_json::json!(split.bulb);
+            out["bulb_centre"] = serde_json::json!(flat(&split.bulb_centre));
+            out["lit_centre"] = serde_json::json!(flat(&split.lit_centre));
+            out["lit_spread"] = serde_json::json!(split.lit_spread);
+        }
+        out
     }
 
     /// [`Self::to_json`] undone; `None` for anything that is not a whole
@@ -212,8 +250,17 @@ impl GlareTable {
         if n == 0 || flux.len() != n || flat.len() != 3 * n {
             return None;
         }
-        let centre = flat.chunks_exact(3).map(|c| Vec3::new(c[0], c[1], c[2])).collect();
-        Some(Self { rows, cols, flux, centre })
+        let points = |flat: Vec<f32>| -> Vec<Vec3> { flat.chunks_exact(3).map(|c| Vec3::new(c[0], c[1], c[2])).collect() };
+        let centre = points(flat);
+        // The split, where the bake wrote one whole; a partial one is none.
+        let split = (|| {
+            let (bulb, bulb_centre) = (numbers("bulb")?, numbers("bulb_centre")?);
+            let (lit_centre, lit_spread) = (numbers("lit_centre")?, numbers("lit_spread")?);
+            (bulb.len() == n && bulb_centre.len() == 3 * n && lit_centre.len() == 3 * n && lit_spread.len() == n).then(|| {
+                GlareSplit { bulb, bulb_centre: points(bulb_centre), lit_centre: points(lit_centre), lit_spread }
+            })
+        })();
+        Some(Self { rows, cols, flux, centre, split })
     }
 }
 
@@ -311,12 +358,29 @@ mod tests {
             cols,
             flux: (0..rows * cols).map(|i| 0.125 * i as f32 + 0.003).collect(),
             centre: (0..rows * cols).map(|i| Vec3::new(i as f32 * 0.01, -0.07, 0.25 - i as f32 * 0.02)).collect(),
+            split: None,
         };
         let back = GlareTable::from_json(&serde_json::from_str(&t.to_json().to_string()).unwrap());
         assert_eq!(back.as_ref(), Some(&t));
         let mut short = t.to_json();
         short["flux"].as_array_mut().unwrap().pop();
         assert_eq!(GlareTable::from_json(&short), None);
+        // With its light told apart, the same; a split cut short reads as none.
+        let n = rows * cols;
+        let split = GlareTable {
+            split: Some(GlareSplit {
+                bulb: (0..n).map(|i| 0.05 * i as f32).collect(),
+                bulb_centre: (0..n).map(|i| Vec3::new(0.0, -0.1 * i as f32, 0.01)).collect(),
+                lit_centre: (0..n).map(|i| Vec3::new(0.02 * i as f32, 0.03, 0.0)).collect(),
+                lit_spread: (0..n).map(|i| 0.1 + 0.01 * i as f32).collect(),
+            }),
+            ..t.clone()
+        };
+        let back = GlareTable::from_json(&serde_json::from_str(&split.to_json().to_string()).unwrap());
+        assert_eq!(back.as_ref(), Some(&split));
+        let mut cut = split.to_json();
+        cut["lit_spread"].as_array_mut().unwrap().pop();
+        assert_eq!(GlareTable::from_json(&cut), Some(t));
     }
 
     /// Each card stands on its own face and looks through the box to the
