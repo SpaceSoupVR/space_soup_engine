@@ -51,8 +51,15 @@ pub const CARD_RESOLUTION: u32 = 64;
 /// sixteen bits over a linear `range`; A the depth, 0 for a texel whose rays
 /// met nothing, else `1 + t * 65534`. Then the normal cards: RGB the normal's
 /// components mapped from -1..1 to 0..65535, A 65535 where the card saw
-/// something. See [`encode_normal`].
-pub const CARD_ENCODING: &str = "sqrt16+depth16+normal16";
+/// something. See [`encode_normal`]. Then the ALBEDO cards: RGB the surface's
+/// own colour, linear 0..1 over 0..65535, A as the normals'. See
+/// [`encode_albedo`].
+pub const CARD_ENCODING: &str = "sqrt16+depth16+normal16+albedo16";
+
+/// The encoding before the albedo cards (2026-10-05): colours and normals
+/// alone. Still read, with no albedo: reflections of such a model take no
+/// light the bake did not see.
+pub const CARD_ENCODING_WITHOUT_ALBEDO: &str = "sqrt16+depth16+normal16";
 
 /// `t` for a texel whose rays met nothing: past the box, so no hit ever
 /// matches it.
@@ -121,6 +128,27 @@ pub fn decode_normal(texel: [u16; 4]) -> [f32; 3] {
     }
     let c = |v: u16| v as f32 / 65535.0 * 2.0 - 1.0;
     [c(texel[0]), c(texel[1]), c(texel[2])]
+}
+
+/// One albedo texel as the file stores it: the linear colour of the surface
+/// the texel saw, before any light -- what the renderer lights again with the
+/// lights the bake never saw (a player's flashlight); `None` for nothing.
+pub fn encode_albedo(a: Option<Vec3>) -> [u16; 4] {
+    match a {
+        Some(a) => {
+            let unit = |v: f32| (v.clamp(0.0, 1.0) * 65535.0).round() as u16;
+            [unit(a.x), unit(a.y), unit(a.z), u16::MAX]
+        }
+        None => [0; 4],
+    }
+}
+
+/// [`encode_albedo`] undone: the albedo, or zero where the card saw nothing.
+pub fn decode_albedo(texel: [u16; 4]) -> [f32; 3] {
+    if texel[3] == 0 {
+        return [0.0; 3];
+    }
+    [texel[0], texel[1], texel[2]].map(|v| v as f32 / 65535.0)
 }
 
 /// [`encode_texel`] undone: linear RGB and `t`, [`CARD_MISS`] for nothing.
@@ -196,6 +224,75 @@ pub struct GlareTable {
     /// The same light told apart: the bulb's own and the lit surfaces'.
     /// `None` in bakes before 2026-10-01. See [`GlareSplit`].
     pub split: Option<GlareSplit>,
+    /// The air round the bulb, and how much of the bulb each point of it
+    /// sees. `None` in bakes before 2026-10-02. See [`GlareAir`].
+    pub air: Option<GlareAir>,
+}
+
+/// THE AIR ROUND A FIXTURE'S BULB, AND HOW MUCH OF THE BULB EACH POINT OF IT
+/// SEES: a grid in the box's own frame from its centre, each point the share
+/// of the bulb no part of the model stands in front of from there.
+///
+/// WHY. A veil is drawn round the bulb and cut by what stands in front of the
+/// light (`space_soup::renderer::glare`), but the cut is a plane in front of
+/// the bulb, and a hanging lamp's cap and neck stand behind it: seen from
+/// under the lamp, the brightest of its glare lay over them, above the shade
+/// -- the light "bleeding through what should be opaque" (headset eye
+/// captures, glare on less glare off, 2026-10-02). The glow is the light in
+/// the air the bulb lights: inside its shade and out of its mouth, not beside
+/// the shade or above it. The renderer reads this where each view ray passes
+/// nearest the bulb.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlareAir {
+    /// The grid's first and last points, in the box's own frame from its
+    /// centre.
+    pub min: Vec3,
+    pub max: Vec3,
+    /// Points along x, y and z, both ends included.
+    pub dims: [usize; 3],
+    /// The bulb's middle, in the same frame.
+    pub bulb: Vec3,
+    /// Per point, x fastest, then y, then z: the share of the bulb seen, 0-1.
+    pub seen: Vec<f32>,
+    /// How far from the bulb's middle the fixture's own surfaces reach that
+    /// the bulb lights -- its shade, to the rim -- in metres: the farthest a
+    /// ray from the bulb runs before the model stops it. A fixture the eye is
+    /// adapted to takes no veil over itself, only over what stands behind
+    /// this (`space_soup::renderer::glare`). 0 in bakes before 2026-10-02's
+    /// second, which measured no reach.
+    pub reach: f32,
+}
+
+impl GlareAir {
+    /// As the bake writes it into its table's file: the shares in 255ths.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "min": self.min.to_array(),
+            "max": self.max.to_array(),
+            "dims": self.dims,
+            "bulb": self.bulb.to_array(),
+            "seen": self.seen.iter().map(|s| (s.clamp(0.0, 1.0) * 255.0).round() as u8).collect::<Vec<u8>>(),
+            "reach": self.reach,
+        })
+    }
+
+    /// [`Self::to_json`] undone; `None` for anything that is not a whole grid.
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let vec3 = |key: &str| -> Option<Vec3> {
+            let a = v.get(key)?.as_array()?;
+            (a.len() == 3).then_some(())?;
+            Some(Vec3::new(a[0].as_f64()? as f32, a[1].as_f64()? as f32, a[2].as_f64()? as f32))
+        };
+        let dims = v.get("dims")?.as_array()?;
+        let dims: Vec<usize> = dims.iter().map(|d| d.as_u64().map(|d| d as usize)).collect::<Option<_>>()?;
+        let dims: [usize; 3] = dims.try_into().ok()?;
+        let seen: Vec<f32> = v.get("seen")?.as_array()?.iter().map(|s| s.as_f64().map(|s| (s / 255.0) as f32)).collect::<Option<_>>()?;
+        (dims.iter().all(|&d| d >= 2) && seen.len() == dims[0] * dims[1] * dims[2])
+            .then_some(())?;
+        // A bake that measured no reach reads as none.
+        let reach = v.get("reach").and_then(|r| r.as_f64()).map_or(0.0, |r| r as f32).max(0.0);
+        Some(Self { min: vec3("min")?, max: vec3("max")?, dims, bulb: vec3("bulb")?, seen, reach })
+    }
 }
 
 /// A GLARE TABLE'S LIGHT TOLD APART: what the bulb itself sends, and what the
@@ -266,6 +363,9 @@ impl GlareTable {
                 out["bulb_fine_centre"] = serde_json::json!(short(&flat(&fine.centre)));
             }
         }
+        if let Some(air) = &self.air {
+            out["air"] = air.to_json();
+        }
         out
     }
 
@@ -300,7 +400,9 @@ impl GlareTable {
                 GlareSplit { bulb, bulb_centre: points(bulb_centre), lit_centre: points(lit_centre), lit_spread, bulb_fine }
             })
         })();
-        Some(Self { rows, cols, flux, centre, split })
+        // The air round the bulb, where the bake wrote it whole.
+        let air = v.get("air").and_then(GlareAir::from_json);
+        Some(Self { rows, cols, flux, centre, split, air })
     }
 }
 
@@ -317,6 +419,9 @@ pub struct LoadedCards {
     /// Which way each texel's surface faces, in the box's frame, laid out as
     /// `texels`: zero where the card saw nothing (see [`decode_normal`]).
     pub normals: Vec<[f32; 3]>,
+    /// Each texel's surface's own colour, laid out as `texels` (see
+    /// [`decode_albedo`]); empty from a bake before the albedo cards.
+    pub albedo: Vec<[f32; 3]>,
     /// The model's glare from every direction, where the bake wrote one. See
     /// [`GlareTable`].
     pub glare: Option<GlareTable>,
@@ -333,21 +438,28 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
         .iter()
         .filter_map(|e| {
             let id = e.get("object_id")?.as_str()?;
-            if e.get("encoding").and_then(|v| v.as_str()) != Some(CARD_ENCODING) {
-                eprintln!("cards of {id}: not in {CARD_ENCODING:?}; re-bake this scene's probes");
-                return None;
-            }
+            // How many blocks of six cards: colours and normals, and the
+            // albedo below them since 2026-10-05.
+            let blocks = match e.get("encoding").and_then(|v| v.as_str()) {
+                Some(CARD_ENCODING) => 3,
+                Some(CARD_ENCODING_WITHOUT_ALBEDO) => 2,
+                _ => {
+                    eprintln!("cards of {id}: not in {CARD_ENCODING:?}; re-bake this scene's probes");
+                    return None;
+                }
+            };
             let range = e.get("range").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
             let img = image::open(dir.join(e.get("file")?.as_str()?)).ok()?.to_rgba16();
             let res = img.width();
-            if res == 0 || img.height() != 2 * res * CARD_FACES as u32 {
-                eprintln!("cards of {id}: {}x{} is not six square cards and their normals", img.width(), img.height());
+            if res == 0 || img.height() != blocks * res * CARD_FACES as u32 {
+                eprintln!("cards of {id}: {}x{} is not {blocks} blocks of six square cards", img.width(), img.height());
                 return None;
             }
-            let half = (res * res) as usize * CARD_FACES;
+            let block = (res * res) as usize * CARD_FACES;
             let pixels: Vec<[u16; 4]> = img.pixels().map(|p| p.0).collect();
-            let texels = pixels[..half].iter().map(|&p| decode_texel(p, range)).collect();
-            let normals = pixels[half..].iter().map(|&p| decode_normal(p)).collect();
+            let texels = pixels[..block].iter().map(|&p| decode_texel(p, range)).collect();
+            let normals = pixels[block..2 * block].iter().map(|&p| decode_normal(p)).collect();
+            let albedo = pixels[2 * block..].iter().map(|&p| decode_albedo(p)).collect();
             // Its glare table, a file of its own beside the cards: absent
             // from bakes before 2026-10-01.
             let glare = e.get("glare").and_then(|f| f.as_str()).and_then(|f| {
@@ -360,7 +472,7 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
                 }
                 table
             });
-            Some(LoadedCards { object_id: id.to_string(), resolution: res, texels, normals, glare })
+            Some(LoadedCards { object_id: id.to_string(), resolution: res, texels, normals, albedo, glare })
         })
         .collect()
 }
@@ -399,6 +511,7 @@ mod tests {
             flux: (0..rows * cols).map(|i| 0.125 * i as f32 + 0.003).collect(),
             centre: (0..rows * cols).map(|i| Vec3::new(i as f32 * 0.01, -0.07, 0.25 - i as f32 * 0.02)).collect(),
             split: None,
+            air: None,
         };
         let back = GlareTable::from_json(&serde_json::from_str(&t.to_json().to_string()).unwrap());
         assert_eq!(back.as_ref(), Some(&t));
@@ -427,6 +540,29 @@ mod tests {
         assert_eq!(back.as_ref(), Some(&split));
         let mut cut = split.to_json();
         cut["lit_spread"].as_array_mut().unwrap().pop();
+        assert_eq!(GlareTable::from_json(&cut), Some(t.clone()));
+        // With the air round its bulb, in 255ths; a grid cut short reads as
+        // none, and the table stands without it.
+        let air = GlareTable {
+            air: Some(GlareAir {
+                min: Vec3::new(-0.5, -1.25, -0.5),
+                max: Vec3::new(0.5, -0.25, 0.5),
+                dims: [2, 3, 4],
+                bulb: Vec3::new(0.0, -0.75, 0.0),
+                seen: (0..24).map(|i| (i * 11 % 256) as f32 / 255.0).collect(),
+                reach: 0.375,
+            }),
+            ..t.clone()
+        };
+        let back = GlareTable::from_json(&serde_json::from_str(&air.to_json().to_string()).unwrap());
+        assert_eq!(back.as_ref(), Some(&air));
+        // A bake from before the reach was measured reads with none.
+        let mut unmeasured = air.to_json();
+        unmeasured["air"].as_object_mut().unwrap().remove("reach");
+        let back = GlareTable::from_json(&unmeasured).unwrap();
+        assert_eq!(back.air.map(|a| a.reach), Some(0.0));
+        let mut cut = air.to_json();
+        cut["air"]["seen"].as_array_mut().unwrap().pop();
         assert_eq!(GlareTable::from_json(&cut), Some(t));
     }
 
@@ -492,5 +628,17 @@ mod tests {
             assert!((back - n).abs().max_element() < 1e-4, "{n} came back as {back}");
         }
         assert_eq!(decode_normal(encode_normal(None)), [0.0; 3]);
+    }
+
+    /// An albedo comes back to within the file's precision; a texel that saw
+    /// nothing, as no colour; past white, as white.
+    #[test]
+    fn an_albedo_survives_the_file() {
+        for a in [Vec3::new(0.62, 0.55, 0.47), Vec3::ZERO, Vec3::ONE, Vec3::new(0.037, 0.04, 0.05)] {
+            let back = Vec3::from(decode_albedo(encode_albedo(Some(a))));
+            assert!((back - a).abs().max_element() < 1e-4, "{a} came back as {back}");
+        }
+        assert_eq!(decode_albedo(encode_albedo(None)), [0.0; 3]);
+        assert_eq!(decode_albedo(encode_albedo(Some(Vec3::splat(1.5)))), [1.0; 3]);
     }
 }
