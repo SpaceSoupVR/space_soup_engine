@@ -98,7 +98,17 @@ pub struct WaterDef {
     /// ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+
+    /// The deepest of this water a walk goes into, metres, where it is not
+    /// [`DEFAULT_WADE_DEPTH`]: a pond to walk into on its bed, head under and
+    /// all, where the sea stops a player thigh deep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_wade_depth: Option<f32>,
 }
+
+/// The deepest water a walk goes into, metres, unless the water says
+/// otherwise ([`WaterDef::max_wade_depth`]): knee to thigh deep.
+pub const DEFAULT_WADE_DEPTH: f32 = 0.6;
 
 fn default_shallow() -> [u8; 3] { [90, 150, 140] }
 fn default_deep() -> [u8; 3] { [10, 40, 70] }
@@ -349,6 +359,7 @@ pub fn build_surface(
 #[derive(Debug, Clone)]
 pub struct WaterFootprint {
     height: f32,
+    wade: f32,
     extent: (f32, f32, f32, f32),
     step: f32,
     nx: usize,
@@ -361,7 +372,21 @@ impl WaterFootprint {
     /// `None` where the body has no water at all, as for [`build_surface`].
     pub fn new(def: &WaterDef, ground: impl Fn(f32, f32) -> Option<f32>) -> Option<Self> {
         let Grid { step, nx, nz, wet, .. } = grid(def, ground)?;
-        Some(Self { height: def.height, extent: def.extent(), step, nx, nz, wet, skirt: def.skirt.max(0.0) })
+        Some(Self {
+            height: def.height,
+            wade: def.max_wade_depth.unwrap_or(DEFAULT_WADE_DEPTH),
+            extent: def.extent(),
+            step,
+            nx,
+            nz,
+            wet,
+            skirt: def.skirt.max(0.0),
+        })
+    }
+
+    /// The deepest of this water a walk goes into, metres.
+    pub fn wade_depth(&self) -> f32 {
+        self.wade
     }
 
     /// The still surface's height over a world x/z, where this water stands
@@ -401,6 +426,7 @@ mod tests {
             swash: 0.0,
         swell: 0.0,
         name: None,
+        max_wade_depth: None,
         }
     }
 

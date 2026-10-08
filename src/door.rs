@@ -341,11 +341,12 @@ const HINGE_MAX_SPIN: f32 = 20.0;
 
 impl DoorGeom {
     /// THE LEAF `dt` LATER: pushed by the bodies under `heads` (world; as
-    /// `rigid_physics_door::push_doors` pushes it) and by `hands` (world
-    /// spheres; turned just clear of them, `clear_spheres`, and given their
-    /// speed), slowed by the hinge's friction, drawn home by its closer, and
-    /// held by its stops.
-    pub fn step_hinge(&self, mut s: HingeState, load: &HingeLoad, heads: &[Vec3], hands: &[(Vec3, f32)], dt: f32) -> HingeState {
+    /// `rigid_physics_door::push_doors` pushes it) and by `hands` -- world
+    /// spheres, each `(where it was dt ago, where it is now, radius)`, moved
+    /// along that path through the step, so the leaf is turned just clear of
+    /// each (`clear_spheres`) and takes the hand's own speed -- slowed by the
+    /// hinge's friction, drawn home by its closer, and held by its stops.
+    pub fn step_hinge(&self, mut s: HingeState, load: &HingeLoad, heads: &[Vec3], hands: &[(Vec3, Vec3, f32)], dt: f32) -> HingeState {
         use crate::rigid_physics_door::{CLOSER_PRELOAD, HINGE_DRY_FRICTION};
         if dt <= 0.0 {
             return s;
@@ -353,7 +354,11 @@ impl DoorGeom {
         let steps = (dt / HINGE_STEP).ceil().clamp(1.0, 16.0);
         let h = dt / steps;
         let (axis, hinge, i) = (self.axis(), self.hinge(), load.inertia);
-        for _ in 0..steps as usize {
+        let mut at: Vec<(Vec3, f32)> = Vec::with_capacity(hands.len());
+        for k in 1..=steps as usize {
+            let f = k as f32 / steps;
+            at.clear();
+            at.extend(hands.iter().map(|(from, to, r)| (from.lerp(*to, f), *r)));
             let mut torque = 0.0f32;
             for head in heads {
                 let span = (head.y - BODY_PUSH_SPAN.0, head.y - BODY_PUSH_SPAN.1);
@@ -376,7 +381,7 @@ impl DoorGeom {
                 s.spin = 0.0;
             }
             // A hand moves the leaf with it, at its own speed.
-            let cleared = self.clear_spheres(s.angle, hands);
+            let cleared = self.clear_spheres(s.angle, &at);
             if cleared != s.angle {
                 let pushed = (cleared - s.angle) / h;
                 if pushed.abs() > s.spin.abs() || pushed * s.spin < 0.0 {
@@ -533,7 +538,8 @@ mod tests {
         // of a second, and is gone.
         for k in 0..8 {
             let hand = Vec3::new(g.hinge().x + 0.6, 1.0, 0.12 - 0.02 * k as f32);
-            s = g.step_hinge(s, &load, &[], &[(hand, 0.05)], dt);
+            let was = hand + Vec3::new(0.0, 0.0, 0.02);
+            s = g.step_hinge(s, &load, &[], &[(was, hand, 0.05)], dt);
         }
         let knocked = s.angle;
         assert!(knocked.abs() > 5f32.to_radians(), "the knock moved it {:.1} deg", knocked.to_degrees());
