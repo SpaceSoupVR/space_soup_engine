@@ -264,6 +264,44 @@ fn room_reached(lo: Vec3, hi: Vec3, rooms: &[(Vec3, Vec3)]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
+/// How far outside a room's box a door's leaf may hang and still be traced in
+/// that room, metres: past half the thickness of the wall it hangs in.
+pub const DOOR_ROOM_REACH: f32 = 0.4;
+
+/// THE DOORS' LEAVES, for the reflection trace: each leaf at REST (its
+/// object's own pose, closed), once for every room whose box comes within
+/// [`DOOR_ROOM_REACH`] of it -- both rooms of the doorway it hangs in. Not
+/// models of [`reflection_proxies`]: a shut leaf stands in the wall between
+/// two boxes, which no room's proxies reach, so it would never be one. The
+/// trace meets a room's proxies from where the ray LEFT the room before, so a
+/// ray crossing the doorway meets the leaf from either side; the renderer
+/// turns each copy with its leaf every frame (`space_soup::renderer::doors`).
+/// A model, so traced by its own shape (a field) and coloured as a model: the
+/// photographs, taken without the doors, never show it.
+pub fn door_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec3)]) -> Vec<ReflectionProxy> {
+    let mut out = Vec::new();
+    for (index, o) in objects.iter().enumerate() {
+        let (Some(_), Some(mesh)) = (&o.door, &o.mesh) else { continue };
+        if o.hidden {
+            continue;
+        }
+        let Some((mlo, mhi)) = model_bounds(&game_dir.join(&mesh.path)) else {
+            log::warn!("reflection proxies: could not read the bounds of door '{}'", o.id);
+            continue;
+        };
+        let rotation = o.cuboid.rotation * mesh.rotation_offset;
+        let centre = o.cuboid.position + rotation * (mesh.scale * (mlo + mhi) * 0.5);
+        let half_size = (mesh.scale * (mhi - mlo) * 0.5).abs();
+        for (room, (lo, hi)) in rooms.iter().enumerate() {
+            let reach = Vec3::splat(DOOR_ROOM_REACH);
+            if (lo.cmple(*hi)).all() && ((*lo - reach).cmple(centre) & centre.cmple(*hi + reach)).all() {
+                out.push(ReflectionProxy { centre, half_size, rotation, room, solid: false, object: index });
+            }
+        }
+    }
+    out
+}
+
 /// What stands in each of `rooms` (their probe boxes, in the caller's room
 /// order), for the reflection trace. Mesh paths resolve against `game_dir`; a
 /// model that cannot be read contributes nothing and is logged.
