@@ -306,6 +306,89 @@ pub fn body_push_force(depth: f32, closing: f32) -> f32 {
     (BODY_PUSH_STIFFNESS * depth + BODY_PUSH_DAMPING * closing).clamp(0.0, BODY_PUSH_MAX)
 }
 
+/// A LEAF ON ITS HINGE WITHOUT PHYSX: its angle and how fast it turns,
+/// rad/s. The headset runs the doors itself with this where no server sends
+/// them -- a game played alone -- by the same pushes, friction and closer as
+/// the server's PhysX hinge (`rigid_physics_door`), so a door opens under the
+/// player either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HingeState {
+    pub angle: f32,
+    pub spin: f32,
+}
+
+/// What a hinge resists with: the leaf's moment of inertia about it (kg m^2,
+/// `DoorGeom::hinge_inertia`), its closer (N m/rad) and friction (N m s/rad),
+/// as `DoorDef` gives them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HingeLoad {
+    pub inertia: f32,
+    pub closer: f32,
+    pub friction: f32,
+}
+
+impl HingeLoad {
+    pub fn of(geom: &DoorGeom, def: &DoorDef) -> Self {
+        Self { inertia: geom.hinge_inertia(def.mass.max(0.5)).max(1e-3), closer: def.closer.max(0.0), friction: def.friction.max(0.0) }
+    }
+}
+
+/// The longest step the hinge is turned by at once, seconds: the body's
+/// spring against the leaf rings at about 9 rad/s.
+const HINGE_STEP: f32 = 1.0 / 120.0;
+/// The fastest a leaf turns, rad/s, as the server's PhysX body is capped.
+const HINGE_MAX_SPIN: f32 = 20.0;
+
+impl DoorGeom {
+    /// THE LEAF `dt` LATER: pushed by the bodies under `heads` (world; as
+    /// `rigid_physics_door::push_doors` pushes it) and by `hands` (world
+    /// spheres; turned just clear of them, `clear_spheres`, and given their
+    /// speed), slowed by the hinge's friction, drawn home by its closer, and
+    /// held by its stops.
+    pub fn step_hinge(&self, mut s: HingeState, load: &HingeLoad, heads: &[Vec3], hands: &[(Vec3, f32)], dt: f32) -> HingeState {
+        use crate::rigid_physics_door::{CLOSER_PRELOAD, HINGE_DRY_FRICTION};
+        if dt <= 0.0 {
+            return s;
+        }
+        let steps = (dt / HINGE_STEP).ceil().clamp(1.0, 16.0);
+        let h = dt / steps;
+        let (axis, hinge, i) = (self.axis(), self.hinge(), load.inertia);
+        for _ in 0..steps as usize {
+            let mut torque = 0.0f32;
+            for head in heads {
+                let span = (head.y - BODY_PUSH_SPAN.0, head.y - BODY_PUSH_SPAN.1);
+                let Some((point, n, depth)) = self.body_contact(s.angle, *head, span, BODY_PUSH_RADIUS) else { continue };
+                let arm = point - hinge;
+                let closing = (axis * s.spin).cross(arm).dot(n);
+                torque += arm.cross(-n * body_push_force(depth, closing)).dot(axis);
+            }
+            let stop = i * s.spin.abs() / h;
+            let viscous = (load.friction * s.spin).clamp(-stop, stop);
+            torque -= viscous;
+            torque -= (i * s.spin / h - viscous).clamp(-HINGE_DRY_FRICTION, HINGE_DRY_FRICTION);
+            if load.closer > 0.0 {
+                torque -= load.closer * s.angle + CLOSER_PRELOAD * (s.angle / 2f32.to_radians()).clamp(-1.0, 1.0);
+            }
+            s.spin = (s.spin + torque / i * h).clamp(-HINGE_MAX_SPIN, HINGE_MAX_SPIN);
+            s.angle += s.spin * h;
+            if s.angle <= self.lo || s.angle >= self.hi {
+                s.angle = s.angle.clamp(self.lo, self.hi);
+                s.spin = 0.0;
+            }
+            // A hand moves the leaf with it, at its own speed.
+            let cleared = self.clear_spheres(s.angle, hands);
+            if cleared != s.angle {
+                let pushed = (cleared - s.angle) / h;
+                if pushed.abs() > s.spin.abs() || pushed * s.spin < 0.0 {
+                    s.spin = pushed.clamp(-HINGE_MAX_SPIN, HINGE_MAX_SPIN);
+                }
+                s.angle = cleared;
+            }
+        }
+        s
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +485,63 @@ mod tests {
         let d = DoorDef { open_min_deg: 90.0, open_max_deg: -45.0, ..Default::default() };
         let (lo, hi) = d.range();
         assert!((lo + 45f32.to_radians()).abs() < 1e-6 && (hi - 90f32.to_radians()).abs() < 1e-6);
+    }
+
+    /// THE HEADSET'S OWN HINGE: a player walking into a shut double-acting
+    /// leaf with a closer -- stopped by the walk 25 cm from it, as
+    /// `locomotion` stops them -- swings it open and walks through; let go,
+    /// the closer shuts it.
+    #[test]
+    fn walking_into_a_door_on_the_headsets_own_hinge_opens_it() {
+        let def = DoorDef { open_min_deg: -90.0, open_max_deg: 90.0, mass: 22.0, closer: 15.0, friction: 10.0, ..Default::default() };
+        let g = DoorGeom::new(Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY, Vec3::new(0.3825, 1.09, 0.02), &def);
+        let load = HingeLoad::of(&g, &def);
+        let mut s = HingeState::default();
+        // Walking along -z toward the leaf (in the xy plane), a third of the
+        // way out from the hinge, at 1.2 m/s.
+        let mut head = Vec3::new(g.hinge().x + 0.25, 1.6, 1.5);
+        let dt = 1.0 / 72.0;
+        let mut through = None;
+        for frame in 0..(72 * 6) {
+            let mut next = head + Vec3::new(0.0, 0.0, -1.2 * dt);
+            // The walk's collision: no nearer the leaf than 25 cm.
+            if let Some((_, n, depth)) = g.body_contact(s.angle, next, (next.y - 1.3, next.y - 0.25), 0.25) {
+                next += n * depth;
+            }
+            head = next;
+            s = g.step_hinge(s, &load, &[head], &[], dt);
+            if head.z < -0.6 && through.is_none() {
+                through = Some(frame);
+            }
+        }
+        let opened = s.angle.to_degrees();
+        assert!(through.is_some(), "the player never got through: head {head}, leaf at {opened:.1} deg");
+        // Walked on and away: the closer has brought it home.
+        assert!(s.angle.abs() < 3f32.to_radians(), "the closer left it at {opened:.1} deg");
+    }
+
+    /// A hand knocks a free leaf open; it swings on, stops at its stop, and
+    /// nothing turns it past.
+    #[test]
+    fn a_hand_knocks_a_leaf_on_the_headsets_own_hinge() {
+        let def = DoorDef { open_min_deg: -90.0, open_max_deg: 90.0, mass: 22.0, friction: 2.0, ..Default::default() };
+        let g = DoorGeom::new(Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY, Vec3::new(0.3825, 1.09, 0.02), &def);
+        let load = HingeLoad::of(&g, &def);
+        let mut s = HingeState::default();
+        let dt = 1.0 / 72.0;
+        // The hand sweeps 15 cm into the leaf near its free edge in a tenth
+        // of a second, and is gone.
+        for k in 0..8 {
+            let hand = Vec3::new(g.hinge().x + 0.6, 1.0, 0.12 - 0.02 * k as f32);
+            s = g.step_hinge(s, &load, &[], &[(hand, 0.05)], dt);
+        }
+        let knocked = s.angle;
+        assert!(knocked.abs() > 5f32.to_radians(), "the knock moved it {:.1} deg", knocked.to_degrees());
+        for _ in 0..(72 * 8) {
+            s = g.step_hinge(s, &load, &[], &[], dt);
+            assert!(s.angle >= g.lo - 1e-5 && s.angle <= g.hi + 1e-5);
+        }
+        assert!(s.angle.abs() > knocked.abs(), "it swung on: {:.1} deg", s.angle.to_degrees());
+        assert_eq!(s.spin, 0.0, "and came to rest");
     }
 }
