@@ -271,6 +271,13 @@ fn the_shipped_hallway_is_walked_through_on_its_floor() {
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);
     assert!(physics.has_collider("hallway"), "the hallway is not solid");
+    // The hallway's doors stood wide open: this is the floor and the walls,
+    // not the doors (see `rigid_physics_door::tests` for walking through them).
+    let doors: Vec<(String, crate::door::DoorGeom)> = physics.doors().map(|(id, g)| (id.to_string(), *g)).collect();
+    for (id, g) in &doors {
+        let (p, r) = g.pose_at(g.hi);
+        physics.set_door_pose(id, p, r);
+    }
 
     let mut loco = Locomotion::new(LocomotionMode::Smooth);
     loco.player_offset = Vec3::new(0.0, 0.0, -3.0);

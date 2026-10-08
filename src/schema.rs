@@ -134,10 +134,12 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "grip_points",
         "sockets",
         "slider_joint",
+        "door",
         "terrain_collider",
         "lights",
         "sound",
         "particle_emitter",
+        "effect",
         "laser",
         "spawn_point",
         "teleportal",
@@ -167,6 +169,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
             comp!(grip_points, "GripPointDef", List),
             comp!(sockets, "SocketDef", List),
             comp!(slider_joint, "SliderJointDef", Optional),
+            comp!(door, "DoorDef", Optional, door_fields()),
             comp!(
                 terrain_collider,
                 "TerrainColliderDef",
@@ -181,6 +184,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
                 Optional,
                 particle_emitter_fields()
             ),
+            comp!(effect, "EffectDef", Optional, effect_fields()),
             comp!(laser, "LaserDef", Optional, laser_fields()),
             comp!(spawn_point, "SpawnPointDef", Optional),
             comp!(teleportal, "TeleportalDef", Optional, teleportal_fields()),
@@ -294,11 +298,73 @@ fn particle_emitter_fields() -> Vec<FieldDescriptor> {
     ]
 }
 
+fn effect_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(e: crate::scene::EffectDef) {
+        let crate::scene::EffectDef {
+            kind,
+            scale,
+            rate,
+            tint,
+            intensity,
+            size_variation,
+            life_variation,
+            speed_variation,
+            temperature_variation,
+            flicker,
+            flicker_rate,
+            turbulence,
+            seed,
+        } = e;
+    }
+    vec![
+        field!(kind, Enum, ["fire", "smoke", "embers", "dust", "coals"]),
+        field!(scale, Number),
+        field!(rate, Number),
+        field!(tint, Color),
+        field!(intensity, Number),
+        field!(size_variation, Number),
+        field!(life_variation, Number),
+        field!(speed_variation, Number),
+        field!(temperature_variation, Number),
+        field!(flicker, Number),
+        field!(flicker_rate, Number),
+        field!(turbulence, Number),
+        field!(seed, Number),
+    ]
+}
+
 /// A probe's only authorable knob. Its position and the room it corrects
 /// against both come from the object's own cuboid, so there is nothing else to
 /// type -- move and size the object and the probe follows.
 fn reflection_probe_fields() -> Vec<FieldDescriptor> {
     vec![field!(resolution, Number)]
+}
+
+fn door_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(d: crate::door::DoorDef) {
+        let crate::door::DoorDef {
+            hinge,
+            open_min_deg,
+            open_max_deg,
+            mass,
+            friction,
+            closer,
+            surface_friction,
+            start_deg,
+        } = d;
+    }
+    vec![
+        field!(hinge, Enum, ["Left", "Right"]),
+        field!(open_min_deg, Number),
+        field!(open_max_deg, Number),
+        field!(mass, Number),
+        field!(friction, Number),
+        field!(closer, Number),
+        field!(surface_friction, Number),
+        field!(start_deg, Number),
+    ]
 }
 
 fn teleportal_fields() -> Vec<FieldDescriptor> {
@@ -345,10 +411,12 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         grip_points,
         sockets,
         slider_joint,
+        door,
         terrain_collider,
         lights,
         sound,
         particle_emitter,
+        effect,
         laser,
         spawn_point,
         teleportal,
@@ -388,7 +456,7 @@ mod tests {
 
     #[test]
     fn schema_has_every_authorable_component() {
-        assert_eq!(game_object_schema().components.len(), 26);
+        assert_eq!(game_object_schema().components.len(), 28);
     }
 
     /// `field_order` is consumed by a writer in another language, so a drift
@@ -420,6 +488,10 @@ mod tests {
             "reflection_probe",
             // Absent means automatic; see GameObject::solid.
             "solid",
+            // A scene without effects gains nothing on its next save.
+            "effect",
+            // Nor one without doors.
+            "door",
         ];
         let expected: Vec<&str> = game_object_field_order()
             .into_iter()
@@ -481,6 +553,14 @@ mod tests {
         assert_eq!(particle_emitter.fields.len(), 7, "ParticleEmitterDef has 7 fields");
         assert!(particle_emitter.fields.iter().any(|f| f.name == "color" && f.kind == FieldKind::Color));
 
+        let effect = by("effect");
+        assert_eq!(effect.fields.len(), 13, "EffectDef has 13 fields");
+        assert_eq!(effect.fields[0].variants, &["fire", "smoke", "embers", "dust", "coals"]);
+
+        let door = by("door");
+        assert_eq!(door.fields.len(), 8, "DoorDef has 8 fields");
+        assert_eq!(door.fields[0].variants, &["Left", "Right"]);
+
         let teleportal = by("teleportal");
         assert_eq!(teleportal.fields.len(), 2, "TeleportalDef has 2 fields");
         assert!(teleportal.fields.iter().all(|f| f.optional), "both teleportal fields are Option<String>");
@@ -495,7 +575,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 26);
+        assert_eq!(v["components"].as_array().unwrap().len(), 28);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }

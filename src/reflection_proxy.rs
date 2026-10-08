@@ -193,6 +193,8 @@ fn is_drawn_geometry(o: &GameObject) -> bool {
         && o.reflection_probe.is_none()
         && o.spawn_point.is_none()
         && o.trigger_volume.is_none()
+        // A door moves: it is drawn live, never as a baked proxy.
+        && o.door.is_none()
         && (o.brush.is_some() || o.mesh.is_some())
 }
 
