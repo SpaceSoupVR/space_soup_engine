@@ -81,10 +81,13 @@ fn a_player_out_of_their_depth_can_walk_back_to_the_shore() {
     assert!(end.x < -1.99, "held in the water, at x = {}", end.x);
 }
 
-/// THE REAL LEVEL: off the cove's beach straight out to sea, and from the
-/// pond's bank to its middle -- in up to the limit, and no further.
+/// THE REAL LEVEL: off the cove's beach straight out to sea -- in up to the
+/// limit, and no further -- and from the pond's bank to its middle, all the
+/// way: the pond is authored to be walked into on its bed
+/// (`max_wade_depth`; it held the player at a wall a step in, headset
+/// 2026-10-08).
 #[test]
-fn the_shipped_beach_and_pond_are_waded_into_and_no_further() {
+fn the_shipped_beach_is_waded_into_and_no_further_and_the_pond_all_the_way() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
@@ -92,11 +95,14 @@ fn the_shipped_beach_and_pond_are_waded_into_and_no_further() {
     physics.rebuild(&scene, game);
     for (what, from, to) in [
         ("the sea", Vec3::new(0.0, 5.0, 24.0), Vec3::new(0.0, 5.0, 60.0)),
-        ("the pond", Vec3::new(-18.0, 5.0, -17.0), Vec3::new(-25.8, 5.0, -25.8)),
     ] {
         let (end, deepest) = wade(&physics, from, to);
         assert!(deepest > MAX_WADE_DEPTH - 0.05, "never waded into {what}: {deepest} m at most, ended at {end:?}");
         assert!(deepest <= MAX_WADE_DEPTH, "waded {deepest} m deep into {what}");
         assert!(end.distance(Vec3::new(to.x, end.y, to.z)) > 2.0, "walked out into the middle of {what}, to {end:?}");
     }
+    let to = Vec3::new(-25.8, 5.0, -25.8);
+    let (end, deepest) = wade(&physics, Vec3::new(-18.0, 5.0, -17.0), to);
+    assert!(end.distance(Vec3::new(to.x, end.y, to.z)) < 0.1, "stopped short of the pond's middle, at {end:?}");
+    assert!(deepest > MAX_WADE_DEPTH, "walked in on the pond's bed only {deepest} m deep");
 }

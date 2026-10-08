@@ -249,6 +249,13 @@ impl PhysicsWorld {
         self.water.iter().filter_map(|w| w.surface_at(x, z)).reduce(f32::max).map(|surface| surface - ground_y)
     }
 
+    /// How far the water over a world x/z on ground at `ground_y` is deeper
+    /// than its own wading limit (`WaterDef::max_wade_depth`), metres; the
+    /// most of any water standing there. Negative where it can be waded.
+    pub fn water_wade_excess_at(&self, x: f32, z: f32, ground_y: f32) -> Option<f32> {
+        self.water.iter().filter_map(|w| w.surface_at(x, z).map(|s| s - ground_y - w.wade_depth())).reduce(f32::max)
+    }
+
     pub fn ensure_player(&mut self, player: PlayerId) {
         for hand in [Hand::Left, Hand::Right] {
             if self.hand_anchors.contains_key(&(player, hand)) {

@@ -315,12 +315,16 @@ impl Locomotion {
 /// already stood in, so a player who finds themselves out of their depth (a
 /// spawn, a teleport) can still walk back to the shore. `probe_y` is where
 /// the ground under `from` is looked for, only when the step is that deep.
+///
+/// Each water's own limit (`WaterDef::max_wade_depth`, else
+/// [`MAX_WADE_DEPTH`]): the sea stops a player thigh deep, a pond authored
+/// deeper is walked into on its bed.
 fn wades_out_of_depth(physics: &PhysicsWorld, from: Vec3, to: Vec3, probe_y: f32, to_ground: Option<f32>) -> bool {
-    let depth_at = |p: Vec3, ground: Option<f32>| physics.water_depth_at(p.x, p.z, ground.unwrap_or(f32::NEG_INFINITY));
+    let depth_at = |p: Vec3, ground: Option<f32>| physics.water_wade_excess_at(p.x, p.z, ground.unwrap_or(f32::NEG_INFINITY));
     let Some(depth) = depth_at(to, to_ground) else {
         return false;
     };
-    if depth <= MAX_WADE_DEPTH {
+    if depth <= 0.0 {
         return false;
     }
     let from_ground = physics.raycast_down(Vec3::new(from.x, probe_y, from.z), 50.0).map(|(p, _)| p.y);
@@ -344,7 +348,7 @@ pub const MAX_STEP_UP: f32 = 0.5;
 /// The deepest water a walk goes into, in metres: knee to thigh deep. A
 /// standing eye stays a metre above the waves and a seated one well clear of
 /// them -- there is no view from under the water to show if a head went in.
-pub const MAX_WADE_DEPTH: f32 = 0.6;
+pub const MAX_WADE_DEPTH: f32 = crate::water::DEFAULT_WADE_DEPTH;
 
 /// Further than a head can move between two frames. A body found this far from
 /// where the last frame left it was put there -- a respawn, a scene change, a
