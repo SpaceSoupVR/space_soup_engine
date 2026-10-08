@@ -12,6 +12,10 @@ use crate::rig::PlayerRig;
 use crate::rigid_physics::{from_px_transform, to_px_transform, PhysicsWorld};
 use crate::scene::Scene;
 
+/// How far a hand anchor may move in one tick before the move counts as a
+/// teleport: a hand swung at 15 m/s moves 25 cm a tick at 60 Hz.
+const HAND_TELEPORT: f32 = 0.5;
+
 impl PhysicsWorld {
     pub fn raycast_down(&self, origin: Vec3, max_distance: f32) -> Option<(Vec3, Vec3)> {
         self.raycast(origin, Vec3::NEG_Y, max_distance)
@@ -136,6 +140,15 @@ impl PhysicsWorld {
             let grip = rig.hand_grip(hand);
             let target = to_px_transform(grip.position, grip.rotation);
 
+            // A JUMP IS A TELEPORT, NOT A SWING. A kinematic moved by its
+            // target sweeps the whole way at the speed of the jump, and the
+            // CCD of anything it crosses takes that speed: a hand anchor's
+            // first tick (from the origin) or a player's teleport carried a
+            // hand through a door and flung the leaf round at 20 rad/s.
+            let (now, _) = from_px_transform(&unsafe { (*ptr).get_global_pose() });
+            if (now - grip.position).length() > HAND_TELEPORT {
+                unsafe { (*ptr).set_global_pose(&target, true) };
+            }
             unsafe { (*ptr).set_kinematic_target(&target) };
         }
 
@@ -165,6 +178,9 @@ impl PhysicsWorld {
                 (*state.ptr).set_angular_velocity(&zero, true);
             }
         }
+
+        // Bodies push doors before the step, which integrates the push.
+        self.push_doors(rigs);
 
         if let Err(e) = self.scene.step(
             dt,

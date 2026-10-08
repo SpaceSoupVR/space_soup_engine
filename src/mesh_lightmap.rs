@@ -529,6 +529,64 @@ pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec
     fixture_light_geometry(path).map(|g| g.blocking)
 }
 
+/// A GROUND MODEL's light-blocking triangles -- a cave baked by the editor --
+/// without its COPY OF THE GROUND: the triangles whose every corner the file
+/// marks as untouched ground (`TEXCOORD_1.x` past one half; see the editor's
+/// caveSky.groundCopy). That copy lies on the terrain's own surface under the
+/// cells the cave opens, so as an occluder it only buried the terrain's bake
+/// points beneath it: each opened cell baked black or shadowed, an angular
+/// dark patch on the sand in front of every mouth. The terrain is its own
+/// occluder there already. A model without the attribute keeps every
+/// triangle, as [`light_blocking_triangles`] gives them.
+pub fn ground_model_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec3; 3]>> {
+    let (doc, buffers, _) = gltf::import(path).ok()?;
+    let mut out = Vec::new();
+    fn walk(
+        node: gltf::Node,
+        parent: [[f32; 4]; 4],
+        buffers: &[gltf::buffer::Data],
+        out: &mut Vec<[glam::Vec3; 3]>,
+    ) {
+        let world = mat_mul(parent, node.transform().matrix());
+        if let Some(mesh) = node.mesh() {
+            for prim in mesh.primitives() {
+                let reader = prim.reader(|b| Some(&buffers[b.index()]));
+                let Some(positions) = reader.read_positions() else { continue };
+                let positions: Vec<[f32; 3]> = positions.map(|p| transform_point(world, p)).collect();
+                let ground: Vec<f32> = reader
+                    .read_tex_coords(1)
+                    .map(|t| t.into_f32().map(|uv| uv[0]).collect())
+                    .filter(|g: &Vec<f32>| g.len() == positions.len())
+                    .unwrap_or_else(|| vec![0.0; positions.len()]);
+                let indices: Vec<u32> = match reader.read_indices() {
+                    Some(i) => i.into_u32().collect(),
+                    None => (0..positions.len() as u32).collect(),
+                };
+                for t in indices.chunks_exact(3) {
+                    let [a, b, c] = [t[0] as usize, t[1] as usize, t[2] as usize];
+                    if a >= positions.len() || b >= positions.len() || c >= positions.len() {
+                        continue;
+                    }
+                    if ground[a] > 0.5 && ground[b] > 0.5 && ground[c] > 0.5 {
+                        continue;
+                    }
+                    out.push([positions[a].into(), positions[b].into(), positions[c].into()]);
+                }
+            }
+        }
+        for child in node.children() {
+            walk(child, world, buffers, out);
+        }
+    }
+    let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    for scene in doc.scenes() {
+        for node in scene.nodes() {
+            walk(node, identity, &buffers, &mut out);
+        }
+    }
+    Some(out)
+}
+
 /// A fixture model's light-blocking triangles (see [`light_blocking_triangles`])
 /// and whether its bulb was among what was dropped.
 pub struct FixtureLightGeometry {

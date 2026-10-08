@@ -408,15 +408,7 @@ impl PhysicsWorld {
     /// A failure warns and leaves the scene without ground rather than aborting
     /// the load: a level that opens with nothing to stand on is diagnosable, and
     /// a runtime that refuses to start is not.
-    pub(crate) fn spawn_scene_terrain(&mut self, def: &crate::terrain::TerrainDef, game_dir: &Path) {
-        let source = match crate::terrain::load(def, game_dir) {
-            Ok(s) => s,
-            Err(e) => {
-                log::warn!("rigid_physics: scene terrain not loaded: {e}");
-                return;
-            }
-        };
-
+    pub(crate) fn spawn_scene_terrain(&mut self, source: &dyn crate::terrain::TerrainSource) {
         let patch = source.patch(source.bounds(), 1);
         if patch.positions.is_empty() || patch.indices.is_empty() {
             log::warn!("rigid_physics: scene terrain produced no geometry");

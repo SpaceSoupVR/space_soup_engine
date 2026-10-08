@@ -146,6 +146,18 @@ pub struct PhysicsWorld {
     pub(crate) grabs: HashMap<(PlayerId, String, Hand), GrabState>,
     pub(crate) scratch: ScratchBuffer,
 
+    /// Where standing water lies. Not colliders -- water is waded through --
+    /// but how deep it stands, so a walk stops before it is out of its depth.
+    pub(crate) water: Vec<crate::water::WaterFootprint>,
+
+    /// The doors, by object id: each one's leaf as it hangs. Their bodies are
+    /// in `dynamic` like any other; this is the hinge they turn on, for the
+    /// bodies' pushes (`push_doors`) and for anyone asking a door's angle.
+    pub(crate) doors: HashMap<String, crate::door::DoorGeom>,
+    /// Each door's closer and hinge friction (`DoorDef::closer`,
+    /// `DoorDef::friction`), applied as torques by `push_doors`.
+    pub(crate) door_hinges: HashMap<String, (f32, f32)>,
+
     // ORDER MATTERS, and it is load-bearing rather than stylistic. Rust drops
     // fields in declaration order, and a cooked TriangleMesh is owned by the
     // physics object inside the foundation: releasing one after the foundation
@@ -222,8 +234,19 @@ impl PhysicsWorld {
             grabs: HashMap::new(),
 
             scratch: unsafe { ScratchBuffer::new(4) },
+            water: Vec::new(),
+            doors: HashMap::new(),
+            door_hinges: HashMap::new(),
             terrain_meshes: Vec::new(),
         }
+    }
+
+    /// How deep standing water is over ground at `ground_y`, at a world x/z:
+    /// the highest surface standing there, less the ground. `None` where no
+    /// water stands; negative where the ground is above the surface, as on a
+    /// beach the waves run up.
+    pub fn water_depth_at(&self, x: f32, z: f32, ground_y: f32) -> Option<f32> {
+        self.water.iter().filter_map(|w| w.surface_at(x, z)).reduce(f32::max).map(|surface| surface - ground_y)
     }
 
     pub fn ensure_player(&mut self, player: PlayerId) {
@@ -275,6 +298,8 @@ impl PhysicsWorld {
         self.kinematic.clear();
         self.materials.clear();
         self.terrain_meshes.clear();
+        self.doors.clear();
+        self.door_hinges.clear();
 
         self.grabs.clear();
         self.hand_anchors.clear();
@@ -302,15 +327,44 @@ impl PhysicsWorld {
         }
 
         for obj in &scene.objects {
+            let Some(def) = &obj.door else {
+                continue;
+            };
+            self.spawn_door(obj, def);
+        }
+
+        for obj in &scene.objects {
             let Some(def) = &obj.terrain_collider else {
                 continue;
             };
             self.spawn_terrain_colliders(obj, def, game_dir);
         }
 
-        if let Some(def) = &scene.terrain {
-            self.spawn_scene_terrain(def, game_dir);
+        // The ground's heights, loaded once for its collider and for the water
+        // measured against it. A failure warns and leaves the scene without
+        // ground rather than aborting the load: a level that opens with
+        // nothing to stand on is diagnosable, and a runtime that refuses to
+        // start is not.
+        let terrain = scene.terrain.as_ref().and_then(|def| match crate::terrain::load(def, game_dir) {
+            Ok(source) => Some(source),
+            Err(e) => {
+                log::warn!("rigid_physics: scene terrain not loaded: {e}");
+                None
+            }
+        });
+        if let Some(source) = &terrain {
+            self.spawn_scene_terrain(source.as_ref());
         }
+
+        // By the same heightfield the ground collider was cooked from, and by
+        // the drawn surface's own rule (see `WaterFootprint`).
+        self.water = scene
+            .water
+            .iter()
+            .filter_map(|def| {
+                crate::water::WaterFootprint::new(def, |x, z| terrain.as_ref().and_then(|t| t.height_at(x, z)))
+            })
+            .collect();
     }
 }
 

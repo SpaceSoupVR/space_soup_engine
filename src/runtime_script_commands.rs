@@ -76,6 +76,13 @@ impl GameRuntime {
                         self.rigs.get(&player).and_then(|r| r.get(joint_id)),
                         self.scene.find_object(&id),
                     ) {
+                        // A DOOR IS PUSHED, NOT CARRIED: an attachment
+                        // places an object at the hand outright, which would
+                        // lift a leaf off its hinge. Its hinge joint and its
+                        // contacts with the hand are the whole interaction.
+                        (Some(_), Some(obj)) if obj.door.is_some() => {
+                            log::debug!("grab_at_joint: '{id}' is a door; it is pushed, not held");
+                        }
                         (Some(joint_tf), Some(obj)) => {
                             let matched_point = point.as_deref().and_then(|p| obj.grip_point(p));
                             // A named point that does not exist silently became a

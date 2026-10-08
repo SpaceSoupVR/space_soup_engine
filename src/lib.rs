@@ -12,6 +12,7 @@ pub mod rigid_physics;
 mod rigid_physics_grab;
 mod rigid_physics_query;
 mod rigid_physics_spawn;
+mod rigid_physics_door;
 pub mod runtime;
 mod runtime_animation;
 mod runtime_dispatch;
@@ -27,6 +28,8 @@ mod runtime_tests_physics;
 #[cfg(test)]
 mod rigid_physics_brush_tests;
 #[cfg(test)]
+mod rigid_physics_water_tests;
+#[cfg(test)]
 mod runtime_tests_scripting;
 #[cfg(test)]
 mod runtime_tests_teleport;
@@ -39,6 +42,7 @@ mod trigger_volume_tests;
 #[cfg(test)]
 mod fracture_damage_tests;
 pub mod brush;
+pub mod door;
 pub mod trigger_volume;
 pub mod brush_obj;
 pub mod damage;
@@ -50,6 +54,7 @@ pub mod reflection_probe;
 pub mod reflection_proxy;
 pub mod room_graph;
 pub mod lightmaps;
+pub mod daylight;
 pub mod scene;
 mod scene_animation;
 mod scene_cuboid;
@@ -68,6 +73,7 @@ mod scatter_tests;
 pub mod schema;
 pub mod terrain;
 pub mod water;
+pub mod weather;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]
@@ -104,7 +110,7 @@ pub use scene::{
     LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
     TeleportalDef,
     LightMode,
-    SkyDef,
+    SkyDef, TimeOfDayDef,
     PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
     BINDING_BUTTONS,
 };

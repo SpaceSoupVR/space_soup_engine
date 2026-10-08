@@ -76,6 +76,57 @@
       "cardinality": "optional"
     },
     {
+      "name": "door",
+      "rust_type": "DoorDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "hinge",
+          "kind": "enum",
+          "optional": false,
+          "variants": [
+            "Left",
+            "Right"
+          ]
+        },
+        {
+          "name": "open_min_deg",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "open_max_deg",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "mass",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "friction",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "closer",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "surface_friction",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "start_deg",
+          "kind": "number",
+          "optional": false
+        }
+      ]
+    },
+    {
       "name": "terrain_collider",
       "rust_type": "TerrainColliderDef",
       "cardinality": "optional",
@@ -181,6 +232,85 @@
         },
         {
           "name": "size_growth",
+          "kind": "number",
+          "optional": false
+        }
+      ]
+    },
+    {
+      "name": "effect",
+      "rust_type": "EffectDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "kind",
+          "kind": "enum",
+          "optional": false,
+          "variants": [
+            "fire",
+            "smoke",
+            "embers",
+            "dust",
+            "coals"
+          ]
+        },
+        {
+          "name": "scale",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "rate",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "tint",
+          "kind": "color",
+          "optional": false
+        },
+        {
+          "name": "intensity",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "size_variation",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "life_variation",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "speed_variation",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "temperature_variation",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "flicker",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "flicker_rate",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "turbulence",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "seed",
           "kind": "number",
           "optional": false
         }
@@ -305,10 +435,12 @@
     "grip_points",
     "sockets",
     "slider_joint",
+    "door",
     "terrain_collider",
     "lights",
     "sound",
     "particle_emitter",
+    "effect",
     "laser",
     "spawn_point",
     "teleportal",

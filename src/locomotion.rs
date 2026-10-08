@@ -232,7 +232,7 @@ impl Locomotion {
             _ => start_body,
         };
         self.apply_wall_collision(physics, from, head_rel);
-        self.apply_ground_follow(physics, start, head_rel);
+        self.apply_ground_follow(physics, start, from, head_rel);
         let body = self.player_offset + head_rel;
         self.last_body_xz = Some((body.x, body.z));
     }
@@ -268,7 +268,7 @@ impl Locomotion {
         self.player_offset.z += stopped.z - curr.z;
     }
 
-    fn apply_ground_follow(&mut self, physics: &PhysicsWorld, start: CollisionStart, head_rel: Vec3) {
+    fn apply_ground_follow(&mut self, physics: &PhysicsWorld, start: CollisionStart, from: Vec3, head_rel: Vec3) {
         if self.mode == LocomotionMode::Disabled {
             return;
         }
@@ -286,7 +286,17 @@ impl Locomotion {
         // `max_climb_angle_deg` allows, since a frame's walk rises centimetres.
         let body = self.player_offset + head_rel;
         let probe_origin = Vec3::new(body.x, self.player_offset.y + MAX_STEP_UP, body.z);
-        let Some((hit_point, normal)) = physics.raycast_down(probe_origin, 50.0) else {
+        let hit = physics.raycast_down(probe_origin, 50.0);
+        // Before the ground: under water, no ground at all is the open sea
+        // past the terrain's edge -- as deep as water gets.
+        if wades_out_of_depth(physics, from, body, probe_origin.y, hit.map(|(p, _)| p.y)) {
+            // Back to where the body stood, however it got here -- the stick
+            // or a step in the real room -- as a wall stops both.
+            self.player_offset.x += from.x - body.x;
+            self.player_offset.z += from.z - body.z;
+            return;
+        }
+        let Some((hit_point, normal)) = hit else {
             return;
         };
 
@@ -298,6 +308,23 @@ impl Locomotion {
             self.player_offset.z = start.offset.z;
         }
     }
+}
+
+/// Whether a step from `from` to `to`, on ground at `to_ground`, takes the
+/// body into water deeper than [`MAX_WADE_DEPTH`] -- and deeper than it
+/// already stood in, so a player who finds themselves out of their depth (a
+/// spawn, a teleport) can still walk back to the shore. `probe_y` is where
+/// the ground under `from` is looked for, only when the step is that deep.
+fn wades_out_of_depth(physics: &PhysicsWorld, from: Vec3, to: Vec3, probe_y: f32, to_ground: Option<f32>) -> bool {
+    let depth_at = |p: Vec3, ground: Option<f32>| physics.water_depth_at(p.x, p.z, ground.unwrap_or(f32::NEG_INFINITY));
+    let Some(depth) = depth_at(to, to_ground) else {
+        return false;
+    };
+    if depth <= MAX_WADE_DEPTH {
+        return false;
+    }
+    let from_ground = physics.raycast_down(Vec3::new(from.x, probe_y, from.z), 50.0).map(|(p, _)| p.y);
+    depth > depth_at(from, from_ground).unwrap_or(f32::NEG_INFINITY)
 }
 
 /// Where a frame's movement started. See [`Locomotion::collision_start`].
@@ -313,6 +340,11 @@ pub struct CollisionStart {
 /// this far above the feet. Above a stair riser (~0.18 m) and a kerb, below
 /// any ceiling -- a lower ceiling than this is not a room anyone stands in.
 pub const MAX_STEP_UP: f32 = 0.5;
+
+/// The deepest water a walk goes into, in metres: knee to thigh deep. A
+/// standing eye stays a metre above the waves and a seated one well clear of
+/// them -- there is no view from under the water to show if a head went in.
+pub const MAX_WADE_DEPTH: f32 = 0.6;
 
 /// Further than a head can move between two frames. A body found this far from
 /// where the last frame left it was put there -- a respawn, a scene change, a

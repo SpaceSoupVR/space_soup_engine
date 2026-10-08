@@ -14,7 +14,8 @@ pub use crate::scene_cuboid::{
     distance_to_oriented_box, Color3, CuboidDef, CuboidShape, CuboidStyle, MeshRef,
 };
 pub use crate::scene_env::{
-    LaserDef, ParticleEmitterDef, SoundSourceDef, SpawnPointDef, TeleportalDef,
+    EffectDef, EffectKindDef, LaserDef, ParticleEmitterDef, SoundSourceDef, SpawnPointDef,
+    TeleportalDef,
 };
 pub use crate::scene_light::{GlareFacesDef, LightDef, LightKind, LightMode};
 pub use crate::scene_physics::{BodyMode, ColliderShape, RigidBodyDef};
@@ -155,6 +156,12 @@ pub struct GameObject {
     #[serde(default)]
     pub slider_joint: Option<SliderJointDef>,
 
+    /// A door: this object's cuboid is the leaf as it hangs closed, turning
+    /// about one vertical edge. See [`crate::door`]. Skipped when absent, so
+    /// scenes without doors are unchanged by a save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub door: Option<crate::door::DoorDef>,
+
     #[serde(default)]
     pub terrain_collider: Option<TerrainColliderDef>,
 
@@ -166,6 +173,12 @@ pub struct GameObject {
 
     #[serde(default)]
     pub particle_emitter: Option<ParticleEmitterDef>,
+
+    /// A special effect drawn here: fire, smoke, embers or dust. See
+    /// [`EffectDef`]. Skipped when absent, so scenes without one are
+    /// unchanged by a save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<EffectDef>,
 
     #[serde(default)]
     pub laser: Option<LaserDef>,
@@ -320,6 +333,12 @@ pub struct Scene {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub water: Vec<crate::water::WaterDef>,
 
+    /// Areas of rain and snow, and the most each may leave on the ground.
+    /// See `weather`. Skipped when empty, so every scene already on disk is
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weather: Vec<crate::weather::WeatherDef>,
+
     /// Procedural placement layers -- trees, grass, rocks.
     ///
     /// Parameters, not output. Five thousand scattered trees are a handful of
@@ -374,6 +393,94 @@ pub struct SkyDef {
     /// through the windows.
     #[serde(default = "default_true")]
     pub show_background: bool,
+
+    /// THE TIME OF DAY: a moving sun, a moon, stars and a sky made by an
+    /// atmosphere model rather than photographed. Absent -- the default --
+    /// the photographed panorama lights the level exactly as it always has,
+    /// with its own sun. See `space_soup_sky::time_of_day`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_of_day: Option<TimeOfDayDef>,
+}
+
+/// A scene's day: where on Earth, which day, the hour, and how fast it passes.
+///
+/// Every field has a default, so `"time_of_day": {}` is a frozen 3 pm on the
+/// June solstice at 40 degrees north, with north turned so the sun stands where
+/// the scene's photographed sky has its sun (`north_deg` absent).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TimeOfDayDef {
+    /// Local solar time at the start, hours (12 = noon).
+    #[serde(default = "default_start_hour")]
+    pub start_hour: f32,
+    /// Real minutes one 24-hour day takes. 0 = time stands still.
+    #[serde(default)]
+    pub day_minutes: f32,
+    #[serde(default = "default_latitude")]
+    pub latitude_deg: f32,
+    /// 1..365; 172 is the June solstice.
+    #[serde(default = "default_day_of_year")]
+    pub day_of_year: f32,
+    /// Where north points, as an azimuth (`atan2(x, z)`, degrees). Absent:
+    /// turned so the sun at `start_hour` stands at the photographed sky's
+    /// sun's azimuth, so the level keeps the side it was lit from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub north_deg: Option<f32>,
+    /// The moon's age as a fraction of its month: 0 new, 0.5 full.
+    #[serde(default = "default_moon_phase")]
+    pub moon_phase: f32,
+    /// 1 = a dark site's naked-eye stars.
+    #[serde(default = "default_one")]
+    pub star_density: f32,
+    /// 0 none .. 1 a suburb's sky glow.
+    #[serde(default)]
+    pub light_pollution: f32,
+    /// Haze: the aerosol density, 1 = a clear day.
+    #[serde(default = "default_one")]
+    pub turbidity: f32,
+}
+
+fn default_start_hour() -> f32 {
+    15.0
+}
+fn default_latitude() -> f32 {
+    40.0
+}
+fn default_day_of_year() -> f32 {
+    172.0
+}
+fn default_moon_phase() -> f32 {
+    0.45
+}
+fn default_one() -> f32 {
+    1.0
+}
+
+impl Default for TimeOfDayDef {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("every field has a default")
+    }
+}
+
+impl TimeOfDayDef {
+    /// The sky model's parameters. `photographed_sun` is the scene's HDRI's sun
+    /// direction, which an absent `north_deg` aligns to.
+    pub fn params(&self, photographed_sun: Option<[f32; 3]>) -> space_soup_sky::time_of_day::TimeOfDayParams {
+        let p = space_soup_sky::time_of_day::TimeOfDayParams {
+            start_hour: self.start_hour,
+            day_minutes: self.day_minutes.max(0.0),
+            latitude_deg: self.latitude_deg,
+            day_of_year: self.day_of_year,
+            north_deg: self.north_deg.unwrap_or(180.0),
+            moon_phase: self.moon_phase,
+            star_density: self.star_density.max(0.0),
+            light_pollution: self.light_pollution.max(0.0),
+            turbidity: self.turbidity.max(0.05),
+        };
+        match (self.north_deg, photographed_sun) {
+            (None, Some(sun)) => p.with_sun_azimuth_of(sun),
+            _ => p,
+        }
+    }
 }
 
 impl Scene {
