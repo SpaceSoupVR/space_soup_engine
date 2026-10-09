@@ -1,5 +1,7 @@
+use log::warn;
 use rhai::Engine;
 
+use crate::events::HapticHand;
 use crate::script::{parse_hand, EngineCommand, SharedContext};
 
 pub(crate) fn register_interaction_and_audio_fns(engine: &mut Engine, context: &SharedContext) {
@@ -123,6 +125,26 @@ pub(crate) fn register_interaction_and_audio_fns(engine: &mut Engine, context: &
                 .unwrap()
                 .commands
                 .push(EngineCommand::StopSound { id: id.to_string() });
+        });
+    }
+
+    {
+        // vibrate("left" | "right" | "both", strength 0..1, seconds). Goes to the
+        // player whose input is being handled, like a grab does.
+        let ctx = context.clone();
+        engine.register_fn("vibrate", move |hand: &str, strength: f64, seconds: f64| {
+            let Some(hand) = HapticHand::parse(hand) else {
+                warn!("vibrate: hand must be \"left\", \"right\" or \"both\", got '{hand}'");
+                return;
+            };
+            let mut ctx = ctx.lock().unwrap();
+            let player = ctx.current_player;
+            ctx.commands.push(EngineCommand::Vibrate {
+                hand,
+                strength: strength as f32,
+                seconds: seconds as f32,
+                player,
+            });
         });
     }
 

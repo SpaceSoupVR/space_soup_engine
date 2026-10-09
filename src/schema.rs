@@ -234,6 +234,12 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         // to an object as a component. Listed here only to satisfy the
         // exhaustiveness check, which is what caught it being added at all.
         hidden_parts,
+        // A link to a prop file, placed from SSStudio's Editor; the prop's own
+        // behaviour lives in that file, not in object components.
+        prop,
+        // A selection pad (body / hands), read by the game, not a script
+        // component.
+        selector,
     } = o;
 }
 

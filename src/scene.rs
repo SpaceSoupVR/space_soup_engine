@@ -109,6 +109,32 @@ pub struct GameObject {
 
     #[serde(default)]
     pub teleportal: Option<TeleportalDef>,
+
+    /// An interactive prop placed here, linked by its `.prop.json` (made in
+    /// SSStudio's prop studio). The prop file names its own model; this
+    /// object only says where the prop sits in the scene.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prop: Option<PropRef>,
+
+    /// A selection pad: putting a controller inside this object's box
+    /// chooses something for the player (their body, their hands).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<SelectorDef>,
+}
+
+/// What a selection pad chooses: `set` is "body" or "hands", `value` the
+/// choice ("boy" / "soldier", "default" / "gloves").
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SelectorDef {
+    pub set: String,
+    pub value: String,
+}
+
+/// A link to a prop file: `path` is relative to the game folder when the
+/// file is inside it, otherwise absolute.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PropRef {
+    pub path: String,
 }
 
 impl GameObject {

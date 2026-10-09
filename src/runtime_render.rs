@@ -4,7 +4,7 @@ use space_soup_protocol::PlayerId;
 use crate::events::Hand;
 use crate::rig::JointId;
 use crate::runtime::{
-    GameRuntime, RenderCuboid, RenderLaser, RenderLight, RenderMesh, RenderParticleBurst,
+    GameRuntime, HapticRequest, RenderCuboid, RenderLaser, RenderLight, RenderMesh, RenderParticleBurst,
     RenderParticleEmitter, SoundState,
 };
 use crate::scene::{CuboidShape, GameObject, GripPointDef, MeshRef};
@@ -168,6 +168,12 @@ impl GameRuntime {
 
     pub fn preview_sound(&mut self, clip: &str, volume: f32, pitch: f32) {
         self.sound_engine.preview(&self.game_dir, clip, volume, pitch);
+    }
+
+    /// Takes the vibrations requested during the last `update`. Call once per
+    /// frame, after `update` -- the next `update` discards anything not taken.
+    pub fn drain_haptics(&mut self) -> Vec<HapticRequest> {
+        std::mem::take(&mut self.pending_haptics)
     }
 
     pub fn active_sounds(&self) -> Vec<SoundState> {

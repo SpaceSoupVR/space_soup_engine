@@ -47,7 +47,7 @@ pub use debug_protocol::{
     receiver as debug_receiver, sender as debug_sender, DebugPacket, HandSample, JointSample,
     LocomotionSample, Pose, SceneSample, TimingSample,
 };
-pub use events::{ButtonPress, Hand, InputAxes, InputFrame};
+pub use events::{ButtonPress, Hand, HapticHand, InputAxes, InputFrame};
 pub use scene_animation::ClipBlendMode;
 pub use locomotion::{Locomotion, LocomotionInput, LocomotionMode, TeleportTarget, TurnMode};
 pub use manifest::Manifest;
@@ -56,15 +56,15 @@ pub use rig_profile::{
     BoneAssignment, DeviceOffsetDef, HeightCalibrationDef, JointConstraintDef, RigProfileDef,
 };
 pub use runtime::{
-    GameRuntime, PlayerFrameInput, RenderCuboid, RenderLaser, RenderLight, RenderMesh,
-    RenderParticleBurst, RenderParticleEmitter, SoundState,
+    GameRuntime, HapticRequest, PlayerFrameInput, RenderCuboid, RenderLaser, RenderLight, RenderMesh,
+    RenderParticleBurst, RenderParticleEmitter, SoundState, MAX_HAPTIC_SECONDS,
 };
 pub use scene::{
     distance_to_oriented_box, Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape,
     Color3, CuboidDef,
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
     LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
-    PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
+    PlayMode, PropRef, RigAttachmentDef, SelectorDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
     BINDING_BUTTONS,
 };
 
