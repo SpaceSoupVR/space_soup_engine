@@ -459,6 +459,13 @@ impl GameRuntime {
                 self.script_host.set_var(&name, &value);
             }
             A::PlaySound { id } => self.script_host.push_command(EngineCommand::PlaySound { id }),
+            A::Vibrate { hand, strength, seconds } => {
+                // Part triggers are dispatched per player's input, so the current
+                // player is the one whose hand moved the part.
+                let player = self.script_host.current_player();
+                self.script_host
+                    .push_command(EngineCommand::Vibrate { hand, strength, seconds, player })
+            }
             A::SpawnParticleBurst { id, count } => {
                 // Authored as u32 -- a negative burst is not a thing anyone means --
                 // and widened here to the command's script-facing i64.

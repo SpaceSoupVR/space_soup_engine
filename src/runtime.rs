@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::animation::AnimationPlayer;
 use crate::attach::{Attachment, AttachmentTable};
 use crate::audio::SoundEngine;
-use crate::events::InputFrame;
+use crate::events::{HapticHand, InputFrame};
 use crate::locomotion::{Locomotion, LocomotionInput, TeleportTarget};
 use crate::manifest::Manifest;
 use crate::physics::CollisionTracker;
@@ -130,6 +130,24 @@ pub struct RenderLaser {
 }
 
 
+/// Longest vibration a script or trigger can ask for. Anything longer is almost
+/// always a units mistake (milliseconds passed as seconds), and a controller that
+/// will not stop buzzing is worse than one that stops early.
+pub const MAX_HAPTIC_SECONDS: f32 = 2.0;
+
+/// One controller vibration asked for by a script (`vibrate`) or a part trigger.
+/// The engine cannot reach OpenXR, so these queue on the runtime until the host
+/// takes them with `drain_haptics` and hands them to its controllers.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HapticRequest {
+    pub player: PlayerId,
+    pub hand: HapticHand,
+    /// 0..1.
+    pub strength: f32,
+    /// 0..MAX_HAPTIC_SECONDS.
+    pub seconds: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundState {
     pub object_id: String,
@@ -163,6 +181,10 @@ pub struct GameRuntime {
     pub(crate) pending_scene_change: Option<String>,
     pub(crate) sound_play_requests: HashSet<String>,
     pub(crate) sound_stop_requests: HashSet<String>,
+    /// Vibrations requested this frame, waiting for the host. Cleared at the
+    /// start of every update so a host that never drains them (the server)
+    /// does not accumulate them forever.
+    pub(crate) pending_haptics: Vec<HapticRequest>,
     pub(crate) manual_part_blends: HashMap<String, HashMap<String, f32>>,
 
     /// Last frame's part blends, so a trigger fires on a CROSSING rather than on
@@ -208,6 +230,7 @@ impl GameRuntime {
             pending_scene_change: None,
             sound_play_requests: HashSet::new(),
             sound_stop_requests: HashSet::new(),
+            pending_haptics: Vec::new(),
             manual_part_blends: HashMap::new(),
             part_transforms: HashMap::new(),
             prev_part_blends: HashMap::new(),
@@ -333,6 +356,7 @@ impl GameRuntime {
         Option<String>,
     ) {
         self.pending_scene_change = None;
+        self.pending_haptics.clear();
 
         let disconnected: Vec<PlayerId> = self
             .rigs
@@ -443,6 +467,15 @@ impl GameRuntime {
 
     pub fn scene(&self) -> &Scene {
         &self.scene
+    }
+
+    /// The scene's rigid-body world. Exposed so a process that runs this
+    /// `GameRuntime` with no server -- local_sim in quest_app -- can drive
+    /// player wall/floor collision from this same `PhysicsWorld` rather than
+    /// standing up a second one: PhysX permits only one Foundation per
+    /// process, and a second `PhysicsWorld::new()` returns a null pointer.
+    pub fn physics(&self) -> &PhysicsWorld {
+        &self.rigid_physics
     }
     pub fn scene_mut(&mut self) -> &mut Scene {
         &mut self.scene

@@ -24,6 +24,41 @@ impl Hand {
     }
 }
 
+/// Which controller(s) a vibration goes to. Separate from `Hand` because "both"
+/// is a real answer here and nowhere else -- a grab is always one hand, but a
+/// scene-wide rumble is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HapticHand {
+    Left,
+    Right,
+    Both,
+}
+
+impl HapticHand {
+    /// "left" | "right" | "both", any case. None for anything else, so a typo
+    /// is reported rather than silently buzzing the wrong hand.
+    pub fn parse(s: &str) -> Option<HapticHand> {
+        if s.eq_ignore_ascii_case("left") {
+            Some(HapticHand::Left)
+        } else if s.eq_ignore_ascii_case("right") {
+            Some(HapticHand::Right)
+        } else if s.eq_ignore_ascii_case("both") {
+            Some(HapticHand::Both)
+        } else {
+            None
+        }
+    }
+
+    pub fn includes(self, hand: Hand) -> bool {
+        match self {
+            HapticHand::Both => true,
+            HapticHand::Left => hand == Hand::Left,
+            HapticHand::Right => hand == Hand::Right,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputFrame {
     pub pointed: Vec<(String, Hand)>,

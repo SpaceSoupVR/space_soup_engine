@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use space_soup_protocol::PlayerId;
 
-use crate::events::{Hand, InputAxes};
+use crate::events::{Hand, HapticHand, InputAxes};
 
 pub(crate) fn parse_hand(s: &str) -> Hand {
     if s.eq_ignore_ascii_case("left") {
@@ -90,6 +90,12 @@ pub enum EngineCommand {
     },
     StopSound {
         id: String,
+    },
+    Vibrate {
+        hand: HapticHand,
+        strength: f32,
+        seconds: f32,
+        player: PlayerId,
     },
     SetLightIntensity {
         id: String,
