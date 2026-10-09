@@ -413,6 +413,8 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         slider_joint,
         door,
         terrain_collider,
+        prop,
+        selector,
         lights,
         sound,
         particle_emitter,

@@ -108,6 +108,7 @@ pub use scene::{
     Color3, CuboidDef,
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
     LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
+    PropRef, SelectorDef,
     TeleportalDef,
     LightMode,
     SkyDef, TimeOfDayDef,
