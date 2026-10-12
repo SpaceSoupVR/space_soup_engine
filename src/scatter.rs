@@ -126,6 +126,11 @@ pub struct ScatterLayer {
     pub strokes: Vec<ScatterStroke>,
     #[serde(default)]
     pub overrides: Vec<ScatterOverride>,
+    /// Which season's leaves the models wear (`spring`, `early_autumn`,
+    /// `late_autumn`, `winter`); `None` is the models as authored (summer).
+    /// A look, not a placement: it never changes where anything stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<String>,
 }
 
 /// One resolved placement. Never stored -- regenerated on every load.

@@ -4,6 +4,8 @@ pub mod audio;
 pub mod debug_protocol;
 pub mod events;
 pub mod locomotion;
+pub mod logic;
+pub mod netrules;
 pub mod manifest;
 pub mod physics;
 pub mod rig;
@@ -72,6 +74,7 @@ pub mod scatter;
 mod scatter_tests;
 pub mod schema;
 pub mod terrain;
+pub mod walk_area;
 pub mod water;
 pub mod weather;
 #[cfg(test)]

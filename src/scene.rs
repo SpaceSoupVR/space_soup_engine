@@ -165,6 +165,13 @@ pub struct GameObject {
     #[serde(default)]
     pub terrain_collider: Option<TerrainColliderDef>,
 
+    /// A walkable mat: this object's cuboid footprint is draped over the
+    /// scene's terrain and cooked into a floor the player walks on, ringed
+    /// by an invisible fence wall they cannot cross. See [`crate::walk_area`].
+    /// Skipped when absent, so scenes without one are unchanged by a save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walk_area: Option<crate::walk_area::WalkAreaDef>,
+
     #[serde(default)]
     pub lights: Vec<LightDef>,
 
