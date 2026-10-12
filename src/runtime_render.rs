@@ -43,8 +43,14 @@ impl GameRuntime {
             // twelve overlapping crates -- so the client meshes brushes itself
             // from scene data it already has, and this list would only double
             // -draw them. See `hidden_brushes` for how it is told which to skip.
+            // Walk mats are colliders with an editor-only preview: drawing
+            // their cuboid in the game would float a box over the ground.
             .filter(|o| {
-                !o.hidden && !self.damage.is_removed(o) && o.mesh.is_none() && o.brush.is_none()
+                !o.hidden
+                    && !self.damage.is_removed(o)
+                    && o.mesh.is_none()
+                    && o.brush.is_none()
+                    && o.walk_area.is_none()
             })
             .map(|o| RenderCuboid {
                 id: o.id.clone(),

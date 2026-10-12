@@ -35,6 +35,7 @@ fn layer(density: f32) -> ScatterLayer {
         prototypes: vec![proto("pine.glb")],
         strokes: vec![stroke(1, density)],
         overrides: vec![],
+        season: None,
     }
 }
 
@@ -436,6 +437,7 @@ fn jitter_reference_layer() -> ScatterLayer {
             ScatterStroke { id: 3, center: [2.0, -4.0], radius: 14.0, density: 0.3 },
         ],
         overrides: vec![],
+        season: None,
     }
 }
 

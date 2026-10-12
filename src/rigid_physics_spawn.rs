@@ -544,6 +544,67 @@ impl PhysicsWorld {
         );
     }
 
+    /// Static collider for a walk mat: the floor draped over the terrain plus
+    /// its boundary fence, cooked as one PhysX triangle mesh exactly like the
+    /// sculpted ground ([`Self::spawn_scene_terrain`]). The vertices are built
+    /// in world space, so the actor sits at identity.
+    pub(crate) fn spawn_walk_area(
+        &mut self,
+        obj: &GameObject,
+        def: &crate::walk_area::WalkAreaDef,
+        terrain: Option<&dyn crate::terrain::TerrainSource>,
+    ) {
+        // Physics affords a fine grid; the editor previews a coarser one.
+        const MAX_CELLS: usize = 128 * 128;
+        let c = &obj.cuboid;
+        let mesh = crate::walk_area::build(c.position, c.half_size.x, c.half_size.z, def, MAX_CELLS, &|x, z| {
+            terrain.and_then(|t| t.height_at(x, z))
+        });
+        let (points, indices) = crate::walk_area::physics_triangles(&mesh);
+        if points.is_empty() || indices.is_empty() {
+            log::warn!("rigid_physics: walk_area on '{}' produced no geometry", obj.id);
+            return;
+        }
+
+        let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
+            log::warn!("rigid_physics: failed to create walk_area material for '{}'", obj.id);
+            return;
+        };
+
+        let px_points: Vec<PxVec3> = points.iter().map(|p| PxVec3::new(p.x, p.y, p.z)).collect();
+        let Some(owned) = cook_triangle_mesh(&mut self.foundation, &px_points, &indices) else {
+            log::warn!("rigid_physics: walk_area on '{}' failed to cook", obj.id);
+            return;
+        };
+        self.terrain_meshes.push(owned);
+        let mesh_idx = self.terrain_meshes.len() - 1;
+
+        let scale_px = PxVec3::new(1.0, 1.0, 1.0);
+        let rot_px = PxQuat::new(0.0, 0.0, 0.0, 1.0);
+        let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };
+        let geo = PxTriangleMeshGeometry::new(
+            self.terrain_meshes[mesh_idx].as_mut(),
+            &mesh_scale,
+            MeshGeometryFlags::empty(),
+        );
+        let transform = to_px_transform(Vec3::ZERO, Quat::IDENTITY);
+        match self.foundation.create_rigid_static(transform, &geo, material.as_mut(), PxTransform::default(), ()) {
+            Some(actor) => self.scene.add_static_actor(actor),
+            None => {
+                log::warn!("rigid_physics: walk_area on '{}' failed to create static actor", obj.id);
+                return;
+            }
+        }
+        self.materials.push(material);
+        log::info!(
+            "rigid_physics: walk_area '{}' cooked -- {} vertices, {} triangles ({} fence quads)",
+            obj.id,
+            points.len(),
+            indices.len() / 3,
+            mesh.fence.len()
+        );
+    }
+
     pub(crate) fn spawn_terrain_colliders(&mut self, obj: &GameObject, def: &TerrainColliderDef, game_dir: &Path) {
         let Some(mesh_ref) = &obj.mesh else {
             log::warn!(

@@ -363,6 +363,12 @@ impl PhysicsWorld {
             self.spawn_scene_terrain(source.as_ref());
         }
 
+        // After the terrain is loaded: a walk mat drapes over its heights.
+        for obj in &scene.objects {
+            let Some(def) = &obj.walk_area else { continue };
+            self.spawn_walk_area(obj, def, terrain.as_deref());
+        }
+
         // By the same heightfield the ground collider was cooked from, and by
         // the drawn surface's own rule (see `WaterFootprint`).
         self.water = scene

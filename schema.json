@@ -139,6 +139,23 @@
       ]
     },
     {
+      "name": "walk_area",
+      "rust_type": "WalkAreaDef",
+      "cardinality": "optional",
+      "fields": [
+        {
+          "name": "fence_height",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "lift",
+          "kind": "number",
+          "optional": false
+        }
+      ]
+    },
+    {
       "name": "lights",
       "rust_type": "LightDef",
       "cardinality": "list"
@@ -437,6 +454,7 @@
     "slider_joint",
     "door",
     "terrain_collider",
+    "walk_area",
     "lights",
     "sound",
     "particle_emitter",

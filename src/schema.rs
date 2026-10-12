@@ -136,6 +136,9 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "slider_joint",
         "door",
         "terrain_collider",
+        // Also skip_serializing_if, like `brush`: a default object carries it
+        // nowhere, but a mat that exists serializes here.
+        "walk_area",
         "lights",
         "sound",
         "particle_emitter",
@@ -176,6 +179,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
                 Optional,
                 terrain_collider_fields()
             ),
+            comp!(walk_area, "WalkAreaDef", Optional, walk_area_fields()),
             comp!(lights, "LightDef", List),
             comp!(sound, "SoundSourceDef", Optional, sound_fields()),
             comp!(
@@ -252,6 +256,14 @@ fn sound_fields() -> Vec<FieldDescriptor> {
         field!(directional, Bool),
         field!(cone_angle_deg, Number),
     ]
+}
+
+fn walk_area_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables)]
+    fn exhaustive(w: crate::walk_area::WalkAreaDef) {
+        let crate::walk_area::WalkAreaDef { fence_height, lift, flat: _, bumps: _ } = w;
+    }
+    vec![field!(fence_height, Number), field!(lift, Number)]
 }
 
 fn terrain_collider_fields() -> Vec<FieldDescriptor> {
@@ -413,6 +425,7 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         slider_joint,
         door,
         terrain_collider,
+        walk_area,
         prop,
         selector,
         lights,
@@ -458,7 +471,7 @@ mod tests {
 
     #[test]
     fn schema_has_every_authorable_component() {
-        assert_eq!(game_object_schema().components.len(), 28);
+        assert_eq!(game_object_schema().components.len(), 29);
     }
 
     /// `field_order` is consumed by a writer in another language, so a drift
@@ -494,6 +507,8 @@ mod tests {
             "effect",
             // Nor one without doors.
             "door",
+            // Nor one without walk mats.
+            "walk_area",
         ];
         let expected: Vec<&str> = game_object_field_order()
             .into_iter()
@@ -577,7 +592,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 28);
+        assert_eq!(v["components"].as_array().unwrap().len(), 29);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }
