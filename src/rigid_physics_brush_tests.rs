@@ -295,3 +295,84 @@ fn the_shipped_hallway_is_walked_through_on_its_floor() {
     assert!(loco.player_offset.x > 13.5, "stopped on the way, at {:?}", loco.player_offset);
     assert!(highest < 0.01, "left the floor on the way through, reaching y = {highest}");
 }
+
+/// THE CAVE, WALKED: from the beach in at its front mouth, through the
+/// chamber and out of the back, on the level's own files (`GAME_DIR`, or the
+/// shipped game). The player's height is two rays and an instant snap, so the
+/// floor has to be one surface across each join -- the terrain, the ground
+/// the cave's bake put back in its cells, the cave's rock -- or the view
+/// jolts at it. Measured in 2 cm steps: the walk arrives, never falls through,
+/// and no step moves the player's height by more than a low kerb's worth.
+///
+/// Skips on a level whose cave is not a baked distance-field cave (no terrain
+/// patch beside the hole mask).
+#[test]
+fn the_baked_cave_is_walked_through_without_a_jolt() {
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let game = std::env::var("GAME_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../game").to_string());
+    let game = Path::new(&game);
+    let Ok(scene) = Scene::load(&game.join("scenes/test_room.json")) else {
+        eprintln!("skipped: no test_room");
+        return;
+    };
+    let patched = scene
+        .terrain
+        .as_ref()
+        .and_then(|t| t.holes.as_ref())
+        .is_some_and(|h| game.join(crate::terrain::ground_patch_path(&h.path)).is_file());
+    // `CAVE_WALK_ANY=1` walks an older cave too, for the number to compare.
+    if !patched && std::env::var("CAVE_WALK_ANY").is_err() {
+        eprintln!("skipped: this level's cave is not a baked distance-field cave");
+        return;
+    }
+    let mut physics = PhysicsWorld::new();
+    physics.rebuild(&scene, game);
+
+    // The bench views' own eyes, front to back (`quest_app/bench_views.json`).
+    let way = [(12.5, 35.0), (18.0, 33.4), (19.6, 33.3), (26.0, 33.5), (31.5, 33.6), (35.5, 35.5)];
+    let mut loco = Locomotion::new(LocomotionMode::Smooth);
+    let y0 = physics.raycast_down(Vec3::new(way[0].0, 20.0, way[0].1), 40.0).expect("the beach is under the start").0.y;
+    loco.player_offset = Vec3::new(way[0].0, y0, way[0].1);
+    let (mut worst_step, mut worst_at, mut lowest, mut steps) = (0f32, Vec3::ZERO, f32::MAX, 0u32);
+    // Where a ray straight down from chest height found no floor within four
+    // metres: a gap at a join, or a collider that is not there.
+    let mut holes = Vec::new();
+    for leg in way.windows(2) {
+        let (from, to) = (Vec3::new(leg[0].0, 0.0, leg[0].1), Vec3::new(leg[1].0, 0.0, leg[1].1));
+        let n = ((to - from).length() / 0.02).ceil() as usize;
+        for i in 1..=n {
+            let start = loco.collision_start(head_at(&loco, Vec3::ZERO));
+            let before = loco.player_offset.y;
+            let target = from + (to - from) * (i as f32 / n as f32);
+            loco.player_offset.x = target.x;
+            loco.player_offset.z = target.z;
+            loco.apply_collision(&physics, start);
+            let step = (loco.player_offset.y - before).abs();
+            if step > worst_step {
+                worst_step = step;
+                worst_at = loco.player_offset;
+            }
+            lowest = lowest.min(loco.player_offset.y);
+            steps += 1;
+            let p = loco.player_offset;
+            if physics.raycast_down(p + Vec3::Y * 1.2, 4.0).is_none() {
+                holes.push((p.x, p.z));
+            }
+        }
+    }
+    let end = loco.player_offset;
+    eprintln!(
+        "cave walk: {steps} steps of 2 cm, ended at {end:.2}; the largest change of height in one step {:.1} mm (at {worst_at:.2}); lowest {lowest:.2} m; {} rays with no floor",
+        worst_step * 1000.0,
+        holes.len(),
+    );
+    assert!(holes.is_empty(), "no floor under {:?}", &holes[..holes.len().min(5)]);
+    assert!((end.x - 35.5).abs() < 0.3 && (end.z - 35.5).abs() < 0.3, "stopped on the way, at {end:?}");
+    assert!(lowest > -3.0, "fell through the floor, to y = {lowest}");
+    // A kerb's worth: the sculpt's own floor may end a few centimetres above
+    // the ground it runs out onto (7.4 cm at the shipped cave's back mouth,
+    // 2026-10-13 -- a ledge in the sculpt, the same surface on both sides).
+    // A join that did not meet would be a fall, or a step of the lip's depth
+    // at every crossing.
+    assert!(worst_step < 0.10, "the floor jolts {:.1} cm in one 2 cm step at {worst_at:?}", worst_step * 100.0);
+}

@@ -106,6 +106,11 @@ pub struct TerrainPatch {
     pub positions: Vec<Vec3>,
     /// Triangle indices into `positions`.
     pub indices: Vec<u32>,
+    /// A normal the ground was AUTHORED with at a vertex, entry for entry with
+    /// `positions`; zero where there is none and a consumer computes its own
+    /// from the triangles. Empty when no vertex has one (every heightfield
+    /// without a [`GroundPatch`]).
+    pub normals: Vec<Vec3>,
 }
 
 /// Where terrain geometry comes from.
@@ -146,6 +151,9 @@ pub struct Heightfield {
     /// worst bugs a level can have. One source of truth makes that
     /// unrepresentable rather than merely unlikely.
     holes: Option<HoleMask>,
+    /// Ground a cave bake put back inside the cells it holed. On the source
+    /// for the reason the holes are: see [`GroundPatch`].
+    ground_patch: Option<GroundPatch>,
 }
 
 impl Heightfield {
@@ -174,7 +182,7 @@ impl Heightfield {
         if !(size[0] > 0.0 && size[1] > 0.0) {
             return Err(format!("heightfield size {size:?} must be positive"));
         }
-        Ok(Self { samples, resolution, size, height_range, origin, holes: None })
+        Ok(Self { samples, resolution, size, height_range, origin, holes: None, ground_patch: None })
     }
 
     /// Decode little-endian u16 pairs, as written by every terrain tool and by
@@ -355,6 +363,51 @@ impl TerrainSource for Heightfield {
                 }
             }
         }
+
+        // THE GROUND A CAVE PUT BACK, in the cells it holed: the same triangles
+        // for the renderer and for physics, as the grid's are. A vertex of it
+        // that IS a sample of the grid is the grid's own vertex here, by index,
+        // so whoever computes normals from these triangles gets one normal
+        // there for both sides of the join.
+        if let Some(extra) = &self.ground_patch {
+            let inside = |p: Vec3| p.x >= region.min.x && p.x <= region.max.x && p.z >= region.min.z && p.z <= region.max.z;
+            let mut mapped: Vec<Option<u32>> = vec![None; extra.positions.len()];
+            for tri in extra.indices.chunks_exact(3) {
+                let corners = [0, 1, 2].map(|k| extra.positions[tri[k] as usize]);
+                if !inside((corners[0] + corners[1] + corners[2]) / 3.0) {
+                    continue;
+                }
+                for &i in tri {
+                    let i = i as usize;
+                    let at = match mapped[i] {
+                        Some(at) => at,
+                        None => {
+                            let p = extra.positions[i];
+                            let on_grid = self.sample_index_at(p).and_then(|(ix, iz)| {
+                                let col = xs.binary_search(&ix).ok()?;
+                                let row = zs.binary_search(&iz).ok()?;
+                                Some(row as u32 * stride + col as u32)
+                            });
+                            let at = on_grid.unwrap_or_else(|| {
+                                patch.positions.push(p);
+                                (patch.positions.len() - 1) as u32
+                            });
+                            let n = extra.normals.get(i).copied().unwrap_or(Vec3::ZERO);
+                            if on_grid.is_none() && n != Vec3::ZERO {
+                                patch.normals.resize(patch.positions.len(), Vec3::ZERO);
+                                patch.normals[at as usize] = n;
+                            }
+                            mapped[i] = Some(at);
+                            at
+                        }
+                    };
+                    patch.indices.push(at);
+                }
+            }
+            if !patch.normals.is_empty() {
+                patch.normals.resize(patch.positions.len(), Vec3::ZERO);
+            }
+        }
         patch
     }
 }
@@ -401,7 +454,25 @@ pub fn load(def: &TerrainDef, game_dir: &std::path::Path) -> Result<Box<dyn Terr
                 }
                 None => None,
             };
-            Ok(Box::new(field.with_holes(holes)))
+            // The ground the caves put back in those holes, BESIDE the mask by
+            // name (`terrain/x.holes` -> `terrain/x.patch`): written by the
+            // same bake that opens the cells, and loaded here for the reason
+            // the mask is. Absent on a level whose holes are plain openings.
+            let ground_patch = match &def.holes {
+                Some(h) => {
+                    let patch_path = game_dir.join(ground_patch_path(&h.path));
+                    match std::fs::read(&patch_path) {
+                        Ok(bytes) => Some(
+                            GroundPatch::from_bytes(&bytes)
+                                .map_err(|e| format!("terrain patch {}: {e}", patch_path.display()))?,
+                        ),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(e) => return Err(format!("failed to read terrain patch {}: {e}", patch_path.display())),
+                    }
+                }
+                None => None,
+            };
+            Ok(Box::new(field.with_holes(holes).with_ground_patch(ground_patch)))
         }
     }
 }
@@ -1226,6 +1297,88 @@ pub struct HoleDef {
     pub resolution: [u32; 2],
 }
 
+/// Where a scene's terrain patch lives, given its hole mask's path: beside it.
+pub fn ground_patch_path(holes_path: &str) -> std::path::PathBuf {
+    std::path::Path::new(holes_path).with_extension("patch")
+}
+
+/// GROUND A CAVE PUT BACK inside the terrain cells it took.
+///
+/// A hole in a heightfield is whole cells, so a mouth cut by a sculpt leaves a
+/// stepped outline with nothing in it but the cave's own rock. The cave bake
+/// (`scene_editor_web/frontend/src/lib/sdfBake.js`) therefore OWNS the cells
+/// round a mouth: it opens them in the mask and hands back, here, the part of
+/// their ground the sculpt did not touch -- meshed with the cave, so it meets
+/// the carved rock along the carve's own line, and ending on the cells'
+/// outline at the heightfield's own samples, bit for bit.
+///
+/// It is TERRAIN: `patch` appends it to the grid's triangles, so it is drawn
+/// by the terrain's shader with the terrain's maps and cooked into the
+/// terrain's collider. Nothing joins two materials at the stepped outline;
+/// the join with the cave's rock is at the carve.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GroundPatch {
+    /// World positions.
+    pub positions: Vec<Vec3>,
+    /// A normal per position: the sculpt's gradient, or ZERO at a vertex that
+    /// is one of the heightfield's samples (its normal is the terrain's).
+    pub normals: Vec<Vec3>,
+    pub indices: Vec<u32>,
+}
+
+impl GroundPatch {
+    const MAGIC: &'static [u8; 4] = b"SSTP";
+    const VERSION: u32 = 1;
+
+    /// Every section of a `.patch` file as one patch: a section a cave, each
+    /// `name, vertex count, index count, positions, normals, indices`
+    /// (`sdfBakeGlb.js::serializeTerrainPatch`).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let u32_at = |o: usize| -> Result<u32, String> {
+            bytes.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).ok_or_else(|| "truncated".to_string())
+        };
+        if bytes.len() < 12 || &bytes[0..4] != Self::MAGIC {
+            return Err("not a terrain patch (bad magic)".into());
+        }
+        if u32_at(4)? != Self::VERSION {
+            return Err(format!("version {} is not {}", u32_at(4)?, Self::VERSION));
+        }
+        let sections = u32_at(8)?;
+        let mut out = Self::default();
+        let mut o = 12usize;
+        for _ in 0..sections {
+            let name = bytes.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize).ok_or("truncated")?;
+            o += 2 + name;
+            o += (4 - o % 4) % 4;
+            let (nv, ni) = (u32_at(o)? as usize, u32_at(o + 4)? as usize);
+            o += 8;
+            let need = nv.checked_mul(24).and_then(|v| ni.checked_mul(4).map(|i| v + i)).ok_or("section too large")?;
+            if bytes.len() < o + need {
+                return Err("truncated".into());
+            }
+            let f32_at = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+            let vec_at = |o: usize| Vec3::new(f32_at(o), f32_at(o + 4), f32_at(o + 8));
+            let base = out.positions.len() as u32;
+            out.positions.extend((0..nv).map(|i| vec_at(o + i * 12)));
+            out.normals.extend((0..nv).map(|i| vec_at(o + nv * 12 + i * 12)));
+            o += nv * 24;
+            for i in 0..ni {
+                let idx = u32_at(o + i * 4)?;
+                if idx as usize >= nv {
+                    return Err(format!("index {idx} past {nv} vertices"));
+                }
+                out.indices.push(base + idx);
+            }
+            o += ni * 4;
+        }
+        out.indices.truncate(out.indices.len() / 3 * 3);
+        if out.positions.iter().chain(&out.normals).any(|p| !p.is_finite()) {
+            return Err("a position or normal is not finite".into());
+        }
+        Ok(out)
+    }
+}
+
 fn iz_at(zs: &[u32], row: u32) -> u32 {
     zs[(row as usize).min(zs.len() - 1)]
 }
@@ -1242,6 +1395,31 @@ impl Heightfield {
         self.holes.as_ref()
     }
 
+    /// Attach the ground a cave put back in its holes. Consumed by `patch`, so
+    /// it is drawn and collided with together.
+    pub fn with_ground_patch(mut self, patch: Option<GroundPatch>) -> Self {
+        self.ground_patch = patch.filter(|p| !p.indices.is_empty());
+        self
+    }
+
+    pub fn ground_patch(&self) -> Option<&GroundPatch> {
+        self.ground_patch.as_ref()
+    }
+
+    /// The sample `p` IS, if it is one: its x, z and height the grid's own, to
+    /// the bit. A patch's vertices on the outline of its cells are written
+    /// from the same arithmetic as [`Self::world_position`].
+    fn sample_index_at(&self, p: Vec3) -> Option<(u32, u32)> {
+        let (dx, dz) = self.step_metres();
+        let ix = ((p.x - self.origin.x) / dx).round();
+        let iz = ((p.z - self.origin.z) / dz).round();
+        if ix < 0.0 || iz < 0.0 || ix > (self.resolution[0] - 1) as f32 || iz > (self.resolution[1] - 1) as f32 {
+            return None;
+        }
+        let (ix, iz) = (ix as u32, iz as u32);
+        (self.world_position(ix, iz) == p).then_some((ix, iz))
+    }
+
     /// Whether a world x/z sits over an open cell.
     ///
     /// Public because gameplay needs it for the same reason the mesher does: a
@@ -1255,6 +1433,166 @@ impl Heightfield {
             return false;
         }
         mask.is_open_uv(u, v)
+    }
+}
+
+#[cfg(test)]
+mod ground_patch_tests {
+    use super::*;
+
+    /// A field of 5 x 5 samples a metre apart, sloping in x and z so no two
+    /// samples share a height, with its middle cell open.
+    fn field() -> Heightfield {
+        let mut samples = vec![0u16; 25];
+        for iz in 0..5u32 {
+            for ix in 0..5u32 {
+                samples[(iz * 5 + ix) as usize] = (ix * 3000 + iz * 5000 + (ix * iz) * 700) as u16;
+            }
+        }
+        let mut mask = HoleMask::solid([4, 4]);
+        mask.set_open(1, 1, true);
+        Heightfield::new(samples, [5, 5], [4.0, 4.0], [-1.0, 9.0], Vec3::new(-2.0, 0.5, 3.0)).unwrap().with_holes(Some(mask))
+    }
+
+    /// The open cell filled by a fan round a vertex in its middle: four
+    /// corners written as the grid writes them, and one of the patch's own.
+    fn fan(field: &Heightfield) -> GroundPatch {
+        let c = [field.world_position(1, 1), field.world_position(2, 1), field.world_position(2, 2), field.world_position(1, 2)];
+        let mid = (c[0] + c[1] + c[2] + c[3]) / 4.0 + Vec3::new(0.0, -0.2, 0.0);
+        GroundPatch {
+            positions: vec![c[0], c[1], c[2], c[3], mid],
+            normals: vec![Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0)],
+            // Counter-clockwise seen from above, as the grid's: (x, z) -> (z, x) turn.
+            indices: vec![0, 3, 4, 3, 2, 4, 2, 1, 4, 1, 0, 4],
+        }
+    }
+
+    fn open_edges(indices: &[u32]) -> usize {
+        let mut count: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+        for t in indices.chunks_exact(3) {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        count.values().filter(|c| **c == 1).count()
+    }
+
+    #[test]
+    fn the_patch_closes_the_hole_on_the_grids_own_vertices() {
+        let holed = field();
+        let before = holed.patch(holed.bounds(), 1);
+        assert_eq!(before.positions.len(), 25);
+        // The field's rim, and the four edges of the hole.
+        assert_eq!(open_edges(&before.indices), 16 + 4);
+        assert!(before.normals.is_empty(), "no patch: nothing is authored");
+
+        let patched = { let f = field(); let p = fan(&f); f.with_ground_patch(Some(p)) };
+        let after = patched.patch(patched.bounds(), 1);
+        assert_eq!(after.positions.len(), 26, "four corners are the grid's own; one vertex is new");
+        assert_eq!(after.indices.len(), before.indices.len() + 12);
+        assert_eq!(open_edges(&after.indices), 16, "the hole's four edges are shared: the step across them is nothing");
+        assert_eq!(after.normals.len(), 26);
+        assert_eq!(after.normals.iter().filter(|n| **n != Vec3::ZERO).count(), 1, "only the patch's own vertex has an authored normal");
+        assert_eq!(after.normals[25], Vec3::Y);
+        // Wound as the grid is: every triangle faces up.
+        for t in after.indices.chunks_exact(3) {
+            let [a, b, c] = [0, 1, 2].map(|k| after.positions[t[k] as usize]);
+            assert!((b - a).cross(c - a).y > 0.0);
+        }
+    }
+
+    #[test]
+    fn a_corner_that_is_not_the_grids_to_the_bit_is_not_welded() {
+        let f = field();
+        let mut p = fan(&f);
+        p.positions[0].y += 1e-5;
+        let patched = f.with_ground_patch(Some(p));
+        let after = patched.patch(patched.bounds(), 1);
+        assert_eq!(after.positions.len(), 27, "a near miss is a second vertex, and a crack a test can count");
+        assert_eq!(open_edges(&after.indices), 16 + 4);
+    }
+
+    #[test]
+    fn a_region_takes_only_the_patch_triangles_inside_it() {
+        let f = field();
+        let p = fan(&f);
+        let patched = f.with_ground_patch(Some(p));
+        let b = patched.bounds();
+        let far = Aabb { min: Vec3::new(b.max.x - 1.0, b.min.y, b.max.z - 1.0), max: b.max };
+        let corner = patched.patch(far, 1);
+        assert_eq!(corner.indices.len(), 6, "one cell of grid, none of the patch");
+        assert!(corner.normals.is_empty());
+        // A coarse step keeps the patch whole, on vertices of its own where the grid's are skipped.
+        let coarse = patched.patch(b, 2);
+        assert_eq!(coarse.indices.len() % 3, 0);
+        assert!(coarse.indices.iter().all(|i| (*i as usize) < coarse.positions.len()));
+    }
+
+    fn bytes(sections: &[(&str, &GroundPatch)]) -> Vec<u8> {
+        let mut out = b"SSTP".to_vec();
+        out.extend(1u32.to_le_bytes());
+        out.extend((sections.len() as u32).to_le_bytes());
+        for (name, p) in sections {
+            out.extend((name.len() as u16).to_le_bytes());
+            out.extend(name.as_bytes());
+            while out.len() % 4 != 0 {
+                out.push(0);
+            }
+            out.extend((p.positions.len() as u32).to_le_bytes());
+            out.extend((p.indices.len() as u32).to_le_bytes());
+            for v in p.positions.iter().chain(&p.normals) {
+                for c in v.to_array() {
+                    out.extend(c.to_le_bytes());
+                }
+            }
+            for i in &p.indices {
+                out.extend(i.to_le_bytes());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_file_reads_back_every_section_as_one_patch() {
+        let f = field();
+        let p = fan(&f);
+        assert_eq!(GroundPatch::from_bytes(&bytes(&[("cave", &p)])).unwrap(), p);
+        let two = GroundPatch::from_bytes(&bytes(&[("a", &p), ("another_cave", &p)])).unwrap();
+        assert_eq!(two.positions.len(), 10);
+        assert_eq!(two.indices[12..], p.indices.iter().map(|i| i + 5).collect::<Vec<_>>()[..]);
+        assert!(GroundPatch::from_bytes(b"nope").is_err());
+        let whole = bytes(&[("cave", &p)]);
+        assert!(GroundPatch::from_bytes(&whole[..whole.len() - 3]).is_err(), "a truncated file is refused, not half read");
+        let mut bad = p.clone();
+        bad.indices[0] = 99;
+        assert!(GroundPatch::from_bytes(&bytes(&[("cave", &bad)])).is_err());
+    }
+
+    #[test]
+    fn a_scene_loads_the_patch_beside_its_hole_mask_and_none_when_there_is_none() {
+        let dir = std::env::temp_dir().join(format!("ss_ground_patch_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("terrain")).unwrap();
+        let f = field();
+        let p = fan(&f);
+        std::fs::write(dir.join("terrain/t.r16"), f.samples.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+        std::fs::write(dir.join("terrain/t.holes"), f.holes().unwrap().to_bytes()).unwrap();
+        let def: TerrainDef = serde_json::from_str(
+            r#"{"origin":[-2.0,0.5,3.0],"holes":{"path":"terrain/t.holes","resolution":[4,4]},
+                "kind":"heightfield","path":"terrain/t.r16","resolution":[5,5],"size":[4.0,4.0],"height_range":[-1.0,9.0]}"#,
+        )
+        .expect("a terrain def");
+        let without = load(&def, &dir).unwrap();
+        assert_eq!(without.patch(without.bounds(), 1).positions.len(), 25);
+        std::fs::write(dir.join("terrain/t.patch"), bytes(&[("cave", &p)])).unwrap();
+        let with = load(&def, &dir).unwrap();
+        let patch = with.patch(with.bounds(), 1);
+        assert_eq!(patch.positions.len(), 26);
+        assert_eq!(open_edges(&patch.indices), 16);
+        // A damaged patch is an error naming the file, not ground silently missing.
+        std::fs::write(dir.join("terrain/t.patch"), b"SSTPxx").unwrap();
+        assert!(load(&def, &dir).err().unwrap().contains("t.patch"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
