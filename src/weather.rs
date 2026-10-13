@@ -331,6 +331,35 @@ pub struct WeatherGround {
     snow_hold: Vec<f32>,
     /// `WeatherDef::edge_fade` at each texel.
     fade: Vec<f32>,
+    /// How much of the area's wetness each texel does without, 0 to
+    /// [`THIRST_MOST`]: see [`thirst`].
+    thirst: Vec<f32>,
+}
+
+/// The most of an area's wetness a ridge or a slope goes without.
+pub const THIRST_MOST: f32 = 0.5;
+/// Slope, degrees, where ground starts to shed its water, and where it sheds
+/// the most.
+pub const THIRST_SLOPE_DEG: (f32, f32) = (8.0, 25.0);
+
+/// WHERE AN AREA'S WETNESS SHOWS. Rain wets ground evenly, but water does not
+/// stay evenly: it drains off slopes and off the crowns of the ground's own
+/// relief into the hollows beside them, so as an area wets its hollows darken
+/// first, and as it dries its ridges pale first and its hollows last, in
+/// patches a metre or so across. One number a texel, fixed at load, taken from
+/// the area's wetness before it is shown ([`surface`]): nothing in a hollow
+/// (where water would stand) or on flat ground, up to [`THIRST_MOST`] on a
+/// slope of `THIRST_SLOPE_DEG.1` or on a crown standing `relief` over the
+/// ground round it. A soaked area is soaked everywhere.
+pub fn thirst(slope_deg: f32, proud: f32, relief: f32, in_hollow: bool) -> f32 {
+    if in_hollow {
+        return 0.0;
+    }
+    let (s0, s1) = THIRST_SLOPE_DEG;
+    let t = ((slope_deg - s0) / (s1 - s0)).clamp(0.0, 1.0);
+    let steep = t * t * (3.0 - 2.0 * t);
+    let crown = if relief > 0.0 { (proud / relief).clamp(0.0, 1.0) } else { 0.0 };
+    THIRST_MOST * steep.max(crown)
 }
 
 fn hash2(x: i32, z: i32, seed: u32) -> f32 {
@@ -501,11 +530,24 @@ impl WeatherGround {
         // Snow by slope, from the cover's own gradient; drifted a little.
         let at = |x: usize, z: usize| cover[z.min(nz - 1) * nx + x.min(nx - 1)];
         let mut snow_hold = Vec::with_capacity(cover.len());
+        let mut dry_first = Vec::with_capacity(cover.len());
+        let relief_at = |x: isize, z: isize| relief[z.clamp(0, nz as isize - 1) as usize * nx + x.clamp(0, nx as isize - 1) as usize];
         for z in 0..nz {
             for x in 0..nx {
                 let gx = (at(x + 1, z) - at(x.saturating_sub(1), z)) / (cx * (1 + (x > 0) as usize) as f32);
                 let gz = (at(x, z + 1) - at(x, z.saturating_sub(1))) / (cz * (1 + (z > 0) as usize) as f32);
                 let slope = (gx * gx + gz * gz).sqrt().atan().to_degrees();
+                // How far this texel stands over the ground a step round it
+                // (the mean of a 5 x 5 block), and whether water stands on it.
+                let i = z * nx + x;
+                let mut round = 0.0;
+                for dz in -2..=2isize {
+                    for dx in -2..=2isize {
+                        round += relief_at(x as isize + dx, z as isize + dz);
+                    }
+                }
+                let in_hollow = floor[i].is_finite() && spill[i] - relief[i] > 1e-5;
+                dry_first.push(thirst(slope, relief[i] - round / 25.0, 0.5 * def.ground_relief.max(0.0), in_hollow));
                 let (s0, s1) = SNOW_HOLD_DEG;
                 let t = ((slope - s0) / (s1 - s0)).clamp(0.0, 1.0);
                 let hold = 1.0 - t * t * (3.0 - 2.0 * t);
@@ -514,7 +556,38 @@ impl WeatherGround {
                 snow_hold.push(hold * drift);
             }
         }
-        Self { min: [x0, z0], cell: cx.max(cz), nx, nz, cover, relief, spill, floor, snow_hold, fade }
+        Self { min: [x0, z0], cell: cx.max(cz), nx, nz, cover, relief, spill, floor, snow_hold, fade, thirst: dry_first }
+    }
+
+    /// Whether water can stand anywhere in the world rectangle `lo`..`hi`
+    /// (x, z), a texel beyond it included for the map's filtering: some
+    /// hollow there holds more than the least a puddle is drawn at. What
+    /// decides whether ground there needs the standing water's shader at all
+    /// (`space_soup::renderer::weather::WeatherKinds`).
+    pub fn can_pool(&self, def: &WeatherDef, lo: [f32; 2], hi: [f32; 2]) -> bool {
+        if def.max_puddle_depth <= 0.0 {
+            return false;
+        }
+        let (cx, cz) = (self.extent_x() / self.nx as f32, self.extent_z() / self.nz as f32);
+        let x0 = (((lo[0] - self.min[0]) / cx).floor() as isize - 1).max(0) as usize;
+        let z0 = (((lo[1] - self.min[1]) / cz).floor() as isize - 1).max(0) as usize;
+        let x1 = (((hi[0] - self.min[0]) / cx).floor() as isize + 1).min(self.nx as isize - 1);
+        let z1 = (((hi[1] - self.min[1]) / cz).floor() as isize + 1).min(self.nz as isize - 1);
+        if x1 < x0 as isize || z1 < z0 as isize {
+            return false;
+        }
+        (z0..=z1 as usize).any(|z| {
+            (x0..=x1 as usize).any(|x| {
+                let i = z * self.nx + x;
+                self.floor[i].is_finite() && self.fade[i] > 0.0 && (self.spill[i] - self.relief[i]).min(def.max_puddle_depth) * self.fade[i] > 3e-4
+            })
+        })
+    }
+
+    /// How much of its area's wetness the texel holding world x/z goes
+    /// without ([`thirst`]); `None` outside.
+    pub fn thirst_at(&self, x: f32, z: f32) -> Option<f32> {
+        self.texel(x, z).map(|i| self.thirst[i])
     }
 
     /// The texel holding world x/z, if inside.
@@ -578,8 +651,12 @@ pub fn surface(def: &WeatherDef, ground: &WeatherGround, state: &WeatherState) -
         .map(|i| {
             let f = ground.fade[i];
             let puddle = ground.puddle_depth(i, state.fill, max_puddle) * f;
+            // Ridges and slopes show less of it, and none until the area is
+            // wetter than they are thirsty (`thirst`); soaked is soaked.
+            let thirst = ground.thirst[i];
+            let open = ((state.wet.min(max_wet) - thirst) / (1.0 - thirst)).clamp(0.0, 1.0);
             // A puddle's rim is soaked however dry the open ground has got.
-            let wet = (state.wet.min(max_wet) * f).max((puddle / 0.002).min(1.0) * f);
+            let wet = (open * f).max((puddle / 0.002).min(1.0) * f);
             let snow = (state.snow * ground.snow_hold[i]).clamp(0.0, max_snow) * f;
             [wet, puddle, snow, ground.cover[i]]
         })
@@ -797,6 +874,51 @@ mod tests {
         field.set_time(10.0);
         assert_eq!(field.falling_on([8.0, 1.6, 8.0]).0, 0.0, "no rain on a head under the roof");
         assert!(field.falling_on([3.0, 1.6, 8.0]).0 > 0.9);
+    }
+
+    /// A crown of the ground's relief and a slope show less of the area's
+    /// wetness than a hollow or a flat, wet later and dry first; soaked ground
+    /// is soaked everywhere, and dry is dry.
+    #[test]
+    fn ridges_and_slopes_wet_last_and_dry_first() {
+        assert_eq!(thirst(0.0, -0.01, 0.02, false), 0.0);
+        assert_eq!(thirst(40.0, 0.05, 0.02, true), 0.0, "water stands in a hollow");
+        assert!((thirst(25.0, 0.0, 0.02, false) - THIRST_MOST).abs() < 1e-6);
+        assert!((thirst(0.0, 0.02, 0.02, false) - THIRST_MOST).abs() < 1e-6);
+        assert!(thirst(15.0, 0.0, 0.02, false) > 0.0 && thirst(15.0, 0.0, 0.02, false) < THIRST_MOST);
+        // An area on a hillside with a level foot: the slope is drier than
+        // the foot while the area is half wet, and no drier once it is soaked.
+        let def = WeatherDef { ground_relief: 0.0, edge: 0.01, ..rain() };
+        let hill = |x: f32, _z: f32| Some(if x > 10.0 { (x - 10.0) * 0.5 } else { 0.0 });
+        let ground = WeatherGround::build(&def, hill);
+        let (foot, slope) = (ground.texel(5.0, 10.0).unwrap(), ground.texel(15.0, 10.0).unwrap());
+        assert_eq!(ground.thirst_at(5.0, 10.0), Some(0.0));
+        assert!((ground.thirst_at(15.0, 10.0).unwrap() - THIRST_MOST).abs() < 1e-3, "{:?}", ground.thirst_at(15.0, 10.0));
+        let at = |wet: f32| {
+            let m = surface(&def, &ground, &WeatherState { wet, ..Default::default() });
+            (m[foot][0], m[slope][0])
+        };
+        let (f, s) = at(0.75);
+        assert!((f - 0.75).abs() < 1e-3 && (s - 0.5).abs() < 1e-3, "foot {f}, slope {s}");
+        assert_eq!(at(0.4).1, 0.0, "a slope shows nothing until the area is wetter than it is thirsty");
+        let (f, s) = at(1.0);
+        assert!((f - 1.0).abs() < 1e-3 && (s - 1.0).abs() < 1e-3, "soaked: foot {f}, slope {s}");
+        assert_eq!(at(0.0), (0.0, 0.0));
+    }
+
+    /// Whether a piece of an area needs the standing water's shader: only
+    /// where a hollow there can hold a puddle.
+    #[test]
+    fn only_ground_with_a_hollow_can_pool() {
+        let def = WeatherDef { ground_relief: 0.0, edge: 0.01, ..rain() };
+        // Level but for a bowl a metre across at (6, 6), 5 cm deep.
+        let bowl = |x: f32, z: f32| Some(if (x - 6.0).hypot(z - 6.0) < 0.6 { -0.05 } else { 0.0 });
+        let ground = WeatherGround::build(&def, bowl);
+        assert!(ground.can_pool(&def, [4.0, 4.0], [8.0, 8.0]));
+        assert!(!ground.can_pool(&def, [12.0, 12.0], [18.0, 18.0]));
+        // A texel beyond the rectangle counts: the map is filtered.
+        assert!(ground.can_pool(&def, [6.7, 5.5], [9.0, 6.5]));
+        assert!(!ground.can_pool(&WeatherDef { max_puddle_depth: 0.0, ..def.clone() }, [4.0, 4.0], [8.0, 8.0]));
     }
 
     #[test]
