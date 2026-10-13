@@ -384,6 +384,11 @@ impl WaterFootprint {
         })
     }
 
+    /// The still surface's height, where this water stands at all.
+    pub fn surface_height(&self) -> Option<f32> {
+        (self.wet.iter().any(|&w| w) || self.skirt > 0.0).then_some(self.height)
+    }
+
     /// The deepest of this water a walk goes into, metres.
     pub fn wade_depth(&self) -> f32 {
         self.wade
@@ -404,6 +409,81 @@ impl WaterFootprint {
         let a = iz * self.nx + ix;
         [a, a + 1, a + self.nx, a + self.nx + 1].iter().any(|&i| self.wet[i]).then_some(self.height)
     }
+}
+
+/// SOMETHING BREAKING A WATER SURFACE from above: what a splash is made by.
+/// Raised by [`WaterWatch::see`] for the bodies physics moves
+/// (`PhysicsWorld::take_water_entries`), and by the headset for what it only
+/// sees move; drawn by the renderer from these numbers alone
+/// (`space_soup::renderer::effects::Splash`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WaterEntry {
+    pub id: String,
+    /// Where it met the still surface, world.
+    pub position: glam::Vec3,
+    /// How it was moving as it did, m/s.
+    pub velocity: glam::Vec3,
+    /// The radius of a disc as big as its cross-section there, metres.
+    pub radius: f32,
+    pub mass: f32,
+}
+
+/// The slowest thing that splashes going in, m/s down: slower, it is lowered.
+pub const ENTRY_SPEED: f32 = 0.6;
+
+/// WHICH BODIES ARE IN THE WATER, so each going in is seen once.
+///
+/// A body is in from the moment its underside is at the surface until it has
+/// come clear of it again -- by a quarter of its own width, and no less than
+/// two centimetres. Without that, one floating at the waterline, bobbing a
+/// millimetre either way, went in again every time it dipped: a splash a
+/// tenth of a second, for as long as it floated.
+#[derive(Debug, Default, Clone)]
+pub struct WaterWatch {
+    /// Each body's underside when last seen, and whether it was in.
+    bodies: std::collections::HashMap<String, (f32, bool)>,
+}
+
+impl WaterWatch {
+    /// A body as it is now: its `centre`, the half extents of the box round
+    /// it along the world's axes, how it is moving and its mass; `surface`
+    /// the still water's height where it is, none over dry ground. Returns
+    /// its entry, on the step it goes in.
+    pub fn see(&mut self, id: &str, centre: glam::Vec3, half: glam::Vec3, velocity: glam::Vec3, mass: f32, surface: Option<f32>) -> Option<WaterEntry> {
+        let under = centre.y - half.y.abs();
+        let before = self.bodies.get(id).copied();
+        let Some(surface) = surface else {
+            self.bodies.insert(id.to_string(), (under, false));
+            return None;
+        };
+        let radius = (4.0 * half.x.abs() * half.z.abs() / std::f32::consts::PI).sqrt();
+        let clear = (0.5 * radius).max(0.02);
+        let was_in = before.is_some_and(|(_, was_in)| was_in);
+        let is_in = if was_in { under <= surface + clear } else { under <= surface };
+        self.bodies.insert(id.to_string(), (under, is_in));
+        // First seen already under, it was placed there, not dropped.
+        let came_down = before.is_some_and(|(was, was_in)| !was_in && was > surface);
+        (is_in && came_down && -velocity.y >= ENTRY_SPEED).then(|| WaterEntry {
+            id: id.to_string(),
+            position: glam::Vec3::new(centre.x, surface, centre.z),
+            velocity,
+            radius,
+            mass,
+        })
+    }
+
+    /// Forget every body not in `seen`.
+    pub fn keep(&mut self, seen: impl Fn(&str) -> bool) {
+        self.bodies.retain(|id, _| seen(id));
+    }
+}
+
+/// The half extents, along the world's axes, of the box round a box of
+/// `half_size` turned by `rotation`.
+pub fn world_half_extents(half_size: glam::Vec3, rotation: glam::Quat) -> glam::Vec3 {
+    let m = glam::Mat3::from_quat(rotation);
+    let h = half_size.abs();
+    m.x_axis.abs() * h.x + m.y_axis.abs() * h.y + m.z_axis.abs() * h.z
 }
 
 #[cfg(test)]
@@ -644,5 +724,49 @@ mod tests {
         let w = water();
         let text = serde_json::to_string(&w).unwrap();
         assert_eq!(serde_json::from_str::<WaterDef>(&text).unwrap(), w);
+    }
+
+    #[test]
+    fn a_body_going_in_is_seen_once_and_one_bobbing_at_the_surface_is_not_seen_again() {
+        use glam::Vec3;
+        let mut w = WaterWatch::default();
+        let half = Vec3::new(0.2, 0.1, 0.3);
+        let fall = Vec3::new(0.5, -4.0, 0.0);
+        let mut entries = Vec::new();
+        // Falling from above the surface (0) to under it.
+        for k in 0..20 {
+            let centre = Vec3::new(1.0, 1.0 - 0.1 * k as f32, 2.0);
+            entries.extend(w.see("box", centre, half, fall, 12.0, Some(0.0)));
+        }
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        let e = &entries[0];
+        assert!(e.position == Vec3::new(1.0, 0.0, 2.0) && e.velocity == fall && e.mass == 12.0);
+        // A disc as big as its 0.4 x 0.6 footprint.
+        assert!((std::f32::consts::PI * e.radius * e.radius - 0.24).abs() < 1e-4);
+        // Bobbing a centimetre either side of the surface: never again.
+        for k in 0..200 {
+            let centre = Vec3::new(1.0, 0.1 + 0.01 * (k as f32 * 0.7).sin(), 2.0);
+            assert!(w.see("box", centre, half, Vec3::new(0.0, -1.0, 0.0), 12.0, Some(0.0)).is_none());
+        }
+        // Lifted clear and dropped again: once more.
+        assert!(w.see("box", Vec3::new(1.0, 1.0, 2.0), half, Vec3::ZERO, 12.0, Some(0.0)).is_none());
+        assert!(w.see("box", Vec3::new(1.0, 0.05, 2.0), half, fall, 12.0, Some(0.0)).is_some());
+        // Lowered in slowly, placed under it to begin with, or over dry
+        // ground: nothing.
+        let mut w = WaterWatch::default();
+        assert!(w.see("a", Vec3::new(0.0, 1.0, 0.0), half, Vec3::ZERO, 1.0, Some(0.0)).is_none());
+        assert!(w.see("a", Vec3::new(0.0, 0.0, 0.0), half, Vec3::new(0.0, -0.2, 0.0), 1.0, Some(0.0)).is_none());
+        assert!(w.see("b", Vec3::new(0.0, -1.0, 0.0), half, fall, 1.0, Some(0.0)).is_none());
+        assert!(w.see("c", Vec3::new(0.0, 1.0, 0.0), half, fall, 1.0, None).is_none());
+        assert!(w.see("c", Vec3::new(0.0, -1.0, 0.0), half, fall, 1.0, None).is_none());
+        w.keep(|id| id == "a");
+        assert_eq!(w.bodies.len(), 1);
+    }
+
+    #[test]
+    fn a_turned_box_is_wider_along_the_worlds_axes() {
+        use glam::{Quat, Vec3};
+        let h = world_half_extents(Vec3::new(1.0, 0.1, 0.2), Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
+        assert!((h - Vec3::new(0.1, 1.0, 0.2)).length() < 1e-5, "{h:?}");
     }
 }

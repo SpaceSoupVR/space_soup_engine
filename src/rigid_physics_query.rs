@@ -198,7 +198,20 @@ impl PhysicsWorld {
             if let Some(obj) = scene.find_object_mut(id) {
                 obj.cuboid.position = pos;
                 obj.cuboid.rotation = rot;
+                // INTO THE WATER: seen as it goes in, with the speed and the
+                // mass physics has for it (`take_water_entries`).
+                if !self.water.is_empty() {
+                    let (v, mass) = unsafe { ((*state.ptr).get_linear_velocity(), (*state.ptr).get_mass()) };
+                    let half = crate::water::world_half_extents(obj.cuboid.half_size, rot);
+                    let surface = self.water.iter().filter_map(|w| w.surface_at(pos.x, pos.z)).reduce(f32::max);
+                    self.water_entries.extend(self.water_watch.see(id, pos, half, Vec3::new(v.x(), v.y(), v.z()), mass, surface));
+                }
             }
+        }
+        // Never more waiting than a busy second makes, if nobody takes them.
+        if self.water_entries.len() > 256 {
+            let extra = self.water_entries.len() - 256;
+            self.water_entries.drain(..extra);
         }
     }
 }
