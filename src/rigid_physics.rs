@@ -36,6 +36,12 @@ pub(crate) fn to_px_vec3(v: [f32; 3]) -> PxVec3 {
 
 pub(crate) const DEFAULT_DENSITY: f32 = 500.0;
 
+/// The mass physics gives a box of `half_size` with none authored: what a
+/// client that is told only a body's size takes it to weigh.
+pub fn default_mass(half_size: Vec3) -> f32 {
+    calculated_mass(half_size, DEFAULT_DENSITY)
+}
+
 pub(crate) fn calculated_mass(half_size: Vec3, density: f32) -> f32 {
     let volume = (half_size.x * 2.0) * (half_size.y * 2.0) * (half_size.z * 2.0);
     (volume * density).max(0.001)
@@ -149,6 +155,10 @@ pub struct PhysicsWorld {
     /// Where standing water lies. Not colliders -- water is waded through --
     /// but how deep it stands, so a walk stops before it is out of its depth.
     pub(crate) water: Vec<crate::water::WaterFootprint>,
+    /// Which bodies are in it, and those that went in since they were last
+    /// asked for (`take_water_entries`): what the splashes are raised from.
+    pub(crate) water_watch: crate::water::WaterWatch,
+    pub(crate) water_entries: Vec<crate::water::WaterEntry>,
 
     /// The doors, by object id: each one's leaf as it hangs. Their bodies are
     /// in `dynamic` like any other; this is the hinge they turn on, for the
@@ -235,6 +245,8 @@ impl PhysicsWorld {
 
             scratch: unsafe { ScratchBuffer::new(4) },
             water: Vec::new(),
+            water_watch: crate::water::WaterWatch::default(),
+            water_entries: Vec::new(),
             doors: HashMap::new(),
             door_hinges: HashMap::new(),
             terrain_meshes: Vec::new(),
@@ -247,6 +259,53 @@ impl PhysicsWorld {
     /// beach the waves run up.
     pub fn water_depth_at(&self, x: f32, z: f32, ground_y: f32) -> Option<f32> {
         self.water.iter().filter_map(|w| w.surface_at(x, z)).reduce(f32::max).map(|surface| surface - ground_y)
+    }
+
+    /// The still surface of the highest water standing over a world x/z.
+    pub fn water_surface_at(&self, x: f32, z: f32) -> Option<f32> {
+        self.water.iter().filter_map(|w| w.surface_at(x, z)).reduce(f32::max)
+    }
+
+    /// THE BODIES THAT WENT INTO THE WATER since this was last called: each
+    /// as it met the surface -- where, how fast and at what angle, how wide,
+    /// how heavy -- which is what its splash is drawn from
+    /// (`space_soup::renderer::effects::Splash`). Seen in [`Self::step`].
+    pub fn take_water_entries(&mut self) -> Vec<crate::water::WaterEntry> {
+        std::mem::take(&mut self.water_entries)
+    }
+
+    /// WHERE A SHOT MEETS WATER: the point where the ray from `origin` along
+    /// `dir` first crosses a still water surface within `max_distance`, if
+    /// nothing solid stops it first, and the water's depth there. What a
+    /// firearm asks before it raises a bullet's splash
+    /// (`effects::Splash::projectile`).
+    pub fn water_hit(&self, origin: Vec3, dir: Vec3, max_distance: f32) -> Option<(Vec3, f32)> {
+        let dir = dir.try_normalize()?;
+        if dir.y >= -1e-5 {
+            return None;
+        }
+        let solid = self.raycast(origin, dir, max_distance).map_or(max_distance, |(hit, _)| origin.distance(hit));
+        // Each body's own plane: the nearest crossing that lies on its water.
+        let mut heights: Vec<f32> = Vec::new();
+        for w in &self.water {
+            // A footprint's surface is one height wherever it stands.
+            let Some(h) = w.surface_height() else { continue };
+            if !heights.contains(&h) {
+                heights.push(h);
+            }
+        }
+        heights
+            .into_iter()
+            .filter_map(|h| {
+                let t = (h - origin.y) / dir.y;
+                let p = origin + dir * t;
+                (t > 0.0 && t <= solid && self.water_surface_at(p.x, p.z).is_some_and(|s| (s - h).abs() < 1e-4)).then_some((t, p))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, p)| {
+                let bed = self.raycast_down(p - Vec3::Y * 0.01, 60.0).map_or(30.0, |(hit, _)| p.y - hit.y);
+                (p, bed.max(0.0))
+            })
     }
 
     /// How far the water over a world x/z on ground at `ground_y` is deeper

@@ -443,6 +443,43 @@ pub struct SplatMap {
     resolution: [u32; 2],
 }
 
+/// How many texels beyond a sheer face its bare rock takes to fade back to
+/// what was painted: 0.86 m on the test level's 0.21 m texels.
+pub const SHEER_SKIRT_TEXELS: u32 = 4;
+
+/// The sheer share of each texel (0..1, from the faces' own footprints) as a
+/// byte, spread outward as a cone: full where it was, then falling in a
+/// straight line to nothing `SHEER_SKIRT_TEXELS` away. Two sweeps of a 3-4
+/// chamfer, greatest value wins -- whole numbers only, so it comes out the
+/// same in any language.
+fn feather_sheer(sheer: &[f32], w: u32, h: u32) -> Vec<u8> {
+    let (w, h) = (w as i32, h as i32);
+    let mut m: Vec<i32> = sheer.iter().map(|&s| (s.clamp(0.0, 1.0) * 255.0).round() as i32).collect();
+    // A step along a row or column, and a diagonal one: 255 over the skirt, and 4/3 of it.
+    let step = 255 / SHEER_SKIRT_TEXELS as i32;
+    let diagonal = step * 4 / 3;
+    let at = |x: i32, z: i32| (z * w + x) as usize;
+    let sweep = |m: &mut Vec<i32>, forward: bool| {
+        let rows: Box<dyn Iterator<Item = i32>> = if forward { Box::new(0..h) } else { Box::new((0..h).rev()) };
+        for z in rows {
+            let cols: Box<dyn Iterator<Item = i32>> = if forward { Box::new(0..w) } else { Box::new((0..w).rev()) };
+            for x in cols {
+                let d = if forward { -1 } else { 1 };
+                let mut best = m[at(x, z)];
+                for (nx, nz, cost) in [(x + d, z, step), (x, z + d, step), (x + d, z + d, diagonal), (x - d, z + d, diagonal)] {
+                    if nx >= 0 && nz >= 0 && nx < w && nz < h {
+                        best = best.max(m[at(nx, nz)] - cost);
+                    }
+                }
+                m[at(x, z)] = best;
+            }
+        }
+    };
+    sweep(&mut m, true);
+    sweep(&mut m, false);
+    m.into_iter().map(|v| v.clamp(0, 255) as u8).collect()
+}
+
 impl SplatMap {
     /// Build from raw RGBA8 bytes.
     ///
@@ -502,6 +539,99 @@ impl SplatMap {
         let fx = (u.clamp(0.0, 1.0) * (self.resolution[0] - 1) as f32).round();
         let fz = (v.clamp(0.0, 1.0) * (self.resolution[1] - 1) as f32).round();
         self.at_index(fx as u32, fz as u32)
+    }
+
+    /// SOIL DOES NOT HOLD ON A CLIFF: the soil layers' weight (ground, layer
+    /// 0, and sediment, layer 3) moved to rock (layer 1) wherever a texel's
+    /// footprint touches drawn ground steeper than about 60 degrees, fully
+    /// past 70. The `high` layer is left as painted. Returns how many texels
+    /// changed.
+    ///
+    /// Why the map has to say it: the map is read straight down, so a
+    /// near-vertical face of the heightfield -- a cliff step of metres inside
+    /// one 0.43 m cell -- has a plan footprint of a few centimetres, and takes
+    /// whatever its one or two texels hold up its whole height. Where the
+    /// grass at a cliff's foot or rim shared those texels, the face was drawn
+    /// as grass in vertical stripes: the dark slits on the ridge by the cave's
+    /// back exit (2026-10-08). No paint could separate the foot from the face
+    /// in a top-down map, and grass does not grow on a 70-degree face, so the
+    /// texels a sheer face reads become bare rock -- the face and a bilinear
+    /// texel round it -- fading back to the paint over `SHEER_SKIRT_TEXELS`
+    /// at its foot and rim, where a cliff is bare or scree too.
+    /// The cave does the same on its walls (`rockOnSheerFaces`, editor).
+    pub fn bare_rock_on_sheer_ground(&mut self, ground: &dyn TerrainSource) -> usize {
+        const ROCK: usize = 1;
+        const SOIL: [usize; 2] = [0, 3];
+        // A face's normal y: soil holds above the first, none below the second.
+        const HOLDS: f32 = 0.5;
+        const BARE: f32 = 0.34;
+        let bounds = ground.bounds();
+        let extent = bounds.max - bounds.min;
+        if !(extent.x > 0.0 && extent.z > 0.0) {
+            return 0;
+        }
+        let [w, h] = self.resolution;
+        let mut sheer = vec![0.0f32; (w * h) as usize];
+        let patch = ground.patch(bounds, 1);
+        for tri in patch.indices.chunks_exact(3) {
+            let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| patch.positions[i as usize]);
+            let n = (b - a).cross(c - a).normalize_or_zero();
+            let ny = n.y.abs();
+            if ny >= HOLDS || n == Vec3::ZERO {
+                continue;
+            }
+            let t = ((HOLDS - ny) / (HOLDS - BARE)).clamp(0.0, 1.0);
+            let s = t * t * (3.0 - 2.0 * t);
+            // The texels its footprint covers, and one beyond each side: the
+            // filter reads the next texel's weight up to a texel away.
+            // Snapped to a 1024th of a texel: a cell's edge very often lies
+            // exactly on a texel's, and whether that came out as 151.99999 or
+            // 152 would otherwise decide a texel -- differently here in f32
+            // and in the editor's port in f64.
+            let snap = |t: f32| (t * 1024.0).round() / 1024.0;
+            let tx = |x: f32| snap((x - bounds.min.x) / extent.x * w as f32);
+            let tz = |z: f32| snap((z - bounds.min.z) / extent.z * h as f32);
+            let (x0, x1) = (tx(a.x.min(b.x).min(c.x)), tx(a.x.max(b.x).max(c.x)));
+            let (z0, z1) = (tz(a.z.min(b.z).min(c.z)), tz(a.z.max(b.z).max(c.z)));
+            let span = |lo: f32, hi: f32, n: u32| {
+                let first = (lo.floor() as i64 - 1).max(0) as u32;
+                let last = ((hi.floor() as i64 + 1).max(0) as u32).min(n - 1);
+                first..=last
+            };
+            for iz in span(z0, z1, h) {
+                for ix in span(x0, x1, w) {
+                    let k = (iz * w + ix) as usize;
+                    sheer[k] = sheer[k].max(s);
+                }
+            }
+        }
+        // THE FOOT AND THE RIM FADE. Bared to the texel, the rock ended on
+        // the level ground at a cliff's foot in a hard line that followed the
+        // texels -- a seam drawn where the paint used to smear. The share
+        // falls away over `SHEER_SKIRT_TEXELS` beyond the face instead, as
+        // scree does at a foot and bare rock at a rim. Whole numbers
+        // throughout, and one fixed order, so the editor's port
+        // (`sheerGround`, splatmap.js) lands on the same bytes.
+        let share = feather_sheer(&sheer, w, h);
+        let mut changed = 0;
+        for (k, &m) in share.iter().enumerate() {
+            if m == 0 {
+                continue;
+            }
+            let texel = &mut self.weights[k * SPLAT_LAYERS..(k + 1) * SPLAT_LAYERS];
+            let before = [texel[0], texel[1], texel[2], texel[3]];
+            let mut moved = 0u32;
+            for layer in SOIL {
+                let take = (texel[layer] as u32 * m as u32 + 127) / 255;
+                texel[layer] -= take as u8;
+                moved += take;
+            }
+            texel[ROCK] = (texel[ROCK] as u32 + moved).min(255) as u8;
+            if texel != before {
+                changed += 1;
+            }
+        }
+        changed
     }
 
     /// The layer with the most weight at a normalised position, and its weight.
@@ -613,6 +743,332 @@ mod splat_tests {
         let (layer, weight) = m.dominant_uv(0.5, 0.0);
         assert!(layer == 0 || layer == 1, "midpoint resolved to layer {layer}");
         assert_eq!(weight, 255, "a nearest sample must return an authored value, not a mix");
+    }
+
+    /// Grass painted over a cliff step of metres inside one cell is read
+    /// straight down, so its face took the grass up its whole height. The
+    /// soil layers on sheer ground go to rock; level ground and the `high`
+    /// layer keep what was painted.
+    #[test]
+    fn soil_painted_on_a_cliff_becomes_bare_rock_and_level_ground_keeps_its_paint() {
+        // 9 x 9 samples over 4 m: level at 0 for x < 2 m, 3 m up beyond.
+        let res = 9u32;
+        let samples: Vec<u16> =
+            (0..res * res).map(|i| if (i % res) as f32 * 0.5 >= 2.25 { u16::MAX } else { 0 }).collect();
+        let field = Heightfield::new(samples, [res, res], [4.0, 4.0], [0.0, 3.0], Vec3::ZERO).unwrap();
+        // Grass and sediment everywhere, with some `high`.
+        let texels = 16u32;
+        let mut map = SplatMap::new([200u8, 0, 30, 25].repeat((texels * texels) as usize), [texels, texels]).unwrap();
+        let changed = map.bare_rock_on_sheer_ground(&field);
+        assert!(changed > 0);
+        // A texel on the step (x 2.0-2.5 m), and one on level ground far from it.
+        let on_step = map.at_index(9, 8);
+        assert_eq!(on_step, [0, 225, 30, 0], "the cliff's soil should be rock, its `high` kept");
+        let level = map.at_index(1, 8);
+        assert_eq!(level, [200, 0, 30, 25], "level ground keeps its paint");
+        // THE EDITOR SHOWS THE SAME MAP: its port (`bareRockOnSheerGround`,
+        // scene_editor_web splatmap.js) bares this fixture to the same bytes,
+        // pinned there as SHEER_FIXTURE_CHECKSUM (steepRise.test.js). If this
+        // moves, that one must.
+        let fnv = map.as_bytes().iter().fold(0x811c9dc5u32, |h, &b| (h ^ b as u32).wrapping_mul(0x01000193));
+        assert_eq!(fnv, SHEER_FIXTURE_CHECKSUM, "the engine and the editor bare different texels");
+        // A level field changes nothing at all.
+        let flat = Heightfield::new(vec![0; 81], [res, res], [4.0, 4.0], [0.0, 3.0], Vec3::ZERO).unwrap();
+        let mut untouched = SplatMap::new([200u8, 0, 30, 25].repeat((texels * texels) as usize), [texels, texels]).unwrap();
+        assert_eq!(untouched.bare_rock_on_sheer_ground(&flat), 0);
+    }
+
+    const SHEER_FIXTURE_CHECKSUM: u32 = 1847300485;
+
+    /// STEEP SHAPES, PAINTED ACROSS (2026-10-12): a 60-degree bank, an
+    /// 85-degree face, a vertical step, a narrow ridge and a pit, each laid at
+    /// an angle to the grid on the level's own 0.43 m cells, with all four
+    /// layers painted over them in stripes that cross every face.
+    ///
+    /// `drawn` lays a vertical edge the way the editor's flat-topped brush
+    /// now does -- each sample holding the share of it the shape covers, the
+    /// edge 1.5 cells wide (`RIM_CELLS`, heightfield.js) -- and `!drawn` lays
+    /// it on whole samples, as the brush did before and a generator that
+    /// samples a shape at points still does.
+    mod steep_shapes {
+        use super::*;
+        use glam::Vec2;
+
+        pub const CELL: f32 = 0.43;
+        const SAMPLES: u32 = 65;
+        const SIZE: f32 = CELL * (SAMPLES - 1) as f32;
+        const TEXELS: u32 = 128;
+        /// Across every shape's faces, at a slant: no face runs along the grid.
+        const ACROSS: Vec2 = Vec2::new(-0.574, 0.819);
+
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub enum Shape {
+            Bank60,
+            Face85,
+            Step,
+            Ridge,
+            Pit,
+        }
+        pub const ALL: [Shape; 5] = [Shape::Bank60, Shape::Face85, Shape::Step, Shape::Ridge, Shape::Pit];
+
+        /// How much of a sample a vertical edge `inside` metres behind it covers.
+        fn cover(inside: f32, drawn: bool) -> f32 {
+            if drawn {
+                (0.5 + inside / (1.5 * CELL)).clamp(0.0, 1.0)
+            } else if inside >= 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+
+        pub fn height(shape: Shape, drawn: bool, x: f32, z: f32) -> f32 {
+            let p = Vec2::new(x, z) - Vec2::splat(SIZE * 0.5);
+            let across = p.dot(ACROSS);
+            let ramp = |deg: f32| 6.0 * (across / (6.0 / deg.to_radians().tan()) + 0.5).clamp(0.0, 1.0);
+            match shape {
+                Shape::Bank60 => ramp(60.0),
+                Shape::Face85 => ramp(85.0),
+                Shape::Step => 6.0 * cover(across, drawn),
+                Shape::Ridge => 4.0 * cover(0.8 - across.abs(), drawn),
+                Shape::Pit => -4.0 * cover(3.5 - p.length(), drawn),
+            }
+        }
+
+        pub fn field(shape: Shape, drawn: bool) -> Heightfield {
+            let range = [-10.0f32, 30.0];
+            let samples = (0..SAMPLES * SAMPLES)
+                .map(|i| {
+                    let y = height(shape, drawn, (i % SAMPLES) as f32 * CELL, (i / SAMPLES) as f32 * CELL);
+                    ((y - range[0]) / (range[1] - range[0]) * u16::MAX as f32).round() as u16
+                })
+                .collect();
+            Heightfield::new(samples, [SAMPLES, SAMPLES], [SIZE, SIZE], range, Vec3::ZERO).unwrap()
+        }
+
+        /// Stripes a metre and a half wide, 30 degrees off the grid: ground,
+        /// sediment, high ground, rock. They cross every face of every shape.
+        pub fn painted() -> SplatMap {
+            let order = [0usize, 3, 2, 1];
+            let mut bytes = vec![0u8; (TEXELS * TEXELS) as usize * SPLAT_LAYERS];
+            for t in 0..TEXELS * TEXELS {
+                let x = ((t % TEXELS) as f32 + 0.5) / TEXELS as f32 * SIZE;
+                let z = ((t / TEXELS) as f32 + 0.5) / TEXELS as f32 * SIZE;
+                let band = ((x * 0.866 + z * 0.5) / 1.5).floor() as usize % 4;
+                bytes[t as usize * SPLAT_LAYERS + order[band]] = 255;
+            }
+            SplatMap::new(bytes, [TEXELS, TEXELS]).unwrap()
+        }
+
+        /// Each drawn triangle: its corners, its unit normal, its thinnest
+        /// corner in degrees.
+        pub fn triangles(field: &Heightfield) -> Vec<([Vec3; 3], Vec3, f32)> {
+            let patch = field.patch(field.bounds(), 1);
+            patch
+                .indices
+                .chunks_exact(3)
+                .map(|t| {
+                    let c = [t[0], t[1], t[2]].map(|i| patch.positions[i as usize]);
+                    let n = (c[1] - c[0]).cross(c[2] - c[0]);
+                    let corner = |a: Vec3, b: Vec3, d: Vec3| (b - a).angle_between(d - a).to_degrees();
+                    let thin = corner(c[0], c[1], c[2]).min(corner(c[1], c[2], c[0])).min(corner(c[2], c[0], c[1]));
+                    (c, n.normalize_or_zero(), thin)
+                })
+                .collect()
+        }
+
+        /// The texels a triangle's plan footprint touches.
+        pub fn texels_under(c: &[Vec3; 3]) -> impl Iterator<Item = (u32, u32)> {
+            let to = |v: f32| ((((v / SIZE * TEXELS as f32) * 1024.0).round() / 1024.0).floor().max(0.0) as u32).min(TEXELS - 1);
+            let (x0, x1) = (to(c[0].x.min(c[1].x).min(c[2].x)), to(c[0].x.max(c[1].x).max(c[2].x)));
+            let (z0, z1) = (to(c[0].z.min(c[1].z).min(c[2].z)), to(c[0].z.max(c[1].z).max(c[2].z)));
+            (z0..=z1).flat_map(move |z| (x0..=x1).map(move |x| (x, z)))
+        }
+
+        /// GEOMETRY. Whatever is drawn, the mesh has no triangle of no area
+        /// and none folded under, and no triangle is thinner than the slope
+        /// it lies on makes it. A cell's triangle on a face is one cell wide
+        /// and the face's rise long, so its thinnest corner is `atan(cos a)`
+        /// at worst on ground of slope `a` -- 27 degrees at 60, 19 at 70, 10
+        /// at 80, 5 at 85 -- and the shorter-diagonal cut does no worse than
+        /// that anywhere. So what keeps slivers out is how steep a drawn edge
+        /// is allowed to stand: across 1.5 cells a 6 m step is 84 degrees and
+        /// its thinnest corner 13; on whole samples it is 87 and 4 (`census`).
+        #[test]
+        fn no_shape_meshes_with_a_folded_or_needlessly_thin_triangle() {
+            for shape in ALL {
+                for drawn in [false, true] {
+                    let field = field(shape, drawn);
+                    for (c, n, thin) in triangles(&field) {
+                        let area = (c[1] - c[0]).cross(c[2] - c[0]).length() * 0.5;
+                        assert!(area > 1e-4 && n.y > 0.0, "{shape:?} drawn={drawn}: a triangle with no area or folded under: {c:?}");
+                        let slope_makes = n.y.atan().to_degrees();
+                        assert!(
+                            thin >= 0.95 * slope_makes,
+                            "{shape:?} drawn={drawn}: a {thin:.1} degree corner on ground whose slope allows {slope_makes:.1}: {c:?}"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// SKYLINE AND FACE. A straight face drawn at a slant must face one
+        /// way. Laid on whole samples it is a staircase: steps facing along
+        /// the grid's two axes in turn, teeth on the skyline and slits down
+        /// the face. Drawn with its edge across the grid it faces where it
+        /// was drawn to, to within a few degrees, all along.
+        #[test]
+        fn a_slanted_face_faces_one_way_when_its_edge_is_drawn_across_the_grid() {
+            // By area: the share of the steep face turned more than 20 degrees in plan from where it should face.
+            let astray = |shape: Shape, drawn: bool| {
+                let (mut off, mut all) = (0.0f32, 0.0f32);
+                for (c, n, _) in triangles(&field(shape, drawn)) {
+                    if n.y >= 0.5 {
+                        continue;
+                    }
+                    let area = (c[1] - c[0]).cross(c[2] - c[0]).length() * 0.5;
+                    let plan = Vec2::new(n.x, n.z).normalize_or_zero();
+                    // The ridge has two sides; either way is its own.
+                    let turn = plan.dot(-ACROSS).abs().clamp(0.0, 1.0).acos().to_degrees();
+                    all += area;
+                    if turn > 20.0 {
+                        off += area;
+                    }
+                }
+                off / all.max(1e-6)
+            };
+            for shape in [Shape::Face85, Shape::Step, Shape::Ridge] {
+                assert!(astray(shape, true) < 0.06, "{shape:?}: {:.0}% of the drawn face is turned away", astray(shape, true) * 100.0);
+            }
+            // What it replaces, for the record: on whole samples a quarter of the face is.
+            for shape in [Shape::Step, Shape::Ridge] {
+                assert!(astray(shape, false) > 0.15, "{shape:?}: the staircase this guards against: {:.2}", astray(shape, false));
+            }
+            // And a drawn edge stands no steeper than its 1.5 cells allow, so its
+            // triangles are no thinner than that slope makes them: the 4 m ridge
+            // and pit at most 81 degrees and never under 8, the 6 m step at most
+            // 84 and never under 5.8.
+            for (shape, rise) in [(Shape::Step, 6.0f32), (Shape::Ridge, 4.0), (Shape::Pit, 4.0)] {
+                let allowed = (rise / (1.5 * CELL)).atan();
+                for (c, n, thin) in triangles(&field(shape, true)).into_iter().filter(|t| t.1.y < 0.5) {
+                    assert!(n.y.acos() <= allowed + 0.01, "{shape:?}: a drawn face at {:.1} degrees: {c:?}", n.y.acos().to_degrees());
+                    assert!(thin >= 0.95 * allowed.cos().atan().to_degrees(), "{shape:?}: a {thin:.1} degree sliver on a drawn face");
+                }
+            }
+        }
+
+        /// The numbers behind the three tests, for a write-up:
+        /// `cargo test steep_shapes::census -- --ignored --nocapture`.
+        #[test]
+        #[ignore]
+        fn census() {
+            for shape in ALL {
+                for drawn in [false, true] {
+                    let field = field(shape, drawn);
+                    let (mut steep, mut slivers, mut thinnest, mut ratio, mut steepest) = (0, 0, 90.0f32, 9.0f32, 0.0f32);
+                    let (mut off, mut all) = (0.0f32, 0.0f32);
+                    for (c, n, thin) in triangles(&field) {
+                        ratio = ratio.min(thin / n.y.atan().to_degrees());
+                        if n.y >= 0.5 {
+                            continue;
+                        }
+                        steep += 1;
+                        slivers += (thin < 8.0) as u32;
+                        thinnest = thinnest.min(thin);
+                        steepest = steepest.max(n.y.acos().to_degrees());
+                        let area = (c[1] - c[0]).cross(c[2] - c[0]).length() * 0.5;
+                        let turn = Vec2::new(n.x, n.z).normalize_or_zero().dot(-ACROSS).abs().clamp(0.0, 1.0).acos().to_degrees();
+                        all += area;
+                        off += if turn > 20.0 { area } else { 0.0 };
+                    }
+                    let mut bared = painted();
+                    let changed = bared.bare_rock_on_sheer_ground(&field);
+                    println!(
+                        "{shape:?} drawn={drawn}: {steep} triangles past 60 deg, steepest {steepest:.1}, {slivers} under 8 deg, thinnest {thinnest:.1}, thinnest/slope-allows {ratio:.2}, turned>20deg {:.0}%, texels bared {changed}",
+                        100.0 * off / all.max(1e-6)
+                    );
+                }
+            }
+        }
+
+        /// PAINT. The map is read straight down, so a texel is spread up a
+        /// face by 1/cos of its slope: twice at 60 degrees, three times at
+        /// 70, six at 80, and a vertical face takes one texel up its whole
+        /// height. Soil layers painted across a face that steep would be
+        /// drawn as stripes metres tall, so they go to rock there; ground no
+        /// steeper than 60 degrees keeps exactly what was painted, and the
+        /// `high` and rock stripes are as painted everywhere.
+        #[test]
+        fn paint_crossing_a_sheer_face_is_never_stretched_up_it() {
+            for shape in ALL {
+                for drawn in [false, true] {
+                    let field = field(shape, drawn);
+                    let painted = painted();
+                    let mut bared = painted.clone();
+                    bared.bare_rock_on_sheer_ground(&field);
+                    let tris = triangles(&field);
+                    let mut near_steep = vec![false; (TEXELS * TEXELS) as usize];
+                    for (c, n, _) in &tris {
+                        if n.y < 0.5 {
+                            for (x, z) in texels_under(c) {
+                                // The filter's texel, and the skirt the rock fades over.
+                                let reach = 1 + SHEER_SKIRT_TEXELS as i32;
+                                for dz in -reach..=reach {
+                                    for dx in -reach..=reach {
+                                        let (x, z) = (x as i32 + dx, z as i32 + dz);
+                                        if x >= 0 && z >= 0 && (x as u32) < TEXELS && (z as u32) < TEXELS {
+                                            near_steep[(z as u32 * TEXELS + x as u32) as usize] = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Past 70 degrees no soil is left under the triangle.
+                        if n.y < 0.34 {
+                            for (x, z) in texels_under(c) {
+                                let w = bared.at_index(x, z);
+                                assert_eq!((w[0], w[3]), (0, 0), "{shape:?} drawn={drawn}: soil left on a {:.0} degree face at texel ({x}, {z})", n.y.acos().to_degrees());
+                            }
+                        }
+                    }
+                    for z in 0..TEXELS {
+                        for x in 0..TEXELS {
+                            let (was, now) = (painted.at_index(x, z), bared.at_index(x, z));
+                            assert_eq!(now.iter().map(|&b| b as u32).sum::<u32>(), 255, "weights no longer sum to one");
+                            assert_eq!(now[2], was[2], "the high layer is as painted");
+                            assert!(now[1] >= was[1], "rock is never taken away");
+                            if !near_steep[(z * TEXELS + x) as usize] {
+                                assert_eq!(now, was, "{shape:?} drawn={drawn}: paint changed at ({x}, {z}), away from any face past 60 degrees");
+                            }
+                        }
+                    }
+                }
+            }
+            // NO HARD LINE WHERE THE ROCK ENDS. On ground painted one soil all
+            // over, the soil comes back over several texels at a face's foot
+            // and rim: no texel differs from its neighbour by more than a
+            // third of the whole. (Bared to the texel it was all of it, in
+            // one step, along a line that followed the texels.)
+            for shape in ALL {
+                let field = field(shape, true);
+                let mut bared = SplatMap::new([255u8, 0, 0, 0].repeat((TEXELS * TEXELS) as usize), [TEXELS, TEXELS]).unwrap();
+                bared.bare_rock_on_sheer_ground(&field);
+                for z in 0..TEXELS - 1 {
+                    for x in 0..TEXELS - 1 {
+                        let here = bared.at_index(x, z)[0] as i32;
+                        for there in [bared.at_index(x + 1, z)[0] as i32, bared.at_index(x, z + 1)[0] as i32] {
+                            assert!((here - there).abs() <= 85, "{shape:?}: the soil steps from {here} to {there} at texel ({x}, {z})");
+                        }
+                    }
+                }
+            }
+            // The 60-degree bank is the steepest ground that holds its paint: nearly all of it does.
+            let (field, painted) = (field(Shape::Bank60, true), painted());
+            let mut bared = painted.clone();
+            bared.bare_rock_on_sheer_ground(&field);
+            let soil = |m: &SplatMap| m.as_bytes().chunks_exact(SPLAT_LAYERS).map(|t| t[0] as u64 + t[3] as u64).sum::<u64>();
+            assert!(soil(&bared) as f64 >= 0.97 * soil(&painted) as f64, "a 60 degree bank lost its paint: {} of {}", soil(&bared), soil(&painted));
+        }
     }
 
     #[test]
