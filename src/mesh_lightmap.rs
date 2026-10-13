@@ -217,6 +217,13 @@ pub struct MeshPart {
     /// where a part glows (see [`GlowMap`]); empty when the primitive has none.
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
+    /// `TEXCOORD_1`; empty when the primitive has none.
+    pub uv1: Vec<[f32; 2]>,
+    /// The size of the atlas `uv1` was AUTHORED into, when the file says its
+    /// second uv set is its lightmap's layout
+    /// (`extras.space_soup.lightmap = { set: 1, size: [w, h] }` on the mesh:
+    /// a baked cave). See [`authored_layout`].
+    pub authored: Option<[u32; 2]>,
 }
 
 /// Pack every triangle of every primitive of one mesh asset into one atlas.
@@ -235,6 +242,10 @@ pub struct MeshPart {
 pub fn mesh_lightmap_layout(parts: &[MeshPart], texel: f32) -> Option<MeshLightmapLayout> {
     let mut order: Vec<&MeshPart> = parts.iter().filter(|p| p.indices.len() >= 3).collect();
     order.sort_by_key(|p| (p.node, p.primitive));
+    // A mesh that brings its own layout is read, not packed.
+    if let Some(layout) = authored_layout(&order) {
+        return Some(layout);
+    }
 
     let total: usize = order.iter().map(|p| p.indices.len() / 3).sum();
     if total == 0 || total > MAX_TRIANGLES {
@@ -268,6 +279,83 @@ pub fn mesh_lightmap_layout(parts: &[MeshPart], texel: f32) -> Option<MeshLightm
 }
 
 /// One triangle, measured in its own plane, before anything is packed.
+/// THE LAYOUT A MESH BROUGHT WITH IT.
+///
+/// A baked cave's second uv set IS its lightmap's layout: box-projected charts
+/// many triangles across, packed by the editor at a density of its choosing
+/// (`scene_editor_web/frontend/src/lib/sdfBake.js`). Nothing is packed here and
+/// the renderer splits nothing: a vertex has one uv2, as the file gives it.
+///
+/// The baker still walks CHARTS, one a triangle, so each triangle gets one:
+/// its rectangle the texels its corners span, its corners in that rectangle's
+/// texel coordinates, and the affine map from texel to mesh-local point that
+/// its three corners fix. Unlike a packed chart's, these rectangles OVERLAP
+/// their neighbours' -- the triangles of one authored chart share texels along
+/// every edge -- so a consumer that writes a texel must let the triangle the
+/// texel centre is INSIDE win over one that only reaches it by its slack.
+///
+/// A triangle no texel centre falls inside, or with no area in the atlas (the
+/// lip a cave runs under the ground beside it carries its edge's uv), gets an
+/// EMPTY rectangle: its neighbours' texels cover it, and the baker's fallback
+/// for a chart with nothing on it -- shade every texel of the rectangle from
+/// the nearest point of the triangle -- would overwrite theirs.
+///
+/// `None` unless every part is authored into one size of atlas. No triangle
+/// budget: the budget bounds what a chart per triangle costs in atlas, and an
+/// authored atlas costs what it says.
+fn authored_layout(order: &[&MeshPart]) -> Option<MeshLightmapLayout> {
+    let [width, height] = order.first()?.authored?;
+    if width == 0 || height == 0 || order.iter().any(|p| p.authored != Some([width, height]) || p.uv1.len() != p.positions.len()) {
+        return None;
+    }
+    let mut charts: Vec<MeshChart> = Vec::new();
+    let mut ranges: Vec<PartRange> = Vec::new();
+    for p in order {
+        let first = charts.len();
+        let tri_count = p.indices.len() / 3;
+        for t in 0..tri_count {
+            let idx = [0, 1, 2].map(|k| p.indices[t * 3 + k] as usize);
+            let pos = idx.map(|i| p.positions.get(i).copied().unwrap_or([0.0; 3]));
+            // Texel-centre coordinates: texel (0, 0)'s centre is (0, 0).
+            let at = idx.map(|i| {
+                let uv = p.uv1.get(i).copied().unwrap_or([0.0; 2]);
+                [uv[0] * width as f32 - 0.5, uv[1] * height as f32 - 0.5]
+            });
+            let lo = [0, 1].map(|k| at[0][k].min(at[1][k]).min(at[2][k]));
+            let hi = [0, 1].map(|k| at[0][k].max(at[1][k]).max(at[2][k]));
+            let x = (lo[0].floor().max(0.0) as u32).min(width - 1);
+            let y = (lo[1].floor().max(0.0) as u32).min(height - 1);
+            let x1 = (hi[0].ceil().max(0.0) as u32).min(width - 1).max(x);
+            let y1 = (hi[1].ceil().max(0.0) as u32).min(height - 1).max(y);
+            let corners = at.map(|c| [c[0] - x as f32, c[1] - y as f32]);
+            let e1 = [corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]];
+            let e2 = [corners[2][0] - corners[0][0], corners[2][1] - corners[0][1]];
+            let (big1, big2) = (sub(pos[1], pos[0]), sub(pos[2], pos[0]));
+            let den = e1[0] * e2[1] - e2[0] * e1[1];
+            let normal = norm(cross(big1, big2));
+            let mut chart = MeshChart { x, y, w: 0, h: 0, origin: pos[0], du: [0.0; 3], dv: [0.0; 3], normal, corners };
+            if den.abs() > 1e-9 {
+                chart.du = mul(sub(mul(big1, e2[1]), mul(big2, e1[1])), 1.0 / den);
+                chart.dv = mul(sub(mul(big2, e1[0]), mul(big1, e2[0])), 1.0 / den);
+                chart.origin = sub(pos[0], add(mul(chart.du, corners[0][0]), mul(chart.dv, corners[0][1])));
+                chart.w = x1 - x + 1;
+                chart.h = y1 - y + 1;
+                let inside = (0..chart.h).any(|ty| (0..chart.w).any(|tx| chart.barycentric(tx, ty).iter().all(|b| *b >= 0.0)));
+                if !inside {
+                    chart.w = 0;
+                    chart.h = 0;
+                }
+            }
+            charts.push(chart);
+        }
+        ranges.push(PartRange { node: p.node, primitive: p.primitive, first, count: tri_count });
+    }
+    if charts.is_empty() {
+        return None;
+    }
+    Some(MeshLightmapLayout { width, height, charts, parts: ranges, density_scale: 1.0 })
+}
+
 struct Measured {
     u: [f32; 3],
     v: [f32; 3],
@@ -510,7 +598,40 @@ pub fn load_mesh_parts(path: &std::path::Path) -> Option<Vec<MeshPart>> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let base = path.parent();
     let buffers = gltf::import_buffers(&gltf.document, base, gltf.blob.clone()).ok()?;
-    mesh_parts(&gltf.document, &buffers)
+    let mut parts = mesh_parts(&gltf.document, &buffers)?;
+    // A mesh that says its second uv set is its lightmap's layout. Read from
+    // the file's own JSON: `extras` is not something this crate's gltf reads.
+    let authored = authored_atlases(path);
+    if !authored.is_empty() {
+        let mesh_of_node: std::collections::HashMap<usize, usize> =
+            gltf.document.nodes().filter_map(|n| Some((n.index(), n.mesh()?.index()))).collect();
+        for part in &mut parts {
+            part.authored = mesh_of_node.get(&part.node).and_then(|m| authored.get(m)).copied();
+        }
+    }
+    Some(parts)
+}
+
+/// Mesh index to the atlas its `TEXCOORD_1` was authored into, for the meshes
+/// of a file that say so. See [`MeshPart::authored`].
+fn authored_atlases(path: &std::path::Path) -> std::collections::HashMap<usize, [u32; 2]> {
+    let mut out = std::collections::HashMap::new();
+    let Some(json) = gltf_json_bytes(path).and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else {
+        return out;
+    };
+    let Some(meshes) = json.get("meshes").and_then(|m| m.as_array()) else { return out };
+    for (i, mesh) in meshes.iter().enumerate() {
+        let Some(lm) = mesh.get("extras").and_then(|e| e.get("space_soup")).and_then(|s| s.get("lightmap")) else { continue };
+        if lm.get("set").and_then(|s| s.as_u64()) != Some(1) {
+            continue;
+        }
+        let size = lm.get("size").and_then(|s| s.as_array());
+        let dim = |k: usize| size.and_then(|s| s.get(k)).and_then(|v| v.as_u64()).filter(|v| (1..=8192).contains(v));
+        if let (Some(w), Some(h)) = (dim(0), dim(1)) {
+            out.insert(i, [w as u32, h as u32]);
+        }
+    }
+    out
 }
 
 /// The triangles of a model that BLOCK LIGHT, in model space (node transforms
@@ -538,23 +659,32 @@ pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec
 /// dark patch on the sand in front of every mouth. The terrain is its own
 /// occluder there already. A model without the attribute keeps every
 /// triangle, as [`light_blocking_triangles`] gives them.
+///
+/// And so does a mesh whose `TEXCOORD_1` is its LIGHTMAP ([`MeshPart::authored`],
+/// the baked cave): it carries no copy of the ground -- the terrain draws the
+/// ground round it -- and a uv past one half there is the right half of its
+/// atlas, not a mark. Read as one, half the rock let the light through.
 pub fn ground_model_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec3; 3]>> {
     let (doc, buffers, _) = gltf::import(path).ok()?;
+    let authored = authored_atlases(path);
     let mut out = Vec::new();
     fn walk(
         node: gltf::Node,
         parent: [[f32; 4]; 4],
         buffers: &[gltf::buffer::Data],
+        authored: &std::collections::HashMap<usize, [u32; 2]>,
         out: &mut Vec<[glam::Vec3; 3]>,
     ) {
         let world = mat_mul(parent, node.transform().matrix());
         if let Some(mesh) = node.mesh() {
+            let marks_ground = !authored.contains_key(&mesh.index());
             for prim in mesh.primitives() {
                 let reader = prim.reader(|b| Some(&buffers[b.index()]));
                 let Some(positions) = reader.read_positions() else { continue };
                 let positions: Vec<[f32; 3]> = positions.map(|p| transform_point(world, p)).collect();
                 let ground: Vec<f32> = reader
                     .read_tex_coords(1)
+                    .filter(|_| marks_ground)
                     .map(|t| t.into_f32().map(|uv| uv[0]).collect())
                     .filter(|g: &Vec<f32>| g.len() == positions.len())
                     .unwrap_or_else(|| vec![0.0; positions.len()]);
@@ -575,13 +705,13 @@ pub fn ground_model_blocking_triangles(path: &std::path::Path) -> Option<Vec<[gl
             }
         }
         for child in node.children() {
-            walk(child, world, buffers, out);
+            walk(child, world, buffers, authored, out);
         }
     }
     let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
     for scene in doc.scenes() {
         for node in scene.nodes() {
-            walk(node, identity, &buffers, &mut out);
+            walk(node, identity, &buffers, &authored, &mut out);
         }
     }
     Some(out)
@@ -1033,6 +1163,11 @@ pub fn mesh_parts(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Optio
                     .map(|t| t.into_f32().collect())
                     .filter(|t: &Vec<[f32; 2]>| t.len() == positions.len())
                     .unwrap_or_default();
+                let uv1: Vec<[f32; 2]> = reader
+                    .read_tex_coords(1)
+                    .map(|t| t.into_f32().collect())
+                    .filter(|t: &Vec<[f32; 2]>| t.len() == positions.len())
+                    .unwrap_or_default();
                 out.push(MeshPart {
                     node: node.index(),
                     primitive: pi,
@@ -1040,6 +1175,8 @@ pub fn mesh_parts(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Optio
                     normals,
                     uvs,
                     indices,
+                    uv1,
+                    authored: None,
                 });
             }
         }
@@ -1137,6 +1274,11 @@ pub fn lightmap_uv_for_asset(
     path: &std::path::Path,
 ) -> Option<Vec<((usize, usize), Vec<[f32; 2]>)>> {
     let parts = load_mesh_parts(path)?;
+    // An authored layout is already in the file's vertices (`TEXCOORD_1`),
+    // which the renderer reads as they are: nothing to hand it, nothing to split.
+    if parts.iter().any(|p| p.authored.is_some()) {
+        return None;
+    }
     let layout = mesh_lightmap_layout(&parts, DEFAULT_TEXEL)?;
     Some(corner_uv2(&layout))
 }
@@ -1338,6 +1480,205 @@ mod tests {
             layout.width,
             layout.height,
         );
+    }
+}
+
+#[cfg(test)]
+mod authored_tests {
+    use super::*;
+
+    /// A 2 m square in the plane y = 3, two triangles, authored into the
+    /// middle of a 16 x 16 atlas at four texels a metre; and a third triangle
+    /// hanging under one edge with that edge's uv (a cave's lip).
+    fn square() -> MeshPart {
+        let positions = vec![[0.0, 3.0, 0.0], [2.0, 3.0, 0.0], [2.0, 3.0, 2.0], [0.0, 3.0, 2.0], [0.0, 2.9, 0.0], [2.0, 2.9, 0.0]];
+        let uv = |x: f32, z: f32| [(4.0 + x * 4.0) / 16.0, (4.0 + z * 4.0) / 16.0];
+        MeshPart {
+            node: 0,
+            primitive: 0,
+            normals: vec![[0.0, 1.0, 0.0]; 6],
+            uv1: vec![uv(0.0, 0.0), uv(2.0, 0.0), uv(2.0, 2.0), uv(0.0, 2.0), uv(0.0, 0.0), uv(2.0, 0.0)],
+            positions,
+            indices: vec![0, 2, 1, 0, 3, 2, 0, 1, 5],
+            authored: Some([16, 16]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_authored_mesh_is_read_not_packed() {
+        let part = square();
+        let layout = mesh_lightmap_layout(&[part.clone()], DEFAULT_TEXEL).expect("a layout");
+        assert_eq!((layout.width, layout.height), (16, 16), "the atlas is the file's");
+        assert_eq!(layout.charts.len(), 3);
+        // Each corner's uv2 is the file's own.
+        for t in 0..3 {
+            let chart = layout.chart(0, 0, t).unwrap();
+            for k in 0..3 {
+                let want = part.uv1[part.indices[t * 3 + k] as usize];
+                let got = chart.uv2(k, 16, 16);
+                assert!((got[0] - want[0]).abs() < 1e-5 && (got[1] - want[1]).abs() < 1e-5, "{got:?} {want:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_texel_inside_a_triangle_stands_for_its_own_point_of_the_surface() {
+        let part = square();
+        let layout = mesh_lightmap_layout(&[part], DEFAULT_TEXEL).unwrap();
+        let mut covered = std::collections::HashSet::new();
+        for chart in &layout.charts[..2] {
+            assert!(chart.w > 0 && chart.h > 0);
+            assert!((chart.normal[1].abs() - 1.0).abs() < 1e-5);
+            for ty in 0..chart.h {
+                for tx in 0..chart.w {
+                    if chart.barycentric(tx, ty).iter().any(|b| *b < 0.0) {
+                        continue;
+                    }
+                    let (px, py) = (chart.x + tx, chart.y + ty);
+                    covered.insert((px, py));
+                    // Texel (px, py)'s centre is at atlas texel coordinate
+                    // px + 0.5: four texels a metre from texel 4.
+                    let p = chart.texel_local(tx as f32, ty as f32);
+                    let want = [(px as f32 + 0.5 - 4.0) / 4.0, 3.0, (py as f32 + 0.5 - 4.0) / 4.0];
+                    for k in 0..3 {
+                        assert!((p[k] - want[k]).abs() < 1e-4, "texel ({px}, {py}): {p:?} is not {want:?}");
+                    }
+                }
+            }
+        }
+        // The square is 8 x 8 texels: every centre in it is in one triangle or the other.
+        for y in 4..12 {
+            for x in 4..12 {
+                assert!(covered.contains(&(x, y)), "texel ({x}, {y}) of the square is in no triangle");
+            }
+        }
+        assert_eq!(covered.len(), 64, "and none outside it");
+    }
+
+    #[test]
+    fn a_triangle_with_no_area_in_the_atlas_owns_no_texels() {
+        let layout = mesh_lightmap_layout(&[square()], DEFAULT_TEXEL).unwrap();
+        let lip = layout.chart(0, 0, 2).unwrap();
+        assert_eq!((lip.w, lip.h), (0, 0), "the lip carries its edge's uv: nothing of the atlas is its own");
+        // Nor a sliver thinner than a texel that every centre misses.
+        let mut part = square();
+        part.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.01]];
+        part.uv1 = vec![[4.1 / 16.0, 4.6 / 16.0], [8.1 / 16.0, 4.6 / 16.0], [8.1 / 16.0, 4.64 / 16.0]];
+        part.normals = vec![[0.0, 1.0, 0.0]; 3];
+        part.indices = vec![0, 1, 2];
+        let sliver = mesh_lightmap_layout(&[part], DEFAULT_TEXEL).unwrap();
+        assert_eq!((sliver.charts[0].w, sliver.charts[0].h), (0, 0));
+    }
+
+    #[test]
+    fn an_authored_mesh_has_no_triangle_budget_and_a_half_authored_one_is_packed() {
+        // 50,000 triangles, each a texel square's half, tiled over a 256 atlas.
+        let n = 160usize;
+        let mut part = MeshPart { authored: Some([256, 256]), ..Default::default() };
+        for j in 0..=n {
+            for i in 0..=n {
+                part.positions.push([i as f32 * 0.1, 0.0, j as f32 * 0.1]);
+                part.normals.push([0.0, 1.0, 0.0]);
+                part.uv1.push([(8.0 + i as f32 * 1.5) / 256.0, (8.0 + j as f32 * 1.5) / 256.0]);
+            }
+        }
+        let at = |i: usize, j: usize| (j * (n + 1) + i) as u32;
+        for j in 0..n {
+            for i in 0..n {
+                part.indices.extend([at(i, j), at(i + 1, j + 1), at(i + 1, j), at(i, j), at(i, j + 1), at(i + 1, j + 1)]);
+            }
+        }
+        assert!(part.indices.len() / 3 > MAX_TRIANGLES);
+        let layout = mesh_lightmap_layout(&[part.clone()], DEFAULT_TEXEL).expect("authored: no budget");
+        assert_eq!(layout.charts.len(), part.indices.len() / 3);
+        assert_eq!((layout.width, layout.height), (256, 256));
+        // A part with no uv1 beside it: not an authored mesh after all.
+        let plain = MeshPart {
+            node: 1,
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        };
+        assert!(mesh_lightmap_layout(&[part, plain], DEFAULT_TEXEL).is_none(), "packed by the ordinary rule, which the budget refuses");
+    }
+
+    /// A `.glb` as the editor's cave bake writes one, by hand: the file says
+    /// its second uv set is its lightmap, and the loader hears it.
+    #[test]
+    fn a_file_that_says_its_uv1_is_its_lightmap_is_loaded_as_authored() {
+        let part = square();
+        // `shift` moves the whole layout across its atlas.
+        let write = |extras: &str, name: &str, shift: f32| {
+            let mut bin: Vec<u8> = Vec::new();
+            for p in &part.positions {
+                for c in p {
+                    bin.extend(c.to_le_bytes());
+                }
+            }
+            let uv_at = bin.len();
+            for uv in &part.uv1 {
+                for c in [uv[0] + shift, uv[1]] {
+                    bin.extend(c.to_le_bytes());
+                }
+            }
+            let idx_at = bin.len();
+            for i in &part.indices {
+                bin.extend(i.to_le_bytes());
+            }
+            let json = format!(
+                r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"TEXCOORD_1":1}},"indices":2}}]{extras}}}],
+"buffers":[{{"byteLength":{len}}}],
+"bufferViews":[{{"buffer":0,"byteOffset":0,"byteLength":{uv_at}}},{{"buffer":0,"byteOffset":{uv_at},"byteLength":{uvl}}},{{"buffer":0,"byteOffset":{idx_at},"byteLength":{il}}}],
+"accessors":[{{"bufferView":0,"componentType":5126,"count":6,"type":"VEC3","min":[0,2.9,0],"max":[2,3,2]}},
+{{"bufferView":1,"componentType":5126,"count":6,"type":"VEC2"}},{{"bufferView":2,"componentType":5125,"count":9,"type":"SCALAR"}}]}}"#,
+                len = bin.len(),
+                uvl = idx_at - uv_at,
+                il = bin.len() - idx_at,
+            );
+            let mut json = json.into_bytes();
+            while json.len() % 4 != 0 {
+                json.push(b' ');
+            }
+            let mut glb: Vec<u8> = Vec::new();
+            glb.extend(b"glTF");
+            glb.extend(2u32.to_le_bytes());
+            glb.extend(((12 + 8 + json.len() + 8 + bin.len()) as u32).to_le_bytes());
+            glb.extend((json.len() as u32).to_le_bytes());
+            glb.extend(b"JSON");
+            glb.extend(&json);
+            glb.extend((bin.len() as u32).to_le_bytes());
+            glb.extend(b"BIN\0");
+            glb.extend(&bin);
+            let path = std::env::temp_dir().join(format!("ss_authored_{}_{name}.glb", std::process::id()));
+            std::fs::write(&path, glb).unwrap();
+            path
+        };
+        let said = r#","extras":{"space_soup":{"shading":"baked_cave","lightmap":{"set":1,"size":[16,16]}}}"#;
+        let authored = write(said, "yes", 0.0);
+        let parts = load_mesh_parts(&authored).expect("it loads");
+        assert_eq!(parts[0].authored, Some([16, 16]));
+        assert_eq!(parts[0].uv1.len(), 6);
+        assert_eq!(mesh_lightmap_layout(&parts, DEFAULT_TEXEL).unwrap().width, 16);
+        assert!(lightmap_uv_for_asset(&authored).is_none(), "the renderer reads the file's own TEXCOORD_1: nothing to hand it");
+        // The same file without the word: an ordinary mesh, packed.
+        let plain = write("", "no", 0.0);
+        let parts = load_mesh_parts(&plain).expect("it loads");
+        assert_eq!(parts[0].authored, None);
+        assert!(lightmap_uv_for_asset(&plain).is_some());
+        // AS AN OCCLUDER it is all of its triangles, wherever in its atlas they
+        // lie: on an older cave that uv marked its copy of the ground, which
+        // casts nothing, and the right half of a lightmap is not that.
+        let right = write(said, "right", 0.26);
+        assert_eq!(ground_model_blocking_triangles(&right).unwrap().len(), 3, "a lightmap's right half is rock");
+        let marked = write("", "marked", 0.26);
+        assert_eq!(ground_model_blocking_triangles(&marked).unwrap().len(), 0, "an older cave's ground copy casts nothing");
+        let _ = std::fs::remove_file(right);
+        let _ = std::fs::remove_file(marked);
+        let _ = std::fs::remove_file(authored);
+        let _ = std::fs::remove_file(plain);
     }
 }
 

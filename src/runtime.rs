@@ -203,6 +203,10 @@ pub struct GameRuntime {
     pub(crate) next_particle_burst_id: u64,
     pub(crate) next_detached_id: u64,
     pub(crate) socket_attachments: HashMap<String, (String, String)>,
+    /// The bodies that went into the water lately, oldest first, and the
+    /// number the next one takes. See [`Self::water_entries`].
+    pub(crate) water_entries: Vec<crate::water::RecentWaterEntry>,
+    pub(crate) next_water_entry: u64,
 }
 
 impl GameRuntime {
@@ -242,6 +246,8 @@ impl GameRuntime {
             next_particle_burst_id: 0,
             next_detached_id: 0,
             socket_attachments: HashMap::new(),
+            water_entries: Vec::new(),
+            next_water_entry: 0,
         };
 
         rt.compile_scripts();
@@ -334,6 +340,9 @@ impl GameRuntime {
         self.manual_part_blends = HashMap::new();
         self.particle_bursts = Vec::new();
         self.socket_attachments = HashMap::new();
+        // Another level's water. The numbers go on from where they were, so
+        // none is ever given twice.
+        self.water_entries.clear();
         self.script_host = ScriptHost::new();
         self.compile_scripts();
         self.setup_scene_attachments();
@@ -454,6 +463,7 @@ impl GameRuntime {
         self.apply_script_commands();
 
         self.rigid_physics.step(dt, &mut self.scene, &self.rigs);
+        self.note_water_entries(dt);
 
         let listener = match inputs.len() {
             1 => inputs.keys().next().map(|&p| self.world_head_transform(p)),
@@ -484,6 +494,28 @@ impl GameRuntime {
             lasers,
             self.pending_scene_change.take(),
         )
+    }
+
+    /// What physics saw go into the water this step joins what it saw lately;
+    /// the rest is a step older, and what is older than is told of is dropped.
+    fn note_water_entries(&mut self, dt: f32) {
+        for e in &mut self.water_entries {
+            e.age += dt;
+        }
+        self.water_entries.retain(|e| e.age < crate::water::WATER_ENTRY_KEPT);
+        for entry in self.rigid_physics.take_water_entries() {
+            self.water_entries.push(crate::water::RecentWaterEntry { serial: self.next_water_entry, age: 0.0, entry });
+            self.next_water_entry += 1;
+        }
+    }
+
+    /// THE BODIES THAT WENT INTO THE WATER in the last
+    /// [`crate::water::WATER_ENTRY_KEPT`] seconds, oldest first: each as it
+    /// met the surface, with its own number and its age. What a server puts
+    /// in every snapshot (`WireWorld::water_entries`) so each client raises
+    /// the splash once, from the speed and the mass physics had for it.
+    pub fn water_entries(&self) -> &[crate::water::RecentWaterEntry] {
+        &self.water_entries
     }
 
     pub fn scene(&self) -> &Scene {

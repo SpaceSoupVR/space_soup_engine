@@ -431,6 +431,25 @@ pub struct WaterEntry {
 /// The slowest thing that splashes going in, m/s down: slower, it is lowered.
 pub const ENTRY_SPEED: f32 = 0.6;
 
+/// AN ENTRY THE WORLD STILL TELLS OF: one a simulation saw in the last
+/// [`WATER_ENTRY_KEPT`] seconds (`GameRuntime::water_entries`), with a number
+/// that is its alone and how long ago it was. An entry is a moment, and a
+/// snapshot of the world is a state: told once it would be lost with the one
+/// snapshot that carried it, so it is told in every snapshot for a while, and
+/// whoever draws it knows by its number that they have, and by its age when
+/// it was.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecentWaterEntry {
+    pub serial: u64,
+    /// Seconds since it went in, as of the simulation's last step.
+    pub age: f32,
+    pub entry: WaterEntry,
+}
+
+/// How long an entry is told of, seconds: thirty snapshots at the server's
+/// sixty a second, and well under the time its splash is in the air.
+pub const WATER_ENTRY_KEPT: f32 = 0.5;
+
 /// WHICH BODIES ARE IN THE WATER, so each going in is seen once.
 ///
 /// A body is in from the moment its underside is at the surface until it has
