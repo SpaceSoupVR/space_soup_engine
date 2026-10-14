@@ -18,6 +18,11 @@ pub enum ColliderShape {
     Box,
     Sphere { radius: f32 },
     Capsule { radius: f32, half_height: f32 },
+    /// The convex hull of the object's own model (`mesh`), cooked at load: a
+    /// rock that rests and rolls on its own shape. For a dynamic or
+    /// kinematic body; a static one, or an object with no model that can be
+    /// read, is its box.
+    Hull,
 }
 
 impl Default for ColliderShape {
@@ -75,6 +80,12 @@ pub struct RigidBodyDef {
     #[serde(default)]
     pub respawn_interval: Option<f32>,
 
+    /// Put the body back where it started once it has rested under water
+    /// for this many seconds: a thing to throw in that is lost on the bed
+    /// comes back to be thrown again. None: it stays where it sank.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn_sunk: Option<f32>,
+
     #[serde(default)]
     pub collider_half_size: Option<[f32; 3]>,
 
@@ -92,6 +103,7 @@ impl Default for RigidBodyDef {
             friction: default_friction(),
             restitution: 0.0,
             respawn_interval: None,
+            respawn_sunk: None,
             linear_velocity: [0.0, 0.0, 0.0],
             collider_half_size: None,
             collider_offset: [0.0, 0.0, 0.0],

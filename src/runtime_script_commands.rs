@@ -80,8 +80,34 @@ impl GameRuntime {
                         // places an object at the hand outright, which would
                         // lift a leaf off its hinge. Its hinge joint and its
                         // contacts with the hand are the whole interaction.
-                        (Some(_), Some(obj)) if obj.door.is_some() => {
-                            log::debug!("grab_at_joint: '{id}' is a door; it is pushed, not held");
+                        //
+                        // BY ITS HANDLE, a hand holds it and swings it: a
+                        // spring from the handle to the hand, which the hinge
+                        // turns into the leaf's swing (`grab_door`).
+                        (Some(joint_tf), Some(obj)) if obj.door.is_some() => {
+                            let held = match joint_id {
+                                JointId::HandGrip(hand) => self.rigid_physics.grab_door(player, &id, hand, joint_tf.position),
+                                _ => false,
+                            };
+                            if !held {
+                                log::debug!("grab_at_joint: '{id}' is a door and the hand is not at a handle; it is pushed, not held");
+                            }
+                        }
+                        // A LOOSE BODY WITH NO GRIP NAMED IS HELD BY PHYSICS:
+                        // a rock, a crate. An attachment writes the object's
+                        // pose from the hand, and physics writes it back from
+                        // the body the same tick -- so a dynamic body "held"
+                        // that way stayed on the ground. A spring from the
+                        // hand to the body is what carries it, with its
+                        // weight, and letting go is the throw (`grab_free`).
+                        (Some(joint_tf), Some(obj))
+                            if matches!(joint_id, JointId::HandGrip(_))
+                                && point.as_deref().and_then(|p| obj.grip_point(p)).is_none()
+                                && self.rigid_physics.is_dynamic(&id) =>
+                        {
+                            if let JointId::HandGrip(hand) = joint_id {
+                                self.rigid_physics.grab_free(player, &id, hand, joint_tf.position, joint_tf.rotation);
+                            }
                         }
                         (Some(joint_tf), Some(obj)) => {
                             let matched_point = point.as_deref().and_then(|p| obj.grip_point(p));
@@ -153,10 +179,17 @@ impl GameRuntime {
                     None => warn!("grab_at_joint: unknown joint name '{joint}'"),
                 },
                 EngineCommand::Detach { id, hand, player } => match hand {
-                    Some(h) => self
-                        .attachments
-                        .detach_joint(&id, player, JointId::HandGrip(h)),
-                    None => self.attachments.detach(&id),
+                    Some(h) => {
+                        self.attachments.detach_joint(&id, player, JointId::HandGrip(h));
+                        // And the hand's physics hold, if that is how it had
+                        // it (`grab_free`, `grab_door`): the body keeps its
+                        // velocity.
+                        self.rigid_physics.release(player, &id, h);
+                    }
+                    None => {
+                        self.attachments.detach(&id);
+                        self.rigid_physics.release_all(&id);
+                    }
                 },
                 EngineCommand::GrabAtPoint {
                     id,

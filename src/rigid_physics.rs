@@ -167,11 +167,66 @@ pub(crate) struct DynamicActor {
     pub(crate) spawn_rot: Quat,
     pub(crate) respawn_interval: Option<f32>,
     pub(crate) elapsed: f32,
+    /// Its collider's half extents in its own frame (a sphere's or a hull's:
+    /// the box round it), and the volume of water it pushes aside when under,
+    /// cubic metres. What the water bears it up by (`float_bodies`) and what a
+    /// free grab holds it at the surface of (`grab_free`).
+    pub(crate) half: Vec3,
+    pub(crate) volume: f32,
+    /// Where its object was in `Scene::objects` when last looked for: tried
+    /// first, so writing a body's pose back is not a search of the level.
+    pub(crate) object: usize,
+    /// Asleep when last stepped: its pose has been written back already.
+    pub(crate) asleep: bool,
+    /// Its going in and out of the water (`water::WaterState`).
+    pub(crate) water: crate::water::WaterState,
+    /// Put back where it started after resting under water this long,
+    /// seconds (`RigidBodyDef::respawn_sunk`), and how long it has.
+    pub(crate) respawn_sunk: Option<f32>,
+    pub(crate) sunk_for: f32,
+    /// The world's clock when its turn to be looked at for a respawn last
+    /// came (`PhysicsWorld::respawn_round`).
+    pub(crate) checked_at: f64,
+}
+
+impl DynamicActor {
+    /// A body as it starts, with nothing yet known of it but where.
+    pub(crate) fn new(ptr: *mut PxRigidDynamic, spawn_pos: Vec3, spawn_rot: Quat, half: Vec3, volume: f32) -> Self {
+        Self {
+            ptr,
+            spawn_pos,
+            spawn_rot,
+            respawn_interval: None,
+            elapsed: 0.0,
+            half,
+            volume,
+            object: 0,
+            asleep: false,
+            water: crate::water::WaterState::default(),
+            respawn_sunk: None,
+            sunk_for: 0.0,
+            checked_at: 0.0,
+        }
+    }
 }
 
 pub(crate) struct GrabState {
     pub(crate) joint: *mut physx_sys::PxJoint,
     pub(crate) point_name: String,
+    /// Where the hand holds it, in the body's own frame: a free grab's (and a
+    /// door handle's) own point; none for an authored grip point's.
+    pub(crate) local: Option<Vec3>,
+}
+
+/// A hold just let go of: its joint, with nothing left driving it, kept
+/// until the body has left the hand (`PhysicsWorld::release`).
+pub(crate) struct Parting {
+    pub(crate) joint: *mut physx_sys::PxJoint,
+    pub(crate) player: PlayerId,
+    pub(crate) hand: Hand,
+    pub(crate) id: String,
+    pub(crate) local: Vec3,
+    pub(crate) since: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -198,14 +253,16 @@ pub struct PhysicsWorld {
 
     pub(crate) hand_anchors: HashMap<(PlayerId, Hand), *mut PxRigidDynamic>,
     pub(crate) grabs: HashMap<(PlayerId, String, Hand), GrabState>,
+    /// The holds just let go of, until hand and body have parted.
+    pub(crate) parting: Vec<Parting>,
     pub(crate) scratch: ScratchBuffer,
 
     /// Where standing water lies. Not colliders -- water is waded through --
     /// but how deep it stands, so a walk stops before it is out of its depth.
     pub(crate) water: Vec<crate::water::WaterFootprint>,
-    /// Which bodies are in it, and those that went in since they were last
-    /// asked for (`take_water_entries`): what the splashes are raised from.
-    pub(crate) water_watch: crate::water::WaterWatch,
+    /// The bodies that went in since they were last asked for
+    /// (`take_water_entries`): what the splashes are raised from. Which
+    /// bodies are in it is each body's own (`DynamicActor::water`).
     pub(crate) water_entries: Vec<crate::water::WaterEntry>,
 
     /// The doors, by object id: each one's leaf as it hangs. Their bodies are
@@ -215,6 +272,25 @@ pub struct PhysicsWorld {
     /// Each door's closer and hinge friction (`DoorDef::closer`,
     /// `DoorDef::friction`), applied as torques by `push_doors`.
     pub(crate) door_hinges: HashMap<String, (f32, f32)>,
+    /// Each latching door's latch and handle (`door::DoorLatch`), and whether
+    /// its bolt is home.
+    pub(crate) door_latches: HashMap<String, crate::rigid_physics_door::LatchState>,
+
+    /// Seconds this world has been stepped for.
+    pub(crate) clock: f64,
+    /// Whose turn it is to be looked at for a respawn: the body this many
+    /// into `dynamic` (`respawn_round`).
+    pub(crate) respawn_cursor: usize,
+    /// Asked to put every prop back where it started, at the next step
+    /// (`respawn_props`).
+    pub(crate) respawn_all: bool,
+    /// What the last step cost and saw (`StepStats`).
+    pub(crate) stats: StepStats,
+    /// Where model files are read from, for a hull collider (`rebuild`).
+    pub(crate) game_dir: std::path::PathBuf,
+    /// The hulls cooked so far, by model file and scale: an index into
+    /// `hull_meshes`, its box's centre and half extents and its volume.
+    pub(crate) hulls: HashMap<String, (usize, Vec3, Vec3, f32)>,
 
     /// THE LEVEL'S FLOOR: the lowest point of anything a body can rest on or
     /// start at -- the ground's lowest sample and the caves' patches, every
@@ -249,7 +325,24 @@ pub struct PhysicsWorld {
     // in a test. The glTF terrain_collider path had the same fault.
     pub(crate) terrain_meshes: Vec<Owner<TriangleMesh>>,
     pub(crate) terrain_height_fields: Vec<Owner<HeightField>>,
+    /// Cooked convex hulls (`ColliderShape::Hull`): owned by the physics
+    /// object as a triangle mesh is, so released before the foundation too.
+    pub(crate) hull_meshes: Vec<Owner<physx::convex_mesh::ConvexMesh>>,
     pub(crate) foundation: PxFoundation,
+}
+
+/// WHAT ONE STEP DID, for a bench and for anyone watching the cost: how many
+/// dynamic bodies there are, how many were awake (the only ones a step reads,
+/// floats or watches at the water), how many of those were in water, and how
+/// many went in -- seen, and told of after the cap (`water::keep_most_energetic`).
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct StepStats {
+    pub bodies: usize,
+    pub awake: usize,
+    pub in_water: usize,
+    pub entries_seen: usize,
+    pub entries_told: usize,
+    pub respawned: usize,
 }
 
 pub(crate) fn new_px_scene(foundation: &mut PxFoundation) -> Owner<PxScene> {
@@ -264,6 +357,10 @@ pub(crate) fn new_px_scene(foundation: &mut PxFoundation) -> Owner<PxScene> {
         .expect("space_soup_engine: failed to create PxScene")
 }
 
+/// Where a hand's anchor is made, before its hand is known: far under any
+/// level.
+pub(crate) const HAND_ANCHOR_START_Y: f32 = -1.0e4;
+
 pub(crate) fn create_hand_anchor(
     foundation: &mut PxFoundation,
     scene: &mut Owner<PxScene>,
@@ -276,8 +373,13 @@ pub(crate) fn create_hand_anchor(
         return None;
     };
     let geo = PxSphereGeometry::new(0.035);
+    // MADE FAR FROM EVERYTHING, so that its first move to the hand is always
+    // a jump and never a sweep (`HAND_TELEPORT` in `step`). Made at the
+    // origin, an anchor whose hand was within half a metre of it swept there
+    // in one tick at 20 m/s, through whatever stood at the origin: a 60 kg
+    // block was thrown 20 m into the air.
     let Some(mut actor) = foundation.create_rigid_dynamic(
-        PxTransform::default(),
+        PxTransform::from_translation(&PxVec3::new(0.0, HAND_ANCHOR_START_Y, 0.0)),
         &geo,
         material.as_mut(),
         1.0,
@@ -310,18 +412,26 @@ impl PhysicsWorld {
             statics: HashMap::new(),
             hand_anchors: HashMap::new(),
             grabs: HashMap::new(),
+            parting: Vec::new(),
 
             scratch: unsafe { ScratchBuffer::new(4) },
             water: Vec::new(),
-            water_watch: crate::water::WaterWatch::default(),
             water_entries: Vec::new(),
             doors: HashMap::new(),
             door_hinges: HashMap::new(),
+            door_latches: HashMap::new(),
+            clock: 0.0,
+            respawn_cursor: 0,
+            respawn_all: false,
+            stats: StepStats::default(),
+            game_dir: std::path::PathBuf::new(),
+            hulls: HashMap::new(),
             level_floor: f32::INFINITY,
             kill_y: KILL_Y_HIGHEST,
             terrain_collider: TerrainCollider::from_env(),
             terrain_meshes: Vec::new(),
             terrain_height_fields: Vec::new(),
+            hull_meshes: Vec::new(),
         }
     }
 
@@ -443,6 +553,12 @@ impl PhysicsWorld {
                 unsafe { physx_sys::PxJoint_release_mut(state.joint) };
             }
         }
+        self.parting.retain(|p| {
+            if p.player == player {
+                unsafe { physx_sys::PxJoint_release_mut(p.joint) };
+            }
+            p.player != player
+        });
 
         for hand in [Hand::Left, Hand::Right] {
             let Some(ptr) = self.hand_anchors.remove(&(player, hand)) else {
@@ -475,10 +591,19 @@ impl PhysicsWorld {
         self.terrain_height_fields.clear();
         self.doors.clear();
         self.door_hinges.clear();
+        self.door_latches.clear();
+        self.respawn_cursor = 0;
+        self.respawn_all = false;
+        self.game_dir = game_dir.to_path_buf();
 
         self.grabs.clear();
+        self.parting.clear();
         self.hand_anchors.clear();
         self.scene = new_px_scene(&mut self.foundation);
+        // After the scene that held the bodies made of them (see the field
+        // order above).
+        self.hulls.clear();
+        self.hull_meshes.clear();
 
         // This level's floor, found again from nothing: each spawner below
         // lowers it as it builds (`note_floor`), so the cost is the load's own.

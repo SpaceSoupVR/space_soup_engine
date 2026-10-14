@@ -450,17 +450,131 @@ pub struct RecentWaterEntry {
 /// sixty a second, and well under the time its splash is in the air.
 pub const WATER_ENTRY_KEPT: f32 = 0.5;
 
-/// WHICH BODIES ARE IN THE WATER, so each going in is seen once.
+impl WaterEntry {
+    /// The energy it brought to the water, joules: half its mass by its
+    /// speed squared. What a splash is as big as, what a going-in again is
+    /// measured against ([`WaterState`]) and what decides which entries are
+    /// told of when there are too many ([`keep_most_energetic`]).
+    pub fn energy(&self) -> f32 {
+        0.5 * self.mass.max(0.0) * self.velocity.length_squared()
+    }
+}
+
+/// A body that goes in again soon after it went in splashes only if it comes
+/// with at least this share of the energy it had then...
+pub const REENTRY_SHARE: f32 = 0.5;
+/// ...a share that halves with every this many seconds since: the water it
+/// churned has settled, and a small plop shows on it again.
+pub const REENTRY_HALF_LIFE: f32 = 0.4;
+
+/// ONE BODY AND THE WATER: whether it is in, and what it last went in with.
 ///
 /// A body is in from the moment its underside is at the surface until it has
 /// come clear of it again -- by a quarter of its own width, and no less than
 /// two centimetres. Without that, one floating at the waterline, bobbing a
 /// millimetre either way, went in again every time it dipped: a splash a
 /// tenth of a second, for as long as it floated.
+///
+/// And one that does come clear and goes in again -- a stone skipping, a
+/// crate thrown up by its own buoyancy, a rock bouncing off a shallow bed --
+/// splashes again only by what it brings: at least [`REENTRY_SHARE`] of the
+/// energy of its last splash, less as that splash settles
+/// ([`REENTRY_HALF_LIFE`]). A skip keeps most of its speed and splashes; a bob
+/// keeps a tenth and does not. By the energy, not by a timer: two real
+/// strikes a tenth of a second apart are both seen.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct WaterState {
+    /// Its underside when last seen; none before it has been.
+    under: Option<f32>,
+    is_in: bool,
+    /// When it last splashed, and with what energy.
+    last: Option<(f64, f32)>,
+}
+
+impl WaterState {
+    /// Whether it was in the water when last seen.
+    pub fn is_in(&self) -> bool {
+        self.is_in
+    }
+
+    /// The body as it is at `now` (seconds on any steady clock; none where
+    /// there is no clock, and then every going-in counts): its `centre`, the
+    /// half extents of the box round it along the world's axes, how it is
+    /// moving and its mass; `surface` the still water's height where it is,
+    /// none over dry ground. Returns its entry (with no id) on the step it
+    /// goes in.
+    pub fn see(&mut self, now: Option<f64>, centre: glam::Vec3, half: glam::Vec3, velocity: glam::Vec3, mass: f32, surface: Option<f32>) -> Option<WaterEntry> {
+        let under = centre.y - half.y.abs();
+        let before = self.under.map(|was| (was, self.is_in));
+        self.under = Some(under);
+        let Some(surface) = surface else {
+            self.is_in = false;
+            return None;
+        };
+        let radius = (4.0 * half.x.abs() * half.z.abs() / std::f32::consts::PI).sqrt();
+        let clear = (0.5 * radius).max(0.02);
+        let was_in = before.is_some_and(|(_, was_in)| was_in);
+        self.is_in = if was_in { under <= surface + clear } else { under <= surface };
+        // First seen already under, it was placed there, not dropped.
+        let came_down = before.is_some_and(|(was, was_in)| !was_in && was > surface);
+        if !(self.is_in && came_down && -velocity.y >= ENTRY_SPEED) {
+            return None;
+        }
+        let entry = WaterEntry { id: String::new(), position: glam::Vec3::new(centre.x, surface, centre.z), velocity, radius, mass };
+        if let (Some(now), Some((when, energy))) = (now, self.last) {
+            let since = (now - when).max(0.0) as f32;
+            if entry.energy() < REENTRY_SHARE * energy * 0.5f32.powf(since / REENTRY_HALF_LIFE) {
+                return None;
+            }
+        }
+        if let Some(now) = now {
+            self.last = Some((now, entry.energy()));
+        }
+        Some(entry)
+    }
+}
+
+/// THE MOST ENERGETIC `cap` OF `entries`, in the order they were in: what is
+/// told of when more things strike the water at once than anyone can draw. The
+/// least energetic go first -- a hundred pebbles and a boulder is the boulder
+/// and the biggest pebbles -- and ties keep the earlier.
+pub fn keep_most_energetic(entries: &mut Vec<WaterEntry>, cap: usize) {
+    if entries.len() <= cap {
+        return;
+    }
+    if cap == 0 {
+        entries.clear();
+        return;
+    }
+    let mut energies: Vec<f32> = entries.iter().map(WaterEntry::energy).collect();
+    energies.sort_by(|a, b| b.total_cmp(a));
+    let floor = energies[cap - 1];
+    let mut ties = cap - energies.iter().filter(|e| **e > floor).count();
+    entries.retain(|e| {
+        let energy = e.energy();
+        if energy > floor {
+            true
+        } else if energy == floor && ties > 0 {
+            ties -= 1;
+            true
+        } else {
+            false
+        }
+    });
+}
+
+/// The most entries one step of a simulation tells of
+/// (`PhysicsWorld::step`), and the most a world tells of at once
+/// (`GameRuntime::water_entries`: in every snapshot for half a second).
+pub const MAX_ENTRIES_A_STEP: usize = 8;
+pub const MAX_ENTRIES_TOLD: usize = 32;
+
+/// WHICH BODIES ARE IN THE WATER, by name, so each going in is seen once: a
+/// [`WaterState`] each, for someone who only sees things move (the headset,
+/// for a server that does not tell). No clock, so every going-in counts.
 #[derive(Debug, Default, Clone)]
 pub struct WaterWatch {
-    /// Each body's underside when last seen, and whether it was in.
-    bodies: std::collections::HashMap<String, (f32, bool)>,
+    bodies: std::collections::HashMap<String, WaterState>,
 }
 
 impl WaterWatch {
@@ -469,25 +583,13 @@ impl WaterWatch {
     /// the still water's height where it is, none over dry ground. Returns
     /// its entry, on the step it goes in.
     pub fn see(&mut self, id: &str, centre: glam::Vec3, half: glam::Vec3, velocity: glam::Vec3, mass: f32, surface: Option<f32>) -> Option<WaterEntry> {
-        let under = centre.y - half.y.abs();
-        let before = self.bodies.get(id).copied();
-        let Some(surface) = surface else {
-            self.bodies.insert(id.to_string(), (under, false));
-            return None;
-        };
-        let radius = (4.0 * half.x.abs() * half.z.abs() / std::f32::consts::PI).sqrt();
-        let clear = (0.5 * radius).max(0.02);
-        let was_in = before.is_some_and(|(_, was_in)| was_in);
-        let is_in = if was_in { under <= surface + clear } else { under <= surface };
-        self.bodies.insert(id.to_string(), (under, is_in));
-        // First seen already under, it was placed there, not dropped.
-        let came_down = before.is_some_and(|(was, was_in)| !was_in && was > surface);
-        (is_in && came_down && -velocity.y >= ENTRY_SPEED).then(|| WaterEntry {
-            id: id.to_string(),
-            position: glam::Vec3::new(centre.x, surface, centre.z),
-            velocity,
-            radius,
-            mass,
+        if !self.bodies.contains_key(id) {
+            self.bodies.insert(id.to_string(), WaterState::default());
+        }
+        let state = self.bodies.get_mut(id)?;
+        state.see(None, centre, half, velocity, mass, surface).map(|mut e| {
+            e.id = id.to_string();
+            e
         })
     }
 

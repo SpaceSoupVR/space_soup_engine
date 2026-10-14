@@ -460,6 +460,14 @@ impl GameRuntime {
                 .collect();
         }
         for press in &input.button_presses {
+            // THE TESTER'S "BRING THE PROPS BACK": a press that belongs to no
+            // object and is named for it puts every loose body back where it
+            // started (`PhysicsWorld::respawn_props`). Which control sends
+            // it is the headset's to choose.
+            if press.object_id.is_none() && press.button == crate::events::RESPAWN_PROPS_BUTTON {
+                log::info!("respawn_props: asked for by {:?}", self.script_host.current_player());
+                self.rigid_physics.respawn_props();
+            }
             let Some(id) = &press.object_id else { continue };
             let hand = press.hand.unwrap_or_default();
             let _ = self.script_host.call(id, "on_press", (press.button.clone(),));
