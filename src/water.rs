@@ -104,6 +104,14 @@ pub struct WaterDef {
     /// all, where the sea stops a player thigh deep.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_wade_depth: Option<f32>,
+
+    /// A MIRROR: a small calm body -- a pond under a bank -- whose
+    /// reflection is the scene drawn mirrored in its surface when it is the
+    /// largest such body on the screen (the renderer's `planar_water`), not
+    /// the ground map's top-down picture, which smears a steep bank. Leave
+    /// it off for the sea: its waves break a mirror up anyway.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirror: bool,
 }
 
 /// The deepest water a walk goes into, metres, unless the water says
@@ -628,6 +636,7 @@ mod tests {
         swell: 0.0,
         name: None,
         max_wade_depth: None,
+        mirror: false,
         }
     }
 
