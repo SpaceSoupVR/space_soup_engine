@@ -338,6 +338,11 @@
           "name": "seed",
           "kind": "number",
           "optional": false
+        },
+        {
+          "name": "asset",
+          "kind": "text",
+          "optional": true
         }
       ]
     },

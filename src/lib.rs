@@ -4,6 +4,7 @@ pub mod audio;
 pub mod debug_protocol;
 pub mod events;
 pub mod grab_index;
+pub mod grab_target;
 pub mod locomotion;
 pub mod manifest;
 pub mod physics;

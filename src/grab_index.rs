@@ -193,6 +193,31 @@ impl GrabGrid {
         best.map(|(i, d)| (self.entries[i].id.as_str(), d))
     }
 
+    /// EVERY OBJECT WHOSE BOX IS WITHIN `reach` OF `point`, once each: its
+    /// id, pose, half size and how far its surface is (zero inside it). The
+    /// same cells [`Self::nearest`] reads, and the big things; for a hand's
+    /// targets (`grab_target`), which weigh more than the distance.
+    pub fn each_within(&self, point: Vec3, reach: f32, mut f: impl FnMut(&str, Vec3, Quat, Vec3, f32)) {
+        let mut seen: Vec<usize> = Vec::new();
+        let mut consider = |i: usize| {
+            if seen.contains(&i) {
+                return;
+            }
+            seen.push(i);
+            let e = &self.entries[i];
+            let d = distance_to_oriented_box(e.position, e.rotation, e.half, point);
+            if d <= reach {
+                f(&e.id, e.position, e.rotation, e.half, d);
+            }
+        };
+        each_cell((cell_of(point - Vec3::splat(reach)), cell_of(point + Vec3::splat(reach))), |c| {
+            if let Some(list) = self.cells.get(&c) {
+                list.iter().for_each(|&i| consider(i));
+            }
+        });
+        self.big.iter().for_each(|&i| consider(i));
+    }
+
     /// How many entries a query at `point` with `reach` reads: what it costs.
     pub fn read_by(&self, point: Vec3, reach: f32) -> usize {
         let mut n = self.big.len();
@@ -274,6 +299,33 @@ mod tests {
         assert!(found > 500, "the test's hands found only {found} things");
     }
 
+    /// `each_within` names every object asking every object names, once.
+    #[test]
+    fn each_within_finds_what_asking_every_object_finds_once() {
+        let objects = level(4000);
+        let g = filled(&objects);
+        for k in 0..1500u32 {
+            let o = &objects[(k as usize * 11) % 4000];
+            let point = o.1 + Vec3::new(mix(k + 5) - 0.5, mix(k + 6) - 0.5, mix(k + 7) - 0.5) * 0.8;
+            let mut got: Vec<String> = Vec::new();
+            g.each_within(point, 0.6, |id, _, _, _, d| {
+                assert!(d <= 0.6);
+                got.push(id.to_string());
+            });
+            let n = got.len();
+            got.sort();
+            got.dedup();
+            assert_eq!(got.len(), n, "an object was named twice at {point}");
+            let mut want: Vec<String> = objects
+                .iter()
+                .filter(|o| distance_to_oriented_box(o.1, o.2, o.3, point) <= 0.6)
+                .map(|o| o.0.clone())
+                .collect();
+            want.sort();
+            assert_eq!(got, want, "at {point}");
+        }
+    }
+
     /// A press reads what is near the hand, not the level: with four
     /// thousand things across a 200 m level, a handful and the big ones.
     #[test]
@@ -283,6 +335,11 @@ mod tests {
         let worst = (0..500u32).map(|k| g.read_by(objects[(k * 8) as usize].1, 0.15)).max().unwrap();
         eprintln!("4,002 objects: a query reads {worst} entries at most");
         assert!(worst <= 40, "a query read {worst} of {} entries", g.len());
+        // A hand's targets ask further (`grab_target::QUERY_REACH`): still
+        // what is near it.
+        let wide = (0..500u32).map(|k| g.read_by(objects[(k * 8) as usize].1, crate::grab_target::QUERY_REACH)).max().unwrap();
+        eprintln!("4,002 objects: a hand's targets read {wide} entries at most");
+        assert!(wide <= 200, "a target query read {wide} of {} entries", g.len());
         // Ten times the things in ten times the ground: no more read.
         assert_eq!(g.len(), 4002);
     }
