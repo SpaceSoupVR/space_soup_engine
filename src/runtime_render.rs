@@ -43,8 +43,20 @@ impl GameRuntime {
             // twelve overlapping crates -- so the client meshes brushes itself
             // from scene data it already has, and this list would only double
             // -draw them. See `hidden_brushes` for how it is told which to skip.
+            //
+            // Markers -- spawn points, reflection probes, trigger volumes -- carry
+            // a cuboid only as the editor's handle (the baker's `occludes_light`
+            // and `reflection_proxy::is_drawn_geometry` skip them too). Drawn in
+            // play, the hall's spawn point was a 10 cm green box half sunk in
+            // the marble floor.
             .filter(|o| {
-                !o.hidden && !self.damage.is_removed(o) && o.mesh.is_none() && o.brush.is_none()
+                !o.hidden
+                    && !self.damage.is_removed(o)
+                    && o.mesh.is_none()
+                    && o.brush.is_none()
+                    && o.spawn_point.is_none()
+                    && o.reflection_probe.is_none()
+                    && o.trigger_volume.is_none()
             })
             .map(|o| RenderCuboid {
                 id: o.id.clone(),

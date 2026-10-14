@@ -38,6 +38,11 @@ fn scene_json() -> String {
         {
           "id": "hologram",
           "cuboid": { "position": [0.0, 1.0, 20.0], "half_size": [2.0, 1.0, 0.25] }
+        },
+        {
+          "id": "spawn",
+          "cuboid": { "position": [0.0, 0.02, 30.0], "half_size": [0.05, 0.05, 0.05] },
+          "spawn_point": {}
         }
       ]
     }"#
@@ -90,6 +95,14 @@ fn a_collider_authored_off_is_absent_but_recoverable() {
     // there is still a definition to spawn a collider from.
     run(&mut rt, EngineCommand::SetObjectSolid { id: "open_gate".into(), solid: true });
     assert!(ray_hits(&rt, 10.0), "closing the gate must block the ray");
+}
+
+#[test]
+fn a_spawn_points_handle_is_never_drawn_in_play() {
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let rt = runtime("spawn_handle");
+    assert!(!drawn(&rt, "spawn"), "a spawn point's cuboid is the editor's handle, not geometry");
+    assert!(drawn(&rt, "hologram"), "a plain cuboid is still drawn");
 }
 
 #[test]

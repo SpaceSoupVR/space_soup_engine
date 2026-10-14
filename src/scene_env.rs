@@ -206,8 +206,8 @@ pub struct EffectDef {
     /// AN EFFECT ASSET by name (`game/effects/<asset>.json`, authored in the
     /// editor's effect editor): with it, `kind` is ignored and the asset's
     /// stack is drawn, `scale` sizing its sprites, `rate` its streams and
-    /// `tint` its colour (the variation fields are a template's and do not
-    /// apply). Without it, `kind` names the built-in template, as every scene
+    /// `tint` its colour, `intensity` its strength (a fog slab's density; the
+    /// other variation fields are a template's and do not apply). Without it, `kind` names the built-in template, as every scene
     /// before it did. Left out of the file when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
