@@ -197,6 +197,25 @@ impl PlayerRig {
         Self::default()
     }
 
+    /// THIS RIG CARRIED TO WHERE THE PLAYER HAS MOVED: every joint (all in
+    /// the world, `Locomotion::apply_to_head`) taken from the locomotion
+    /// `from` (offset, yaw) to `to` -- the rig `build_player_rig` would have
+    /// built after the move. The headset builds its rig before the frame's
+    /// locomotion step and draws the camera after it; drawn from the rig as
+    /// built, the body and hands trailed the camera by one step of the walk
+    /// (4-8 cm at 36 frames a second): ahead of the eyes walking BACKWARD,
+    /// so looking down showed more of the body than stands under them
+    /// (headset, 2026-10-14).
+    pub fn carried(&self, from: (Vec3, f32), to: (Vec3, f32)) -> PlayerRig {
+        let turn = Quat::from_rotation_y(to.1) * Quat::from_rotation_y(from.1).inverse();
+        let mut out = self.clone();
+        for t in out.joints.values_mut() {
+            t.position = to.0 + turn * (t.position - from.0);
+            t.rotation = (turn * t.rotation).normalize();
+        }
+        out
+    }
+
     pub fn get(&self, id: JointId) -> Option<Transform> {
         self.joints.get(&id).copied()
     }
@@ -253,6 +272,35 @@ impl PlayerRig {
 #[cfg(test)]
 mod wire_test {
     use super::*;
+
+    /// A rig built before a step and carried by it is the rig built after it.
+    #[test]
+    fn a_rig_carried_by_a_step_is_the_rig_built_after_it() {
+        use crate::locomotion::{Locomotion, LocomotionMode};
+        let tracked = [(JointId::Head, Vec3::new(0.4, 1.6, -0.3), Quat::from_rotation_x(-0.9)), (JointId::HandGrip(Hand::Left), Vec3::new(-0.2, 1.0, -0.5), Quat::from_rotation_z(0.3))];
+        let build = |l: &Locomotion| {
+            let mut rig = PlayerRig::new();
+            for (id, p, r) in tracked {
+                let (wp, wr) = l.apply_to_head(p, r);
+                rig.joints.insert(id, Transform::new(wp, wr));
+            }
+            rig
+        };
+        let mut l = Locomotion::new(LocomotionMode::Smooth);
+        l.player_offset = Vec3::new(3.0, 0.2, -1.0);
+        l.player_yaw = 0.7;
+        let before = build(&l);
+        let from = (l.player_offset, l.player_yaw);
+        l.player_offset += Vec3::new(-0.05, 0.0, 0.04);
+        l.player_yaw += 0.785;
+        let after = build(&l);
+        let carried = before.carried(from, (l.player_offset, l.player_yaw));
+        for (id, _, _) in tracked {
+            let (a, b) = (after.get(id).unwrap(), carried.get(id).unwrap());
+            assert!((a.position - b.position).length() < 1e-5, "{id:?}");
+            assert!(a.rotation.angle_between(b.rotation) < 1e-4, "{id:?}");
+        }
+    }
 
     #[test]
     fn player_rig_round_trips_through_json() {
