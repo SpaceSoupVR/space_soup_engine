@@ -108,6 +108,9 @@ impl PhysicsWorld {
     }
 
     pub fn despawn_actor(&mut self, id: &str) {
+        // Before the actor: a joint outliving one of its bodies is a dangling
+        // pointer the next step follows.
+        self.release_all(id);
         let Some(state) = self.dynamic.remove(id) else {
             return;
         };
@@ -152,37 +155,19 @@ impl PhysicsWorld {
             unsafe { (*ptr).set_kinematic_target(&target) };
         }
 
-        let zero = PxVec3::new(0.0, 0.0, 0.0);
-        // Under THIS level's floor (`PhysicsWorld::kill_y`, found at load),
-        // not under a height every level shared: at -15 for all of them, a
-        // prop resting on ground deeper than that was put back every tick.
-        let kill_y = self.kill_y;
-        for state in self.dynamic.values_mut() {
-            let fell_out = unsafe { (*state.ptr).get_global_pose() }.translation().y() < kill_y;
+        // The props that are lost come back, a few a step in turn: under THIS
+        // level's floor (`PhysicsWorld::kill_y`, found at load), sunk and
+        // settled, or asked for. See `respawn_round`.
+        self.clock += dt as f64;
+        self.respawn_round();
 
-            let due_for_timed_respawn = state
-                .respawn_interval
-                .map(|interval| {
-                    state.elapsed += dt;
-                    state.elapsed >= interval
-                })
-                .unwrap_or(false);
-
-            if !fell_out && !due_for_timed_respawn {
-                continue;
-            }
-            state.elapsed = 0.0;
-            let spawn = to_px_transform(state.spawn_pos, state.spawn_rot);
-
-            unsafe {
-                (*state.ptr).set_global_pose(&spawn, true);
-                (*state.ptr).set_linear_velocity(&zero, true);
-                (*state.ptr).set_angular_velocity(&zero, true);
-            }
-        }
-
-        // Bodies push doors before the step, which integrates the push.
+        // Bodies push doors before the step, which integrates the push; the
+        // water bears up and slows what is in it; a hand that has gone too
+        // far from what it held has let go.
         self.push_doors(rigs);
+        self.float_bodies(dt);
+        self.drop_far_grabs();
+        self.part_hands();
 
         if let Err(e) = self.scene.step(
             dt,
@@ -194,26 +179,6 @@ impl PhysicsWorld {
             return;
         }
 
-        for (id, state) in &self.dynamic {
-            let pose = unsafe { (*state.ptr).get_global_pose() };
-            let (pos, rot) = from_px_transform(&pose);
-            if let Some(obj) = scene.find_object_mut(id) {
-                obj.cuboid.position = pos;
-                obj.cuboid.rotation = rot;
-                // INTO THE WATER: seen as it goes in, with the speed and the
-                // mass physics has for it (`take_water_entries`).
-                if !self.water.is_empty() {
-                    let (v, mass) = unsafe { ((*state.ptr).get_linear_velocity(), (*state.ptr).get_mass()) };
-                    let half = crate::water::world_half_extents(obj.cuboid.half_size, rot);
-                    let surface = self.water.iter().filter_map(|w| w.surface_at(pos.x, pos.z)).reduce(f32::max);
-                    self.water_entries.extend(self.water_watch.see(id, pos, half, Vec3::new(v.x(), v.y(), v.z()), mass, surface));
-                }
-            }
-        }
-        // Never more waiting than a busy second makes, if nobody takes them.
-        if self.water_entries.len() > 256 {
-            let extra = self.water_entries.len() - 256;
-            self.water_entries.drain(..extra);
-        }
+        self.settle_bodies(scene);
     }
 }

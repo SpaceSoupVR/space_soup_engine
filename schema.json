@@ -123,6 +123,31 @@
           "name": "start_deg",
           "kind": "number",
           "optional": false
+        },
+        {
+          "name": "latch",
+          "kind": "bool",
+          "optional": false
+        },
+        {
+          "name": "handle",
+          "kind": "vec3",
+          "optional": true
+        },
+        {
+          "name": "lever",
+          "kind": "text",
+          "optional": true
+        },
+        {
+          "name": "pin_inset",
+          "kind": "number",
+          "optional": false
+        },
+        {
+          "name": "pin_offset",
+          "kind": "number",
+          "optional": false
         }
       ]
     },

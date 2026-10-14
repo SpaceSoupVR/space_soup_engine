@@ -118,7 +118,9 @@ fn a_body_dropped_into_water_is_reported_once_as_it_met_the_surface() {
     let mut body = GameObject { id: "box".into(), ..Default::default() };
     body.cuboid.position = Vec3::new(6.0, 2.2, 0.0);
     body.cuboid.half_size = Vec3::new(0.1, 0.1, 0.15);
-    body.rigid_body = Some(serde_json::from_str(r#"{"mode":"Dynamic","shape":"Box","mass":2.5}"#).unwrap());
+    // Stone: 30 kg in twelve litres. (At 2.5 kg, as this test first had it,
+    // the box is lighter than its water and floats: see the tests below.)
+    body.rigid_body = Some(serde_json::from_str(r#"{"mode":"Dynamic","shape":"Box","mass":30.0}"#).unwrap());
     scene.objects = vec![
         GameObject {
             id: "ground".into(),
@@ -142,7 +144,7 @@ fn a_body_dropped_into_water_is_reported_once_as_it_met_the_surface() {
     assert!((e.position - Vec3::new(6.0, 0.5, 0.0)).length() < 0.02, "{e:?}");
     // Its underside fell 1.6 m to the surface: 5.6 m/s.
     assert!((-e.velocity.y - (2.0f32 * 9.81 * 1.6).sqrt()).abs() < 0.3, "{e:?}");
-    assert!((e.mass - 2.5).abs() < 1e-3 && (e.radius - (4.0f32 * 0.1 * 0.15 / std::f32::consts::PI).sqrt()).abs() < 0.02, "{e:?}");
+    assert!((e.mass - 30.0).abs() < 1e-3 && (e.radius - (4.0f32 * 0.1 * 0.15 / std::f32::consts::PI).sqrt()).abs() < 0.02, "{e:?}");
     // It came to rest on the bed, under the surface.
     let rested = scene.find_object("box").unwrap().cuboid.position;
     assert!(rested.y < 0.3, "{rested:?}");

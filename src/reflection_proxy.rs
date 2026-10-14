@@ -308,7 +308,15 @@ pub fn door_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec
 pub fn reflection_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec3)]) -> Vec<ReflectionProxy> {
     let mut out = Vec::new();
     let mut bounds_cache: HashMap<String, Option<(Vec3, Vec3)>> = HashMap::new();
-    for (index, o) in objects.iter().enumerate().filter(|(_, o)| is_drawn_geometry(o)) {
+    // WHAT MOVES IS NEVER A STANDING PROXY: a door's lever rides its leaf
+    // (`DoorDef::lever`) and a loose body is wherever it was last thrown, so
+    // a proxy at where either stood when the level loaded is a reflection of
+    // something that is not there.
+    let levers: std::collections::HashSet<&str> = objects.iter().filter_map(|o| o.door.as_ref()?.lever.as_deref()).collect();
+    let moves = |o: &GameObject| {
+        levers.contains(o.id.as_str()) || o.rigid_body.as_ref().is_some_and(|b| b.mode == crate::scene_physics::BodyMode::Dynamic)
+    };
+    for (index, o) in objects.iter().enumerate().filter(|(_, o)| is_drawn_geometry(o) && !moves(o)) {
         if let Some(brush) = &o.brush {
             for solid in brush.evaluate() {
                 let Some((lo, hi)) = crate::brush::solid_bounds(&solid) else { continue };

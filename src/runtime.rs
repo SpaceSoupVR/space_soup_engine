@@ -507,6 +507,18 @@ impl GameRuntime {
             self.water_entries.push(crate::water::RecentWaterEntry { serial: self.next_water_entry, age: 0.0, entry });
             self.next_water_entry += 1;
         }
+        // NO MORE THAN `MAX_ENTRIES_TOLD` AT ONCE: every snapshot carries the
+        // whole list to every client. The least energetic go first.
+        while self.water_entries.len() > crate::water::MAX_ENTRIES_TOLD {
+            let least = self
+                .water_entries
+                .iter()
+                .enumerate()
+                .min_by(|a, b| a.1.entry.energy().total_cmp(&b.1.entry.energy()))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.water_entries.remove(least);
+        }
     }
 
     /// THE BODIES THAT WENT INTO THE WATER in the last

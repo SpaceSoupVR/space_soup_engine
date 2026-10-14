@@ -5,8 +5,8 @@ use glam::{Mat4, Quat, Vec3};
 use physx::prelude::*;
 
 use physx::cooking::{
-    create_height_field, create_triangle_mesh, PxCookingParams, PxHeightFieldDesc, PxTriangleMeshDesc,
-    TriangleMeshCookingResult,
+    create_convex_mesh, create_height_field, create_triangle_mesh, ConvexMeshCookingResult, PxConvexMeshDesc,
+    PxCookingParams, PxHeightFieldDesc, PxTriangleMeshDesc, TriangleMeshCookingResult,
 };
 use physx::height_field::{HeightFieldMaterial, HeightFieldSample};
 use physx::traits::Class;
@@ -247,10 +247,19 @@ impl PhysicsWorld {
         // How far down this collider reaches, for the level's floor
         // (`PhysicsWorld::level_floor`): a body resting on it, or starting as
         // it, is in the world.
-        let reach = match def.shape {
-            ColliderShape::Box => crate::water::world_half_extents(collider_half, obj.cuboid.rotation).y,
-            ColliderShape::Sphere { radius } => radius.abs(),
-            ColliderShape::Capsule { radius, half_height } => radius.abs() + half_height.abs(),
+        // A hull is cooked from the object's own model; where it cannot be --
+        // a static body, no model, a model that will not cook -- it is its box.
+        let hull = match (def.shape, def.mode) {
+            (ColliderShape::Hull, BodyMode::Kinematic | BodyMode::Dynamic) => self.hull_for(obj),
+            _ => None,
+        };
+        let reach = match (def.shape, hull) {
+            (ColliderShape::Hull, Some((_, centre, half, _))) => {
+                crate::water::world_half_extents(half, obj.cuboid.rotation).y - (obj.cuboid.rotation * centre).y
+            }
+            (ColliderShape::Box | ColliderShape::Hull, _) => crate::water::world_half_extents(collider_half, obj.cuboid.rotation).y,
+            (ColliderShape::Sphere { radius }, _) => radius.abs(),
+            (ColliderShape::Capsule { radius, half_height }, _) => radius.abs() + half_height.abs(),
         };
         let centre = obj.cuboid.position + obj.cuboid.rotation * Vec3::from(def.collider_offset);
         self.note_floor(centre.y - reach);
@@ -258,7 +267,7 @@ impl PhysicsWorld {
         match def.mode {
             BodyMode::Static => {
                 let created = match def.shape {
-                    ColliderShape::Box => {
+                    ColliderShape::Box | ColliderShape::Hull => {
                         let geo =
                             PxBoxGeometry::new(collider_half.x, collider_half.y, collider_half.z);
                         self.foundation.create_rigid_static(
@@ -310,8 +319,38 @@ impl PhysicsWorld {
                 }
             }
             BodyMode::Kinematic | BodyMode::Dynamic => {
-                let created = match def.shape {
-                    ColliderShape::Box => {
+                // The box round the collider in the body's frame, and the
+                // water it pushes aside: what bears it up (`float_bodies`).
+                let (bounds_half, volume) = match (def.shape, hull) {
+                    (ColliderShape::Hull, Some((_, _, half, volume))) => (half, volume),
+                    (ColliderShape::Box | ColliderShape::Hull, _) => (collider_half.abs(), 8.0 * collider_half.abs().element_product()),
+                    (ColliderShape::Sphere { radius }, _) => (Vec3::splat(radius.abs()), 4.0 / 3.0 * std::f32::consts::PI * radius.abs().powi(3)),
+                    (ColliderShape::Capsule { radius, half_height }, _) => {
+                        let r = radius.abs();
+                        (
+                            Vec3::new(r + half_height.abs(), r, r),
+                            std::f32::consts::PI * r * r * (2.0 * half_height.abs() + 4.0 / 3.0 * r),
+                        )
+                    }
+                };
+                let created = match (def.shape, hull) {
+                    (ColliderShape::Hull, Some((index, ..))) => {
+                        let scale = unsafe { physx_sys::PxMeshScale_new() };
+                        let geo = PxConvexMeshGeometry::new(
+                            self.hull_meshes[index].as_mut(),
+                            &scale,
+                            ConvexMeshGeometryFlags::TightBounds,
+                        );
+                        self.foundation.create_rigid_dynamic(
+                            transform,
+                            &geo,
+                            material.as_mut(),
+                            1.0,
+                            PxTransform::default(),
+                            (),
+                        )
+                    }
+                    (ColliderShape::Box | ColliderShape::Hull, _) => {
                         let geo =
                             PxBoxGeometry::new(collider_half.x, collider_half.y, collider_half.z);
                         self.foundation.create_rigid_dynamic(
@@ -323,7 +362,7 @@ impl PhysicsWorld {
                             (),
                         )
                     }
-                    ColliderShape::Sphere { radius } => {
+                    (ColliderShape::Sphere { radius }, _) => {
                         let geo = PxSphereGeometry::new(radius);
                         self.foundation.create_rigid_dynamic(
                             transform,
@@ -334,10 +373,7 @@ impl PhysicsWorld {
                             (),
                         )
                     }
-                    ColliderShape::Capsule {
-                        radius,
-                        half_height,
-                    } => {
+                    (ColliderShape::Capsule { radius, half_height }, _) => {
                         let geo = PxCapsuleGeometry::new(radius, half_height);
                         self.foundation.create_rigid_dynamic(
                             transform,
@@ -351,7 +387,20 @@ impl PhysicsWorld {
                 };
                 match created {
                     Some(mut actor) => {
+                        // ITS MASS AND THE INERTIA THAT GOES WITH IT. The
+                        // actor is made at a density of one, and `set_mass`
+                        // alone left it turning as if it still weighed what
+                        // that makes it -- a 2.5 kg box with the inertia of
+                        // twelve grams, spun by any touch off its centre.
                         actor.set_mass(mass);
+                        unsafe {
+                            physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(
+                                &mut *actor as *mut PxRigidDynamic as *mut physx_sys::PxRigidBody,
+                                mass,
+                                std::ptr::null(),
+                                false,
+                            );
+                        }
                         if def.mode == BodyMode::Kinematic {
                             actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
                             let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
@@ -361,20 +410,27 @@ impl PhysicsWorld {
                             actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
 
                             actor.set_solver_iteration_counts(8, 2);
+                            // PUSHED OUT OF WHAT IT IS IN AT A WALKING PACE.
+                            // A hand is a kinematic sphere and goes where
+                            // the player puts it: pressed into a rock lying
+                            // on the ground it made a contact nothing could
+                            // satisfy, and at the default (unbounded) speed
+                            // the rock left for the sky -- a 60 kg block
+                            // reached 20 m.
+                            unsafe {
+                                physx_sys::PxRigidBody_setMaxDepenetrationVelocity_mut(
+                                    &mut *actor as *mut PxRigidDynamic as *mut physx_sys::PxRigidBody,
+                                    2.0,
+                                );
+                            }
                             let vel = to_px_vec3(def.linear_velocity);
                             actor.set_linear_velocity(&vel, true);
                             let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
                             self.scene.add_dynamic_actor(actor);
-                            self.dynamic.insert(
-                                obj.id.clone(),
-                                DynamicActor {
-                                    ptr,
-                                    spawn_pos: obj.cuboid.position,
-                                    spawn_rot: obj.cuboid.rotation,
-                                    respawn_interval: def.respawn_interval,
-                                    elapsed: 0.0,
-                                },
-                            );
+                            let mut body = DynamicActor::new(ptr, obj.cuboid.position, obj.cuboid.rotation, bounds_half, volume);
+                            body.respawn_interval = def.respawn_interval;
+                            body.respawn_sunk = def.respawn_sunk;
+                            self.dynamic.insert(obj.id.clone(), body);
                         }
                     }
                     None => log::warn!(
@@ -386,6 +442,72 @@ impl PhysicsWorld {
         }
 
         self.materials.push(material);
+    }
+
+    /// THE HULL OF AN OBJECT'S MODEL, cooked once for each model file and
+    /// scale however many objects use it: its index in `hull_meshes`, the
+    /// centre and half extents of the box round it in the object's frame, and
+    /// its volume. The model's points are taken as the renderer draws them
+    /// (scaled, then turned by the mesh's own offset) and PhysX keeps at most
+    /// 32 of the hull's corners. `None`, with a warning, where there is no
+    /// model or it will not cook.
+    fn hull_for(&mut self, obj: &GameObject) -> Option<(usize, Vec3, Vec3, f32)> {
+        let mesh = obj.mesh.as_ref()?;
+        let key = format!("{}|{:?}|{:?}", mesh.path, mesh.scale.to_array(), mesh.rotation_offset.to_array());
+        if let Some(found) = self.hulls.get(&key) {
+            return Some(*found);
+        }
+        let path = self.game_dir.join(&mesh.path);
+        // Positions only: the document and its buffers, never its images.
+        let read = gltf::Gltf::open(&path).ok().and_then(|g| {
+            let buffers = gltf::import_buffers(&g.document, path.parent(), g.blob.clone()).ok()?;
+            Some((g.document, buffers))
+        });
+        let Some((doc, buffers)) = read else {
+            log::warn!("rigid_physics: hull of '{}': '{}' could not be read; it is its box", obj.id, path.display());
+            return None;
+        };
+        let mut points: Vec<PxVec3> = Vec::new();
+        for (mesh_index, node) in collect_terrain_instances(&doc, None) {
+            let Some(m) = doc.meshes().nth(mesh_index) else { continue };
+            let (local, _) = read_mesh_geometry(&m, &buffers);
+            points.extend(local.iter().map(|p| {
+                let p = mesh.rotation_offset * (mesh.scale * node.transform_point3(Vec3::new(p.x(), p.y(), p.z())));
+                PxVec3::new(p.x, p.y, p.z)
+            }));
+        }
+        if points.len() < 4 {
+            log::warn!("rigid_physics: hull of '{}': '{}' has no geometry; it is its box", obj.id, path.display());
+            return None;
+        }
+        let params = PxCookingParams::new(&self.foundation)?;
+        let mut desc = PxConvexMeshDesc::new();
+        desc.obj.points.count = points.len() as u32;
+        desc.obj.points.stride = std::mem::size_of::<PxVec3>() as u32;
+        desc.obj.points.data = points.as_ptr() as *const std::ffi::c_void;
+        desc.obj.flags = physx_sys::PxConvexFlags::ComputeConvex;
+        desc.obj.vertexLimit = 32;
+        let ConvexMeshCookingResult::Success(hull) = create_convex_mesh(&mut self.foundation, &params, &desc) else {
+            log::warn!("rigid_physics: hull of '{}' did not cook; it is its box", obj.id);
+            return None;
+        };
+        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for p in hull.get_vertices() {
+            let p = Vec3::new(p.x(), p.y(), p.z());
+            lo = lo.min(p);
+            hi = hi.max(p);
+        }
+        // At a density of one its mass is its volume.
+        let mut volume = 0.0f32;
+        unsafe {
+            let mut inertia: physx_sys::PxMat33 = std::mem::zeroed();
+            let mut centre: physx_sys::PxVec3 = std::mem::zeroed();
+            physx_sys::PxConvexMesh_getMassInformation(hull.as_ptr(), &mut volume, &mut inertia, &mut centre);
+        }
+        self.hull_meshes.push(hull);
+        let found = (self.hull_meshes.len() - 1, (lo + hi) * 0.5, (hi - lo) * 0.5, volume.max(1e-9));
+        self.hulls.insert(key, found);
+        Some(found)
     }
 
     pub(crate) fn spawn_slider_joint(&mut self, obj: &GameObject, def: &SliderJointDef) {

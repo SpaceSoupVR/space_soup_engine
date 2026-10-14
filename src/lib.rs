@@ -3,6 +3,7 @@ pub mod attach;
 pub mod audio;
 pub mod debug_protocol;
 pub mod events;
+pub mod grab_index;
 pub mod locomotion;
 pub mod manifest;
 pub mod physics;
@@ -13,6 +14,7 @@ mod rigid_physics_grab;
 mod rigid_physics_query;
 mod rigid_physics_spawn;
 mod rigid_physics_door;
+pub mod rigid_physics_water;
 pub mod runtime;
 mod runtime_animation;
 mod runtime_dispatch;
@@ -29,6 +31,8 @@ mod runtime_tests_physics;
 mod rigid_physics_brush_tests;
 #[cfg(test)]
 mod rigid_physics_water_tests;
+#[cfg(test)]
+mod rigid_physics_hold_tests;
 #[cfg(test)]
 mod rigid_physics_level_tests;
 #[cfg(test)]

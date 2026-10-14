@@ -353,6 +353,11 @@ fn door_fields() -> Vec<FieldDescriptor> {
             closer,
             surface_friction,
             start_deg,
+            latch,
+            handle,
+            lever,
+            pin_inset,
+            pin_offset,
         } = d;
     }
     vec![
@@ -364,6 +369,11 @@ fn door_fields() -> Vec<FieldDescriptor> {
         field!(closer, Number),
         field!(surface_friction, Number),
         field!(start_deg, Number),
+        field!(latch, Bool),
+        field!(handle, Vec3, opt),
+        field!(lever, Text, opt),
+        field!(pin_inset, Number),
+        field!(pin_offset, Number),
     ]
 }
 
@@ -558,7 +568,7 @@ mod tests {
         assert_eq!(effect.fields[0].variants, &["fire", "smoke", "embers", "dust", "coals"]);
 
         let door = by("door");
-        assert_eq!(door.fields.len(), 8, "DoorDef has 8 fields");
+        assert_eq!(door.fields.len(), 13, "DoorDef has 13 fields");
         assert_eq!(door.fields[0].variants, &["Left", "Right"]);
 
         let teleportal = by("teleportal");
