@@ -683,6 +683,32 @@ impl WeatherField {
         }
     }
 
+    /// THE `room` AREAS NEAREST `from` (world x, z), where a level has more
+    /// than the maps hold -- kept in the scene's own order -- and which of
+    /// `defs` were left out, by index. [`Self::new`] keeps the first
+    /// [`MAX_AREAS`] in the file whatever is near; the headset's client gives
+    /// the sea's washed shore its layer first and asks for the rest here, from
+    /// where the player starts (`quest_app::weather_render`). Nearest by the
+    /// area's footprint: 0 for one `from` stands in.
+    ///
+    /// WHAT IT COSTS: a distance an area at load; the ground under an area
+    /// (`WeatherGround::build`, a ray a texel) only for the ones kept, so a
+    /// level's load no longer follows the areas it cannot show.
+    pub fn nearest(defs: &[WeatherDef], cover: impl Fn(f32, f32) -> Option<f32>, from: [f32; 2], room: usize) -> (Self, Vec<usize>) {
+        let distance = |d: &WeatherDef| {
+            let (x0, z0, x1, z1) = d.extent();
+            let (dx, dz) = ((x0 - from[0]).max(from[0] - x1).max(0.0), (z0 - from[1]).max(from[1] - z1).max(0.0));
+            dx * dx + dz * dz
+        };
+        let mut order: Vec<usize> = (0..defs.len()).collect();
+        order.sort_by(|&a, &b| distance(&defs[a]).partial_cmp(&distance(&defs[b])).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b)));
+        let mut kept: Vec<usize> = order.iter().copied().take(room.min(MAX_AREAS)).collect();
+        kept.sort_unstable();
+        let dropped = (0..defs.len()).filter(|i| !kept.contains(i)).collect();
+        let areas = kept.iter().map(|&i| (defs[i].clone(), WeatherGround::build(&defs[i], &cover), WeatherState::start(&defs[i]))).collect();
+        (Self { areas }, dropped)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.areas.is_empty()
     }
@@ -978,6 +1004,42 @@ mod tests {
             std::hint::black_box(surface(&d, &g, &s));
         }
         eprintln!("{}x{} texels: ground {:?}, map {:?} each", g.nx, g.nz, built, t.elapsed() / n);
+    }
+
+    /// A LEVEL WITH MORE AREAS THAN THE MAPS HOLD KEEPS THE ONES NEAREST THE
+    /// PLAYER, and says which it left out: 40 areas in a row 30 m apart, a
+    /// player standing in the 31st. The first four in the file (what `new`
+    /// keeps) are 800 m away; the nearest four are round the player, in the
+    /// file's order, and only their ground was built (a ray a texel).
+    #[test]
+    fn of_more_areas_than_the_maps_hold_the_nearest_are_kept_and_the_rest_named() {
+        let defs: Vec<WeatherDef> = (0..40)
+            .map(|k| serde_json::from_str(&format!(r#"{{"bounds": [{}, 0, {}, 16]}}"#, k * 30, k * 30 + 16)).unwrap())
+            .collect();
+        let asked = std::cell::Cell::new(0usize);
+        let cover = |_: f32, _: f32| {
+            asked.set(asked.get() + 1);
+            Some(0.0)
+        };
+        let (field, dropped) = WeatherField::nearest(&defs, cover, [30.0 * 30.0 + 8.0, 8.0], MAX_AREAS);
+        let kept: Vec<f32> = field.areas.iter().map(|(d, ..)| d.extent().0).collect();
+        // (The 29th and the 33rd are as far: the earlier in the file is kept.)
+        assert_eq!(kept, vec![28.0 * 30.0, 29.0 * 30.0, 30.0 * 30.0, 31.0 * 30.0]);
+        assert_eq!(dropped.len(), 36);
+        assert!(!dropped.contains(&30) && dropped.contains(&0));
+        let for_four = asked.get();
+        // The old way: the first four in the file, none of them near.
+        let first = WeatherField::new(&defs, flat);
+        assert_eq!(first.areas[3].0.extent().0, 90.0);
+        // Room for two (a shore took the others): the two nearest, and half the rays.
+        asked.set(0);
+        let (two, dropped) = WeatherField::nearest(&defs, cover, [30.0 * 30.0 + 8.0, 8.0], 2);
+        assert_eq!((two.areas.len(), dropped.len()), (2, 38));
+        assert_eq!(two.areas[0].0.extent().0, 29.0 * 30.0, "a tie goes to the earlier area");
+        assert_eq!(asked.get() * 2, for_four);
+        // A level inside the table loses nothing.
+        let (all, none) = WeatherField::nearest(&defs[..3], flat, [0.0, 0.0], MAX_AREAS);
+        assert_eq!((all.areas.len(), none.len()), (3, 0));
     }
 
     #[test]

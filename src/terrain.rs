@@ -134,6 +134,41 @@ pub trait TerrainSource: Send + Sync {
     /// chunks get a coarse step, which is the whole reason this is a region
     /// query rather than a whole-world one.
     fn patch(&self, region: Aabb, step: u32) -> TerrainPatch;
+
+    /// The lowest the ground gets, world y. What physics takes as the level's
+    /// floor (`PhysicsWorld::kill_height`): anything under it has fallen out
+    /// of the world.
+    ///
+    /// The bottom of `bounds` unless a source knows better. That is never too
+    /// high -- no ground lies under its own bounds -- and a source that knows
+    /// its real lowest point should say so, since a floor set too low only
+    /// makes a fallen prop wait longer to be put back.
+    fn lowest_height(&self) -> f32 {
+        self.bounds().min.y
+    }
+
+    /// This source as the regular grid of heights it is, if it is one.
+    ///
+    /// For a consumer that can hold a grid far more cheaply than its
+    /// triangles: physics gives PhysX a height field, four bytes a sample,
+    /// instead of cooking `patch(bounds, 1)` into a triangle mesh
+    /// (`PhysicsWorld::spawn_scene_terrain`). `None` for any other kind of
+    /// source, which is then asked for triangles as before.
+    fn as_heightfield(&self) -> Option<&Heightfield> {
+        None
+    }
+}
+
+/// WHICH WAY A QUAD OF THE GROUND IS SPLIT, from its four corner heights
+/// (`a` at the low x and z, `b` one step along x, `c` one step along z, `d`
+/// opposite `a`): `true` for the diagonal b-c, `false` for a-d.
+///
+/// ONE rule, asked by the mesher ([`TerrainSource::patch`]) and by physics'
+/// height field (`Heightfield::cell_splits_through_first_sample`), so a ray
+/// lands on the triangle that is drawn. See the mesher for why the shorter
+/// diagonal.
+fn splits_b_to_c(ha: f32, hb: f32, hc: f32, hd: f32) -> bool {
+    (hb - hc).abs() <= (ha - hd).abs()
 }
 
 /// A regular grid of heights.
@@ -246,6 +281,25 @@ impl TerrainSource for Heightfield {
         }
     }
 
+    /// The lowest sample, and the lowest vertex of the ground the caves put
+    /// back: one pass over the samples, asked once a level load.
+    fn lowest_height(&self) -> f32 {
+        let (mut least, mut most) = (u16::MAX, 0u16);
+        for &raw in &self.samples {
+            least = least.min(raw);
+            most = most.max(raw);
+        }
+        let [lo, hi] = self.height_range;
+        let at = |raw: u16| self.origin.y + lo + (raw as f32 / u16::MAX as f32) * (hi - lo);
+        // Both ends, so a range written upside down is still answered.
+        let ground = at(least).min(at(most));
+        self.ground_patch.iter().flat_map(|p| p.positions.iter()).fold(ground, |low, p| low.min(p.y))
+    }
+
+    fn as_heightfield(&self) -> Option<&Heightfield> {
+        Some(self)
+    }
+
     fn height_at(&self, x: f32, z: f32) -> Option<f32> {
         let local_x = x - self.origin.x;
         let local_z = z - self.origin.z;
@@ -274,18 +328,7 @@ impl TerrainSource for Heightfield {
 
     fn patch(&self, region: Aabb, step: u32) -> TerrainPatch {
         let step = step.max(1);
-        let (dx, dz) = self.step_metres();
-
-        // Sample indices covering the region, clamped to the field and widened
-        // by one so adjacent patches share an edge instead of leaving a crack.
-        let to_index = |world: f32, origin: f32, spacing: f32, max: u32| -> u32 {
-            let i = ((world - origin) / spacing).floor();
-            if i < 0.0 { 0 } else { (i as u32).min(max) }
-        };
-        let x0 = to_index(region.min.x, self.origin.x, dx, self.resolution[0] - 1);
-        let x1 = to_index(region.max.x, self.origin.x, dx, self.resolution[0] - 1);
-        let z0 = to_index(region.min.z, self.origin.z, dz, self.resolution[1] - 1);
-        let z1 = to_index(region.max.z, self.origin.z, dz, self.resolution[1] - 1);
+        let (x0, x1, z0, z1) = self.sample_span(region);
 
         let mut patch = TerrainPatch::default();
         if x1 <= x0 || z1 <= z0 {
@@ -317,16 +360,8 @@ impl TerrainSource for Heightfield {
                 // distance. Centre sampling makes that error symmetric rather
                 // than biased toward holes growing or shrinking, and physics
                 // always cooks at step 1 where it is exact.
-                if self.holes.is_some() {
-                    let cx = (self.world_position(xs[col as usize], iz_at(&zs, row)).x
-                        + self.world_position(xs[col as usize + 1], iz_at(&zs, row + 1)).x)
-                        * 0.5;
-                    let cz = (self.world_position(xs[col as usize], iz_at(&zs, row)).z
-                        + self.world_position(xs[col as usize + 1], iz_at(&zs, row + 1)).z)
-                        * 0.5;
-                    if self.is_hole_at(cx, cz) {
-                        continue;
-                    }
+                if self.quad_is_open(xs[col as usize], xs[col as usize + 1], iz_at(&zs, row), iz_at(&zs, row + 1)) {
+                    continue;
                 }
 
                 // Split along the SHORTER diagonal rather than always the
@@ -356,7 +391,7 @@ impl TerrainSource for Heightfield {
                 // other way and every one of them lit inside-out without
                 // erroring, so a second winding is a second chance to make that
                 // mistake. They are asserted equivalent in the tests.
-                if (hb - hc).abs() <= (ha - hd).abs() {
+                if splits_b_to_c(ha, hb, hc, hd) {
                     patch.indices.extend_from_slice(&[a, c, b, b, c, d]);
                 } else {
                     patch.indices.extend_from_slice(&[a, c, d, a, d, b]);
@@ -370,13 +405,8 @@ impl TerrainSource for Heightfield {
         // so whoever computes normals from these triangles gets one normal
         // there for both sides of the join.
         if let Some(extra) = &self.ground_patch {
-            let inside = |p: Vec3| p.x >= region.min.x && p.x <= region.max.x && p.z >= region.min.z && p.z <= region.max.z;
             let mut mapped: Vec<Option<u32>> = vec![None; extra.positions.len()];
-            for tri in extra.indices.chunks_exact(3) {
-                let corners = [0, 1, 2].map(|k| extra.positions[tri[k] as usize]);
-                if !inside((corners[0] + corners[1] + corners[2]) / 3.0) {
-                    continue;
-                }
+            for tri in extra.triangles_in(region) {
                 for &i in tri {
                     let i = i as usize;
                     let at = match mapped[i] {
@@ -1377,6 +1407,19 @@ impl GroundPatch {
         }
         Ok(out)
     }
+
+    /// The triangles of the patch a region takes, three indices each: those
+    /// whose centre is over it. ONE rule for the mesher, which appends them
+    /// to the grid's triangles ([`TerrainSource::patch`]), and for physics,
+    /// which cooks them beside its height field -- so the two never disagree
+    /// about a triangle at the region's edge.
+    pub fn triangles_in(&self, region: Aabb) -> impl Iterator<Item = &[u32]> + '_ {
+        self.indices.chunks_exact(3).filter(move |tri| {
+            let corners = [0, 1, 2].map(|k| self.positions[tri[k] as usize]);
+            let p = (corners[0] + corners[1] + corners[2]) / 3.0;
+            p.x >= region.min.x && p.x <= region.max.x && p.z >= region.min.z && p.z <= region.max.z
+        })
+    }
 }
 
 fn iz_at(zs: &[u32], row: u32) -> u32 {
@@ -1418,6 +1461,95 @@ impl Heightfield {
         }
         let (ix, iz) = (ix as u32, iz as u32);
         (self.world_position(ix, iz) == p).then_some((ix, iz))
+    }
+
+    /// Samples along x and z.
+    pub fn resolution(&self) -> [u32; 2] {
+        self.resolution
+    }
+
+    /// Metres covered along x and z.
+    pub fn size(&self) -> [f32; 2] {
+        self.size
+    }
+
+    /// The heights the lowest and the highest sample value stand for, above
+    /// `origin().y`.
+    pub fn height_range(&self) -> [f32; 2] {
+        self.height_range
+    }
+
+    /// The world position of sample (0, 0) at height 0.
+    pub fn origin(&self) -> Vec3 {
+        self.origin
+    }
+
+    /// Metres between samples along x and z.
+    pub fn cell_size(&self) -> [f32; 2] {
+        let (dx, dz) = self.step_metres();
+        [dx, dz]
+    }
+
+    /// The samples as stored: row-major, x fastest, `resolution()[0]` a row.
+    pub fn raw_samples(&self) -> &[u16] {
+        &self.samples
+    }
+
+    /// The samples a region reaches, as `(x0, x1, z0, z1)`: what the mesher
+    /// covers for it.
+    fn sample_span(&self, region: Aabb) -> (u32, u32, u32, u32) {
+        let (dx, dz) = self.step_metres();
+
+        // Sample indices covering the region, clamped to the field and widened
+        // by one so adjacent patches share an edge instead of leaving a crack.
+        let to_index = |world: f32, origin: f32, spacing: f32, max: u32| -> u32 {
+            let i = ((world - origin) / spacing).floor();
+            if i < 0.0 { 0 } else { (i as u32).min(max) }
+        };
+        (
+            to_index(region.min.x, self.origin.x, dx, self.resolution[0] - 1),
+            to_index(region.max.x, self.origin.x, dx, self.resolution[0] - 1),
+            to_index(region.min.z, self.origin.z, dz, self.resolution[1] - 1),
+            to_index(region.max.z, self.origin.z, dz, self.resolution[1] - 1),
+        )
+    }
+
+    /// How many cells along x and z `patch(bounds(), 1)` meshes: every one,
+    /// `resolution - 1`, unless the far edge's own arithmetic falls a hair
+    /// short of the last sample -- an origin and size whose sum rounds down --
+    /// and the last row or column is left out. Physics' height field leaves
+    /// out the same cells, so it is the ground that is drawn (and that was
+    /// cooked) to the last cell rather than nearly.
+    pub fn meshed_cells(&self) -> [u32; 2] {
+        let (_, x1, _, z1) = self.sample_span(self.bounds());
+        [x1, z1]
+    }
+
+    /// Whether the quad between samples `x0..x1` and `z0..z1` has no ground:
+    /// the hole mask read at the quad's centre. What the mesher skips, at any
+    /// step.
+    fn quad_is_open(&self, x0: u32, x1: u32, z0: u32, z1: u32) -> bool {
+        if self.holes.is_none() {
+            return false;
+        }
+        let (near, far) = (self.world_position(x0, z0), self.world_position(x1, z1));
+        self.is_hole_at((near.x + far.x) * 0.5, (near.z + far.z) * 0.5)
+    }
+
+    /// Whether cell (`ix`, `iz`) -- the quad whose lowest corner is that
+    /// sample -- has no ground: exactly the cells `patch(_, 1)` leaves out,
+    /// by the mesher's own test. For physics' height field, whose holes have
+    /// to be the drawn ones.
+    pub fn cell_is_open(&self, ix: u32, iz: u32) -> bool {
+        self.quad_is_open(ix, ix + 1, iz, iz + 1)
+    }
+
+    /// Whether cell (`ix`, `iz`) is split along the diagonal that starts at
+    /// its own sample (and runs to sample `ix + 1, iz + 1`), rather than the
+    /// one between the other two corners: exactly the split `patch(_, 1)`
+    /// draws there, by the mesher's own rule.
+    pub fn cell_splits_through_first_sample(&self, ix: u32, iz: u32) -> bool {
+        !splits_b_to_c(self.sample(ix, iz), self.sample(ix + 1, iz), self.sample(ix, iz + 1), self.sample(ix + 1, iz + 1))
     }
 
     /// Whether a world x/z sits over an open cell.
