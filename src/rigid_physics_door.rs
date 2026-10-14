@@ -99,6 +99,10 @@ impl PhysicsWorld {
                 obj.id.clone(),
                 DynamicActor { ptr, spawn_pos: pos, spawn_rot: rot, respawn_interval: None, elapsed: 0.0 },
             );
+            // The leaf's lowest edge, for the level's floor: a door is a
+            // dynamic body, and one hung under the kill height would be put
+            // back every tick.
+            self.note_floor(pos.y - crate::water::world_half_extents(h, rot).y);
         }
         let Some(child) = self.dynamic.get(&obj.id) else { return };
 

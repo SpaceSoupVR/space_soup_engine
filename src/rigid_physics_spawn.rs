@@ -5,14 +5,16 @@ use glam::{Mat4, Quat, Vec3};
 use physx::prelude::*;
 
 use physx::cooking::{
-    create_triangle_mesh, PxCookingParams, PxTriangleMeshDesc, TriangleMeshCookingResult,
+    create_height_field, create_triangle_mesh, PxCookingParams, PxHeightFieldDesc, PxTriangleMeshDesc,
+    TriangleMeshCookingResult,
 };
+use physx::height_field::{HeightFieldMaterial, HeightFieldSample};
 use physx::traits::Class;
 use physx::triangle_mesh::TriangleMesh;
 
 use crate::rigid_physics::{
     calculated_mass, to_px_transform, to_px_vec3, to_raw_transform, DynamicActor, PhysicsWorld,
-    PxFoundation, PxRigidDynamic, PxRigidStatic, DEFAULT_DENSITY,
+    PxFoundation, PxRigidDynamic, PxRigidStatic, TerrainCollider, DEFAULT_DENSITY,
 };
 use crate::scene::{BodyMode, ColliderShape, GameObject, RigidBodyDef, SliderJointDef, TerrainColliderDef};
 use crate::brush::{self, BrushDef};
@@ -129,6 +131,85 @@ fn cook_triangle_mesh(
     }
 }
 
+/// THE GROUND THE CAVES PUT BACK, AS MESHES TO COOK: the triangles of a
+/// [`crate::terrain::GroundPatch`] that `region` takes, in batches of a few
+/// thousand, each with the vertices it uses and no others.
+///
+/// One mesh of all of them would do, and cost what one large cook costs: the
+/// working memory of a cook follows the mesh it is given, and a process keeps
+/// what its largest moment took (48 caves' patches, 504,048 triangles: 131 MB
+/// as one mesh). Cooked a batch at a time the working memory is a batch's,
+/// used again for the next.
+///
+/// A batch is whole CONNECTED PIECES -- triangles that share a vertex stay in
+/// one mesh -- so no edge inside a piece of ground becomes the rim of a mesh,
+/// which a sliding body would feel as a ridge. A piece larger than a batch is
+/// a batch by itself. Pieces are taken in the order the patch stores them,
+/// which is a cave at a time, so a batch is also a place.
+///
+/// COST: one pass over the patch's triangles and vertices; nothing of the
+/// level's size.
+pub(crate) fn ground_patch_batches(extra: &crate::terrain::GroundPatch, region: crate::physics::Aabb) -> Vec<(Vec<PxVec3>, Vec<u32>)> {
+    /// Triangles after which a batch is closed.
+    const BATCH: usize = 8192;
+
+    let triangles: Vec<&[u32]> = extra.triangles_in(region).collect();
+    // Which piece a vertex is in: the least vertex joined to it by triangles.
+    let mut piece: Vec<u32> = (0..extra.positions.len() as u32).collect();
+    fn root(piece: &mut [u32], mut v: u32) -> u32 {
+        while piece[v as usize] != v {
+            piece[v as usize] = piece[piece[v as usize] as usize];
+            v = piece[v as usize];
+        }
+        v
+    }
+    for tri in &triangles {
+        for &v in &tri[1..] {
+            // Asked again each time: the first corner's piece may just have
+            // been joined under a lower one.
+            let (a, b) = (root(&mut piece, tri[0]), root(&mut piece, v));
+            piece[a.max(b) as usize] = a.min(b);
+        }
+    }
+
+    // The batch each piece goes to, by the order the pieces first appear.
+    const NONE: u32 = u32::MAX;
+    let mut batch_of_piece = vec![NONE; extra.positions.len()];
+    let mut piece_size = vec![0u32; extra.positions.len()];
+    for tri in &triangles {
+        piece_size[root(&mut piece, tri[0]) as usize] += 1;
+    }
+    let mut batch_triangles: Vec<usize> = Vec::new();
+    for tri in &triangles {
+        let r = root(&mut piece, tri[0]) as usize;
+        if batch_of_piece[r] == NONE {
+            if batch_triangles.last().is_none_or(|n| *n >= BATCH) {
+                batch_triangles.push(0);
+            }
+            batch_of_piece[r] = (batch_triangles.len() - 1) as u32;
+            *batch_triangles.last_mut().unwrap() += piece_size[r] as usize;
+        }
+    }
+
+    let mut batches: Vec<(Vec<PxVec3>, Vec<u32>)> =
+        batch_triangles.iter().map(|n| (Vec::new(), Vec::with_capacity(n * 3))).collect();
+    // A vertex's index in its batch's own list; a vertex is in one piece, so
+    // in one batch.
+    let mut slot = vec![NONE; extra.positions.len()];
+    for tri in &triangles {
+        let (points, indices) = &mut batches[batch_of_piece[root(&mut piece, tri[0]) as usize] as usize];
+        for &v in tri.iter() {
+            if slot[v as usize] == NONE {
+                let p = extra.positions[v as usize];
+                slot[v as usize] = points.len() as u32;
+                points.push(PxVec3::new(p.x, p.y, p.z));
+            }
+            indices.push(slot[v as usize]);
+        }
+    }
+    batches
+}
+
 impl PhysicsWorld {
     pub(crate) fn spawn_actor(&mut self, obj: &GameObject, def: &RigidBodyDef) {
         // Gated HERE rather than at each call site, so `enabled` cannot be
@@ -162,6 +243,17 @@ impl PhysicsWorld {
             log::warn!("rigid_physics: failed to create material for '{}'", obj.id);
             return;
         };
+
+        // How far down this collider reaches, for the level's floor
+        // (`PhysicsWorld::level_floor`): a body resting on it, or starting as
+        // it, is in the world.
+        let reach = match def.shape {
+            ColliderShape::Box => crate::water::world_half_extents(collider_half, obj.cuboid.rotation).y,
+            ColliderShape::Sphere { radius } => radius.abs(),
+            ColliderShape::Capsule { radius, half_height } => radius.abs() + half_height.abs(),
+        };
+        let centre = obj.cuboid.position + obj.cuboid.rotation * Vec3::from(def.collider_offset);
+        self.note_floor(centre.y - reach);
 
         match def.mode {
             BodyMode::Static => {
@@ -398,17 +490,189 @@ impl PhysicsWorld {
 
     /// Static collider for the scene's sculpted ground.
     ///
-    /// Cooked as a triangle mesh rather than a PhysX heightfield. PhysX 5.1 has
-    /// PxHeightField and it would be considerably more compact, but the safe
-    /// `physx` wrapper does not expose it -- reaching it means unsafe FFI
-    /// against physx-sys, which is not worth doing before anything has measured
-    /// terrain collision as a cost. The triangle path is already proven here by
-    /// the glTF terrain colliders and shares its cooking code.
+    /// A PhysX HEIGHT FIELD where the ground is a grid of heights, which every
+    /// scene's is today (`spawn_scene_height_field`): its memory and its build
+    /// time follow the sample count, at four bytes and some tens of
+    /// nanoseconds each. The triangle mesh it replaces
+    /// (`spawn_scene_terrain_mesh`) took about 600 bytes of process memory a
+    /// sample and a BVH to cook -- 2.6 GB and over 3 s at 2049 samples a side,
+    /// on the server and again on the headset (docs/scale-audit-2026-10-13.md,
+    /// L3; the numbers at each size are on [`TerrainCollider::TriangleMesh`]).
+    /// The mesh stays for a source that is not a grid, for a grid PhysX will
+    /// not take, and by choice ([`TerrainCollider`]).
     ///
     /// A failure warns and leaves the scene without ground rather than aborting
     /// the load: a level that opens with nothing to stand on is diagnosable, and
     /// a runtime that refuses to start is not.
     pub(crate) fn spawn_scene_terrain(&mut self, source: &dyn crate::terrain::TerrainSource) {
+        if self.terrain_collider == TerrainCollider::HeightField {
+            if let Some(field) = source.as_heightfield() {
+                if self.spawn_scene_height_field(field) {
+                    return;
+                }
+                log::warn!("rigid_physics: scene terrain not taken as a height field; cooking it as a triangle mesh");
+            }
+        }
+        self.spawn_scene_terrain_mesh(source);
+    }
+
+    /// The ground as a PhysX height field. `false`, with nothing added to the
+    /// scene, if PhysX will not take it.
+    ///
+    /// THE SAME SURFACE AS `patch(bounds, 1)`, which is what is drawn and what
+    /// the triangle mesh was cooked from, by the mesher's own answers rather
+    /// than a second copy of its rules:
+    ///
+    /// - HEIGHTS: the sixteen-bit samples themselves, moved to PhysX's signed
+    ///   range, with the height of a step as the scale -- no rounding, so a
+    ///   vertex is where the mesher puts it to within float arithmetic
+    ///   (hundredths of a millimetre on a level some hundreds of metres tall).
+    /// - HOLES: a cell the mesher leaves out (`cell_is_open`, and the cells
+    ///   past `meshed_cells`) has PhysX's hole material on both its triangles.
+    /// - DIAGONALS: each cell's tessellation flag is the mesher's choice for
+    ///   it (`cell_splits_through_first_sample`), so a ray lands on the
+    ///   triangle that is drawn, not on the other half of the quad.
+    /// - THE CAVES' GROUND: the triangles a cave bake put back in its cells
+    ///   are not on the grid, so they are cooked as they are, as triangle
+    ///   meshes of their own beside the field, a few thousand triangles each
+    ///   (`ground_patch_batches`). Their outline vertices are the grid's own
+    ///   to the bit, so the two meet where the one mesh's triangles did.
+    ///
+    /// PhysX lays a height field's rows along x and its columns along z, and
+    /// stores it a row at a time: the transpose of the terrain's own order.
+    ///
+    /// COST: one pass over the samples and four bytes each, twice while it is
+    /// built (this array, then PhysX's copy) and once after. The patch meshes
+    /// follow the caves' triangles, not the level's size. A ray straight down
+    /// reads one cell. A ray along the ground walks the cells under it, where
+    /// a mesh's tree stepped over them: a ray the whole length of a level
+    /// 2049 samples a side, inside the ground's height range and meeting
+    /// nothing, took 6.5 microseconds here against 0.2 -- and one above the
+    /// highest ground, or stopped by the first hill, is as cheap as it was.
+    fn spawn_scene_height_field(&mut self, field: &crate::terrain::Heightfield) -> bool {
+        // PhysX's own floors for a height field's scales
+        // (PX_MIN_HEIGHTFIELD_Y_SCALE, PX_MIN_HEIGHTFIELD_XZ_SCALE).
+        const MIN_HEIGHT_SCALE: f32 = 0.0001 / 65535.0;
+        const MIN_CELL: f32 = 1e-8;
+
+        let [nx, nz] = field.resolution();
+        let [dx, dz] = field.cell_size();
+        let [lo, hi] = field.height_range();
+        let origin = field.origin();
+        let step = (hi - lo) / u16::MAX as f32;
+        // A range written upside down, or a cell of no size, is not a height
+        // field PhysX can hold; the triangle mesh takes anything.
+        if !(step >= 0.0 && step.is_finite() && dx >= MIN_CELL && dz >= MIN_CELL && dx.is_finite() && dz.is_finite() && origin.is_finite()) {
+            return false;
+        }
+        // A range of no height at all: every sample stands at `lo`, and is
+        // written as zero under the smallest scale PhysX allows.
+        let level = step < MIN_HEIGHT_SCALE;
+        let height_scale = step.max(MIN_HEIGHT_SCALE);
+        let base = if level { origin.y + lo } else { origin.y + lo + 32768.0 * height_scale };
+
+        let raw = field.raw_samples();
+        let holed = field.holes().is_some();
+        let [meshed_x, meshed_z] = field.meshed_cells();
+        let solid = HeightFieldMaterial::new(0);
+        let mut samples: Vec<HeightFieldSample> = Vec::with_capacity(nx as usize * nz as usize);
+        let (mut open_cells, mut cells) = (0usize, 0usize);
+        for ix in 0..nx {
+            for iz in 0..nz {
+                let height = if level { 0 } else { (raw[(iz * nx + ix) as usize] as i32 - 32768) as i16 };
+                // A sample carries the cell it is the lowest corner of; the
+                // last row and column carry none.
+                let is_cell = ix + 1 < nx && iz + 1 < nz;
+                let open = is_cell && (ix >= meshed_x || iz >= meshed_z || (holed && field.cell_is_open(ix, iz)));
+                let material = if open { HeightFieldMaterial::HOLE } else { solid };
+                let through_first = is_cell && !open && field.cell_splits_through_first_sample(ix, iz);
+                samples.push(HeightFieldSample::new(height, material, material, through_first));
+                cells += usize::from(is_cell);
+                open_cells += usize::from(open);
+            }
+        }
+
+        let mut desc = PxHeightFieldDesc::new();
+        desc.obj.nbRows = nx;
+        desc.obj.nbColumns = nz;
+        desc.obj.format = physx_sys::PxHeightFieldFormat::S16Tm;
+        desc.obj.samples.stride = std::mem::size_of::<HeightFieldSample>() as u32;
+        desc.obj.samples.data = samples.as_ptr() as *const std::ffi::c_void;
+        if !desc.is_valid() {
+            return false;
+        }
+        let Some(mut height_field) = create_height_field(&mut self.foundation, &desc) else {
+            return false;
+        };
+        drop(samples);
+
+        let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
+            return false;
+        };
+
+        let geo = PxHeightFieldGeometry::new(height_field.as_mut(), MeshGeometryFlags::empty(), height_scale, dx, dz);
+        if !geo.is_valid() {
+            return false;
+        }
+        // Sample (0, 0) at the field's corner; the samples' own zero is the
+        // middle of the height range.
+        let pose = to_px_transform(Vec3::new(origin.x, base, origin.z), Quat::IDENTITY);
+        let Some(ground) = self.foundation.create_rigid_static(pose, &geo, material.as_mut(), PxTransform::default(), ()) else {
+            return false;
+        };
+
+        // The ground the caves put back, as the mesher takes it for the whole
+        // field: cooked a batch at a time (`ground_patch_batches`), each an
+        // actor of its own, in world space already as the triangle mesh of
+        // the whole ground was.
+        let mut patch_meshes = Vec::new();
+        let mut patch_actors = Vec::new();
+        let mut patch_triangles = 0usize;
+        if let Some(extra) = field.ground_patch() {
+            for (points, indices) in ground_patch_batches(extra, crate::terrain::TerrainSource::bounds(field)) {
+                let Some(mut mesh) = cook_triangle_mesh(&mut self.foundation, &points, &indices) else {
+                    return false;
+                };
+                let scale_px = PxVec3::new(1.0, 1.0, 1.0);
+                let rot_px = PxQuat::new(0.0, 0.0, 0.0, 1.0);
+                let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };
+                let geo = PxTriangleMeshGeometry::new(mesh.as_mut(), &mesh_scale, MeshGeometryFlags::empty());
+                let Some(actor) = self.foundation.create_rigid_static(
+                    to_px_transform(Vec3::ZERO, Quat::IDENTITY),
+                    &geo,
+                    material.as_mut(),
+                    PxTransform::default(),
+                    (),
+                ) else {
+                    return false;
+                };
+                patch_triangles += indices.len() / 3;
+                patch_meshes.push(mesh);
+                patch_actors.push(actor);
+            }
+        }
+
+        // Nothing can fail from here: the ground joins the scene whole.
+        self.scene.add_static_actor(ground);
+        let patch_count = patch_meshes.len();
+        for actor in patch_actors {
+            self.scene.add_static_actor(actor);
+        }
+        self.terrain_height_fields.push(height_field);
+        self.terrain_meshes.extend(patch_meshes);
+        self.materials.push(material);
+        log::info!(
+            "rigid_physics: scene terrain is a height field -- {nx} x {nz} samples, {open_cells} of {cells} cells open, {patch_triangles} patch triangles beside it in {patch_count} meshes"
+        );
+        true
+    }
+
+    /// The ground as one triangle mesh of `patch(bounds, 1)`: every sample's
+    /// vertex and two triangles a cell, cooked into a BVH. Its memory and its
+    /// cooking time follow the sample count at hundreds of bytes and most of a
+    /// microsecond each -- see [`TerrainCollider::TriangleMesh`].
+    /// It shares its cooking code with the glTF terrain colliders.
+    pub(crate) fn spawn_scene_terrain_mesh(&mut self, source: &dyn crate::terrain::TerrainSource) {
         let patch = source.patch(source.bounds(), 1);
         if patch.positions.is_empty() || patch.indices.is_empty() {
             log::warn!("rigid_physics: scene terrain produced no geometry");
@@ -507,6 +771,8 @@ impl PhysicsWorld {
             log::warn!("rigid_physics: failed to cook brush '{}'", obj.id);
             return;
         };
+        // The brush's lowest corner, for the level's floor.
+        self.note_floor(positions.iter().fold(f32::INFINITY, |low, p| low.min(p[1])));
         self.terrain_meshes.push(owned);
         let mesh_idx = self.terrain_meshes.len() - 1;
 
@@ -596,12 +862,15 @@ impl PhysicsWorld {
             obj.cuboid.position,
         );
 
-        let mut cooked: HashMap<usize, usize> = HashMap::new();
+        // Each unique mesh's pool index and its own bounds: the bounds are what
+        // an instance lowers the level's floor by (eight corners an instance,
+        // rather than every vertex again).
+        let mut cooked: HashMap<usize, (usize, Vec3, Vec3)> = HashMap::new();
         let mut spawned = 0u32;
 
         for (mesh_index, node_mat) in instances {
-            let mesh_idx_in_pool = if let Some(&i) = cooked.get(&mesh_index) {
-                i
+            let (mesh_idx_in_pool, local_min, local_max) = if let Some(&found) = cooked.get(&mesh_index) {
+                found
             } else {
                 let mesh = doc.meshes().nth(mesh_index).expect("mesh index from node tree");
                 let (points, tri_indices) = read_mesh_geometry(&mesh, &buffers);
@@ -616,8 +885,14 @@ impl PhysicsWorld {
                     Some(owned) => {
                         self.terrain_meshes.push(owned);
                         let i = self.terrain_meshes.len() - 1;
-                        cooked.insert(mesh_index, i);
-                        i
+                        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+                        for p in &points {
+                            let p = Vec3::new(p.x(), p.y(), p.z());
+                            lo = lo.min(p);
+                            hi = hi.max(p);
+                        }
+                        cooked.insert(mesh_index, (i, lo, hi));
+                        (i, lo, hi)
                     }
                     None => {
                         log::warn!(
@@ -631,6 +906,17 @@ impl PhysicsWorld {
 
             let world = object_mat * node_mat;
             let (scale, rotation, translation) = world.to_scale_rotation_translation();
+
+            // The lowest corner of this instance's bounds, for the level's
+            // floor: at or under its lowest vertex, which is the safe side.
+            let lowest = (0..8)
+                .map(|k| {
+                    let pick = |bit: u32, lo: f32, hi: f32| if k & bit == 0 { lo } else { hi };
+                    let corner = Vec3::new(pick(1, local_min.x, local_max.x), pick(2, local_min.y, local_max.y), pick(4, local_min.z, local_max.z));
+                    world.transform_point3(corner).y
+                })
+                .fold(f32::INFINITY, f32::min);
+            self.note_floor(lowest);
 
             let scale_px = PxVec3::new(scale.x, scale.y, scale.z);
             let rot_px = PxQuat::new(rotation.x, rotation.y, rotation.z, rotation.w);

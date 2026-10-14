@@ -153,10 +153,12 @@ impl PhysicsWorld {
         }
 
         let zero = PxVec3::new(0.0, 0.0, 0.0);
+        // Under THIS level's floor (`PhysicsWorld::kill_y`, found at load),
+        // not under a height every level shared: at -15 for all of them, a
+        // prop resting on ground deeper than that was put back every tick.
+        let kill_y = self.kill_y;
         for state in self.dynamic.values_mut() {
-            const KILL_Y: f32 = -15.0;
-
-            let fell_out = unsafe { (*state.ptr).get_global_pose() }.translation().y() < KILL_Y;
+            let fell_out = unsafe { (*state.ptr).get_global_pose() }.translation().y() < kill_y;
 
             let due_for_timed_respawn = state
                 .respawn_interval

@@ -30,6 +30,8 @@ mod rigid_physics_brush_tests;
 #[cfg(test)]
 mod rigid_physics_water_tests;
 #[cfg(test)]
+mod rigid_physics_level_tests;
+#[cfg(test)]
 mod runtime_tests_scripting;
 #[cfg(test)]
 mod runtime_tests_teleport;
@@ -78,6 +80,8 @@ pub mod weather;
 mod terrain_tests;
 #[cfg(test)]
 mod terrain_physics_tests;
+#[cfg(test)]
+mod terrain_collider_tests;
 pub mod script;
 mod script_fns_input;
 mod script_fns_interact;

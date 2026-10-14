@@ -6,6 +6,7 @@ use physx::prelude::*;
 
 use physx::scene::Scene as _;
 
+use physx::height_field::HeightField;
 use physx::scene::SceneFlags;
 use physx::triangle_mesh::TriangleMesh;
 
@@ -113,6 +114,53 @@ pub(crate) fn gravity() -> PxVec3 {
     PxVec3::new(0.0, -9.81, 0.0)
 }
 
+/// The highest a level's kill height is ever put: the height every level had
+/// when it was a constant, kept as the ceiling so a level whose floor is at
+/// the origin respawns its fallen props exactly where it always did.
+pub(crate) const KILL_Y_HIGHEST: f32 = -15.0;
+
+/// How far under the lowest thing in the level a body's centre has to be to
+/// have left it. Nothing can rest below the lowest collider, so any margin is
+/// right; this one is room for a large body's own half height and for a dip
+/// under the floor that the solver takes back.
+pub(crate) const KILL_MARGIN: f32 = 5.0;
+
+/// HOW THE SCENE'S SCULPTED GROUND IS GIVEN TO PHYSX
+/// (`PhysicsWorld::spawn_scene_terrain`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerrainCollider {
+    /// A PhysX height field: four bytes a sample, built in one pass over the
+    /// samples with nothing to cook. Its holes are the terrain's, its cells
+    /// are split along the diagonals the mesher draws, and the ground the
+    /// caves put back -- triangles that are not on the grid -- is small
+    /// triangle meshes beside it. The default.
+    HeightField,
+    /// One triangle mesh of the whole ground at every sample, as it was until
+    /// 2026-10-13. Kept to compare against, and for a source that is not a
+    /// grid. Measured on the stress levels at 257 / 625 / 1025 / 2049 samples
+    /// a side (`print_what_the_physics_rebuild_costs`, an Apple M4, the
+    /// ground's share of `rebuild`): 36 / 241 / 684 / 3,262 ms and 35 / 222 /
+    /// 655 / 2,650 MB of process memory, where the height field takes 3 / 13
+    /// / 54 / 162 ms and 1 / 3 / 15 / 88 MB (most of the last the 48 caves'
+    /// patches and the files read for them). At 2049 the mesh is 8.9 million
+    /// triangles, and it was not whole: 62 of 100 rays cast straight down on
+    /// it met nothing.
+    TriangleMesh,
+}
+
+impl TerrainCollider {
+    /// The process's choice: `SS_TERRAIN_COLLIDER=mesh` asks for the triangle
+    /// mesh; anything else, or nothing, the height field. What
+    /// [`PhysicsWorld::new`] starts with; `set_terrain_collider` overrides it
+    /// for one world.
+    pub fn from_env() -> Self {
+        match std::env::var("SS_TERRAIN_COLLIDER").as_deref() {
+            Ok("mesh") | Ok("trimesh") | Ok("triangle_mesh") => Self::TriangleMesh,
+            _ => Self::HeightField,
+        }
+    }
+}
+
 pub(crate) struct DynamicActor {
     pub(crate) ptr: *mut PxRigidDynamic,
     pub(crate) spawn_pos: Vec3,
@@ -168,6 +216,23 @@ pub struct PhysicsWorld {
     /// `DoorDef::friction`), applied as torques by `push_doors`.
     pub(crate) door_hinges: HashMap<String, (f32, f32)>,
 
+    /// THE LEVEL'S FLOOR: the lowest point of anything a body can rest on or
+    /// start at -- the ground's lowest sample and the caves' patches, every
+    /// collider, every door, the still water (so a body is seen going in
+    /// before it is taken back). Lowered by each spawner as it builds its
+    /// collider (`note_floor`), at load and for an object spawned later; never
+    /// read or scanned in a tick. `f32::INFINITY` in a world with nothing in it.
+    pub(crate) level_floor: f32,
+    /// The height under which a dynamic body has fallen out of the world and
+    /// is put back where it started (`step`): [`KILL_MARGIN`] under
+    /// `level_floor`, and never above [`KILL_Y_HIGHEST`]. It was the constant
+    /// -15 for every level, which respawned every prop of a level whose
+    /// valley or cave floor lay deeper than that, each tick, for ever.
+    pub(crate) kill_y: f32,
+
+    /// How the next `rebuild` gives the ground to PhysX.
+    pub(crate) terrain_collider: TerrainCollider,
+
     // ORDER MATTERS, and it is load-bearing rather than stylistic. Rust drops
     // fields in declaration order, and a cooked TriangleMesh is owned by the
     // physics object inside the foundation: releasing one after the foundation
@@ -175,12 +240,15 @@ pub struct PhysicsWorld {
     // where the mistake is.
     //
     // So the sequence has to be: `scene` first (it releases the actors that
-    // reference the meshes), then `terrain_meshes`, then `foundation` last.
+    // reference the meshes), then `terrain_meshes` and `terrain_height_fields`
+    // (a height field is owned by the physics object exactly as a mesh is),
+    // then `foundation` last.
     //
     // This was already wrong -- terrain_meshes sat after foundation -- and it
     // had never been caught because nothing exercised a cooked terrain collider
     // in a test. The glTF terrain_collider path had the same fault.
     pub(crate) terrain_meshes: Vec<Owner<TriangleMesh>>,
+    pub(crate) terrain_height_fields: Vec<Owner<HeightField>>,
     pub(crate) foundation: PxFoundation,
 }
 
@@ -249,8 +317,39 @@ impl PhysicsWorld {
             water_entries: Vec::new(),
             doors: HashMap::new(),
             door_hinges: HashMap::new(),
+            level_floor: f32::INFINITY,
+            kill_y: KILL_Y_HIGHEST,
+            terrain_collider: TerrainCollider::from_env(),
             terrain_meshes: Vec::new(),
+            terrain_height_fields: Vec::new(),
         }
+    }
+
+    /// Choose how this world's ground is given to PhysX, from the next
+    /// `rebuild` on.
+    pub fn set_terrain_collider(&mut self, kind: TerrainCollider) {
+        self.terrain_collider = kind;
+    }
+
+    pub fn terrain_collider(&self) -> TerrainCollider {
+        self.terrain_collider
+    }
+
+    /// Something solid, or a body's start, reaches down to world height `y`:
+    /// the level's floor is at least that low, and the kill height follows it.
+    /// One comparison a collider, where the collider is built.
+    pub(crate) fn note_floor(&mut self, y: f32) {
+        if y.is_finite() && y < self.level_floor {
+            self.level_floor = y;
+            self.kill_y = KILL_Y_HIGHEST.min(y - KILL_MARGIN);
+        }
+    }
+
+    /// The height under which a dynamic body is taken to have fallen out of
+    /// the level and is put back where it started: under the level's own
+    /// floor, wherever that is (`level_floor`).
+    pub fn kill_height(&self) -> f32 {
+        self.kill_y
     }
 
     /// How deep standing water is over ground at `ground_y`, at a world x/z:
@@ -362,14 +461,29 @@ impl PhysicsWorld {
     pub fn rebuild(&mut self, scene: &Scene, game_dir: &Path) {
         self.dynamic.clear();
         self.kinematic.clear();
+        // With the others, and for more than tidiness: the spawners skip an id
+        // that is still in this map, so an entry left from the last scene
+        // stopped a wall of the same id being built in this one at all (a
+        // reloaded level came back with none of its static colliders), and
+        // `despawn_static` then released an actor that had gone with the old
+        // PxScene. Clearing is the whole release: like `kinematic`, the map
+        // borrows, and replacing `self.scene` below releases every actor the
+        // old scene owned, once.
+        self.statics.clear();
         self.materials.clear();
         self.terrain_meshes.clear();
+        self.terrain_height_fields.clear();
         self.doors.clear();
         self.door_hinges.clear();
 
         self.grabs.clear();
         self.hand_anchors.clear();
         self.scene = new_px_scene(&mut self.foundation);
+
+        // This level's floor, found again from nothing: each spawner below
+        // lowers it as it builds (`note_floor`), so the cost is the load's own.
+        self.level_floor = f32::INFINITY;
+        self.kill_y = KILL_Y_HIGHEST;
 
         for obj in &scene.objects {
             let Some(def) = &obj.rigid_body else { continue };
@@ -420,6 +534,10 @@ impl PhysicsWorld {
         });
         if let Some(source) = &terrain {
             self.spawn_scene_terrain(source.as_ref());
+            // Its lowest ground, whether or not the collider cooked: a floor
+            // set too low costs a fallen prop a moment, one set too high
+            // costs the level its props.
+            self.note_floor(source.lowest_height());
         }
 
         // By the same heightfield the ground collider was cooked from, and by
@@ -431,6 +549,12 @@ impl PhysicsWorld {
                 crate::water::WaterFootprint::new(def, |x, z| terrain.as_ref().and_then(|t| t.height_at(x, z)))
             })
             .collect();
+        // Still water is part of the level a body can fall into: under its
+        // surface before it is taken back, so it is seen going in (the splash
+        // is raised from the crossing, `take_water_entries`).
+        for height in self.water.iter().filter_map(|w| w.surface_height()).collect::<Vec<_>>() {
+            self.note_floor(height);
+        }
     }
 }
 
