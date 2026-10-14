@@ -315,6 +315,7 @@ fn effect_fields() -> Vec<FieldDescriptor> {
             flicker_rate,
             turbulence,
             seed,
+            asset,
         } = e;
     }
     vec![
@@ -331,6 +332,7 @@ fn effect_fields() -> Vec<FieldDescriptor> {
         field!(flicker_rate, Number),
         field!(turbulence, Number),
         field!(seed, Number),
+        field!(asset, Text, opt),
     ]
 }
 
@@ -564,7 +566,8 @@ mod tests {
         assert!(particle_emitter.fields.iter().any(|f| f.name == "color" && f.kind == FieldKind::Color));
 
         let effect = by("effect");
-        assert_eq!(effect.fields.len(), 13, "EffectDef has 13 fields");
+        assert_eq!(effect.fields.len(), 14, "EffectDef has 14 fields");
+        assert!(effect.fields.iter().any(|f| f.name == "asset" && f.kind == FieldKind::Text && f.optional));
         assert_eq!(effect.fields[0].variants, &["fire", "smoke", "embers", "dust", "coals"]);
 
         let door = by("door");
