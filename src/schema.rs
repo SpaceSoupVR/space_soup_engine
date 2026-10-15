@@ -428,6 +428,7 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         walk_area,
         prop,
         selector,
+        menu_panel,
         lights,
         sound,
         particle_emitter,

@@ -81,6 +81,8 @@ pub mod weather;
 mod terrain_tests;
 #[cfg(test)]
 mod terrain_physics_tests;
+#[cfg(test)]
+mod scatter_physics_tests;
 pub mod script;
 mod script_fns_input;
 mod script_fns_interact;

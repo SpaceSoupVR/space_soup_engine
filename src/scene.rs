@@ -207,6 +207,11 @@ pub struct GameObject {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector: Option<SelectorDef>,
 
+    /// A menu shown on this object as a fixed panel in the world. See
+    /// `MenuPanelDef`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_panel: Option<MenuPanelDef>,
+
     /// A baked cubemap reflection captured here, with this object's cuboid as
     /// the room it is parallax-corrected against. See
     /// [`crate::reflection_probe`].
@@ -253,6 +258,14 @@ pub struct GameObject {
 pub struct SelectorDef {
     pub set: String,
     pub value: String,
+}
+
+/// A menu (`game/menus/<menu>.menu.json`) drawn on this object's front face
+/// as a fixed panel in the world: it does not follow or turn with the
+/// player, and it is always showing. For a base's notice board.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MenuPanelDef {
+    pub menu: String,
 }
 
 /// A link to a prop file: `path` is relative to the game folder when the

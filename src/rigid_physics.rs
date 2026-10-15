@@ -363,6 +363,12 @@ impl PhysicsWorld {
             self.spawn_scene_terrain(source.as_ref());
         }
 
+        // Trees stand on that same ground; without any, scatter sits at y = 0.
+        match &terrain {
+            Some(source) => self.spawn_scatter_trunks(scene, &SourceGround(source.as_ref())),
+            None => self.spawn_scatter_trunks(scene, &crate::scatter::FlatGround(0.0)),
+        }
+
         // After the terrain is loaded: a walk mat drapes over its heights.
         for obj in &scene.objects {
             let Some(def) = &obj.walk_area else { continue };
@@ -378,6 +384,15 @@ impl PhysicsWorld {
                 crate::water::WaterFootprint::new(def, |x, z| terrain.as_ref().and_then(|t| t.height_at(x, z)))
             })
             .collect();
+    }
+}
+
+/// The loaded terrain as the scatter resolver sees it.
+struct SourceGround<'a>(&'a dyn crate::terrain::TerrainSource);
+
+impl crate::scatter::Ground for SourceGround<'_> {
+    fn height_at(&self, x: f32, z: f32) -> Option<f32> {
+        self.0.height_at(x, z)
     }
 }
 
