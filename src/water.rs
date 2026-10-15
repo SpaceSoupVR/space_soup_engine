@@ -39,6 +39,10 @@ pub struct WaterDef {
 
     #[serde(default, skip_serializing_if = "is_zero")]
     pub swell: f32,
+    #[serde(default = "default_gloss", skip_serializing_if = "is_one")]
+    pub gloss: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub mud: f32,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -58,6 +62,8 @@ fn default_wind_direction() -> f32 { 30.0 }
 fn default_fetch() -> f32 { 100.0 }
 fn default_choppiness() -> f32 { 0.6 }
 fn is_zero(v: &f32) -> bool { *v == 0.0 }
+fn default_gloss() -> f32 { 1.0 }
+fn is_one(v: &f32) -> bool { *v == 1.0 }
 
 impl WaterDef {
 
@@ -282,6 +288,8 @@ mod tests {
             skirt: 0.0,
             swash: 0.0,
         swell: 0.0,
+            gloss: 1.0,
+            mud: 0.0,
         name: None,
         max_wade_depth: None,
         }
