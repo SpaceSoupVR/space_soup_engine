@@ -396,6 +396,60 @@ impl PhysicsWorld {
         }
     }
 
+    /// Static trunk colliders for the scene's scattered trees and rocks.
+    ///
+    /// Scatter is resolved here exactly as the editor and the renderer resolve
+    /// it (same layer, same ground, same seed), so every trunk stands where its
+    /// tree is drawn. Each solid placement gets one upright capsule: a trunk
+    /// a player walks into and around, not a canopy. Bushes and grass are
+    /// walked through, as they are in life.
+    ///
+    /// One shape per placement rather than one cooked mesh: a forest is a few
+    /// thousand capsules, and PhysX handles that as a broad-phase job it is
+    /// built for, while cooking a tree mesh per model would couple physics to
+    /// asset loading for no gain in a game where nobody climbs trees.
+    pub(crate) fn spawn_scatter_trunks(&mut self, scene: &crate::scene::Scene, ground: &dyn crate::scatter::Ground) {
+        if scene.scatter.is_empty() {
+            return;
+        }
+        let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
+            log::warn!("rigid_physics: failed to create scatter trunk material");
+            return;
+        };
+        // PhysX capsules lie along their local X; stand this one up.
+        let upright = to_px_transform(Vec3::ZERO, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
+        let mut trunks = 0usize;
+        for layer in &scene.scatter {
+            let solid: Vec<bool> = layer.prototypes.iter().map(|p| scatter_is_solid(&p.mesh)).collect();
+            if !solid.iter().any(|s| *s) {
+                continue;
+            }
+            for inst in crate::scatter::resolve(layer, ground) {
+                if !solid[inst.prototype] {
+                    continue;
+                }
+                let radius = (TRUNK_RADIUS * inst.scale).clamp(TRUNK_RADIUS_MIN, TRUNK_RADIUS_MAX);
+                let geo = PxCapsuleGeometry::new(radius, TRUNK_HALF_HEIGHT);
+                // Centred so the capsule starts a little below the ground (a
+                // trunk on a slope has no gap at its downhill side) and
+                // reaches well over head height.
+                let centre = inst.position + Vec3::Y * (TRUNK_HALF_HEIGHT - TRUNK_SINK);
+                let transform = to_px_transform(centre, Quat::IDENTITY);
+                match self.foundation.create_rigid_static(transform, &geo, material.as_mut(), upright, ()) {
+                    Some(actor) => {
+                        self.scene.add_static_actor(actor);
+                        trunks += 1;
+                    }
+                    None => log::warn!("rigid_physics: failed to create a scatter trunk actor"),
+                }
+            }
+        }
+        self.materials.push(material);
+        if trunks > 0 {
+            log::info!("rigid_physics: {trunks} scatter trunk collider(s)");
+        }
+    }
+
     /// Static collider for the scene's sculpted ground.
     ///
     /// Cooked as a triangle mesh rather than a PhysX heightfield. PhysX 5.1 has
@@ -729,4 +783,23 @@ impl PhysicsWorld {
 
         self.materials.push(material);
     }
+}
+
+/// Trunk radius at scale 1, metres. The library oaks are 20-27 m tall at
+/// scale 1 with trunks about this thick; the editor places them at ~0.5.
+const TRUNK_RADIUS: f32 = 0.7;
+const TRUNK_RADIUS_MIN: f32 = 0.12;
+const TRUNK_RADIUS_MAX: f32 = 1.2;
+/// Half the capsule's straight length: it spans the ground to ~4 m up, so a
+/// standing player's head is inside it rather than above it.
+const TRUNK_HALF_HEIGHT: f32 = 2.0;
+/// How far below the placement point the capsule starts.
+const TRUNK_SINK: f32 = 0.5;
+
+/// Which scattered things a player cannot walk through: trees and rocks.
+/// Decided by where the model lives (`models/train/<kind>/`) or the editor's
+/// built-in stand-ins, because the scatter format carries no kind of its own.
+pub(crate) fn scatter_is_solid(mesh: &str) -> bool {
+    let m = mesh.replace('\\', "/");
+    m.contains("/trees/") || m.contains("/rocks/") || m == "builtin:tree" || m == "builtin:rock"
 }

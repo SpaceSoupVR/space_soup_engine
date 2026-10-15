@@ -70,8 +70,28 @@ pub struct TerrainDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub holes: Option<HoleDef>,
 
+    /// The layer textures this ground is painted with: a directory under the
+    /// game folder holding `ground/rock/high/sediment.jpg` (and their `_n`,
+    /// `_r`, `_ao` maps) with a `settings.json`. Absent: the project's shared
+    /// set, [`DEFAULT_TEXTURE_DIR`].
+    ///
+    /// Per scene because a desert and a muddy field are not the same four
+    /// materials, and a project that wants both should not have to choose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub textures: Option<String>,
+
     #[serde(flatten)]
     pub kind: TerrainKind,
+}
+
+/// Where a scene's terrain textures live when it names no set of its own.
+pub const DEFAULT_TEXTURE_DIR: &str = "textures/terrain";
+
+impl TerrainDef {
+    /// The directory of layer textures this terrain draws with.
+    pub fn texture_dir(&self, game_dir: &std::path::Path) -> std::path::PathBuf {
+        game_dir.join(self.textures.as_deref().unwrap_or(DEFAULT_TEXTURE_DIR))
+    }
 }
 
 /// Where a scene's splat map lives and how finely it is sampled.
@@ -621,6 +641,7 @@ mod splat_tests {
             origin: [0.0; 3],
             splat: None,
             holes: None,
+            textures: None,
             kind: TerrainKind::Heightfield {
                 path: "unused".into(),
                 resolution: [2, 2],
