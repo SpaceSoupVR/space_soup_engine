@@ -32,37 +32,15 @@ pub struct InputFrame {
     pub released: Vec<(String, Hand)>,
     pub button_presses: Vec<ButtonPress>,
 
-    /// Button-up edges. Separate from `button_presses` rather than a flag on it
-    /// so older wire data still deserializes into an empty release list.
     #[serde(default)]
     pub button_releases: Vec<ButtonPress>,
 
-    /// Continuous controller values, refreshed every frame.
     #[serde(default)]
     pub axes: InputAxes,
 
-    /// Every part-animation blend the client computed this frame:
-    /// object id -> clip name -> 0..1.
-    ///
-    /// The client owns these because it is the only side that can compute them:
-    /// a HandPull blend comes from where the player's hand is relative to the
-    /// part, which needs the skinned pose. The engine needs them anyway, because
-    /// blend-threshold triggers spawn objects and apply impulses -- authoritative
-    /// work that cannot live on a headset.
     #[serde(default)]
     pub part_blends: std::collections::HashMap<String, std::collections::HashMap<String, f32>>,
 
-    /// World transforms of posed model parts: object id -> part name ->
-    /// (position, rotation).
-    ///
-    /// Same reason as part_blends: joint matrices are computed from the skinned
-    /// pose, which only the client has. The engine needs them to resolve
-    /// part-anchored sockets and to spawn a detached part where the part actually
-    /// is rather than at the object's pivot.
-    ///
-    /// Reported only for parts something actually asks about -- a socket anchor
-    /// or a DetachPart trigger -- so this stays a handful of entries rather than
-    /// every joint of every model, every frame.
     #[serde(default)]
     pub part_transforms:
         std::collections::HashMap<String, std::collections::HashMap<String, ([f32; 3], [f32; 4])>>,
@@ -73,9 +51,6 @@ pub struct ButtonPress {
     pub button: String,
     pub object_id: Option<String>,
 
-    /// Which controller produced it. `None` on wire data written before this
-    /// existed. A two-handed weapon cannot tell the support hand from the
-    /// firing hand without it.
     #[serde(default)]
     pub hand: Option<Hand>,
 }
@@ -86,16 +61,6 @@ impl ButtonPress {
     }
 }
 
-/// Continuous controller inputs.
-///
-/// Deliberately polled rather than delivered as events: an axis changes every
-/// frame, and a script that wants "how hard is the trigger held" wants to ask in
-/// `on_update`, not to be woken sixty times a second. Edges get events, levels
-/// get getters.
-///
-/// This is also what makes a held-button behaviour writable at all -- button
-/// presses are edge-triggered, so before this a script could see the trigger go
-/// down but had nothing to tell it the trigger was still down.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct InputAxes {
     pub l_trigger: f32,
@@ -128,4 +93,3 @@ impl InputAxes {
         }
     }
 }
-

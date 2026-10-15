@@ -1,4 +1,3 @@
-
     #[test]
     fn authored_slider_joint_deserializes_with_its_values() {
         let json = r#"{

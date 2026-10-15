@@ -131,45 +131,19 @@ pub struct PhysicsWorld {
     pub(crate) materials: Vec<Owner<PxMaterial>>,
     pub(crate) dynamic: HashMap<String, DynamicActor>,
     pub(crate) kinematic: HashMap<String, *mut PxRigidDynamic>,
-    /// Static actors, kept so a breached wall can stop colliding.
-    ///
-    /// These used to be created and handed straight to the scene with no
-    /// handle kept, which made "remove this wall's collider" unrepresentable --
-    /// the reason a breached structure was visibly broken and still solid.
-    ///
-    /// Raw pointers, like `kinematic`: the scene owns the actors, so this map
-    /// borrows rather than owns and its position among the fields does not
-    /// affect the drop order documented below.
+
     pub(crate) statics: HashMap<String, *mut PxRigidStatic>,
 
     pub(crate) hand_anchors: HashMap<(PlayerId, Hand), *mut PxRigidDynamic>,
     pub(crate) grabs: HashMap<(PlayerId, String, Hand), GrabState>,
     pub(crate) scratch: ScratchBuffer,
 
-    /// Where standing water lies. Not colliders -- water is waded through --
-    /// but how deep it stands, so a walk stops before it is out of its depth.
     pub(crate) water: Vec<crate::water::WaterFootprint>,
 
-    /// The doors, by object id: each one's leaf as it hangs. Their bodies are
-    /// in `dynamic` like any other; this is the hinge they turn on, for the
-    /// bodies' pushes (`push_doors`) and for anyone asking a door's angle.
     pub(crate) doors: HashMap<String, crate::door::DoorGeom>,
-    /// Each door's closer and hinge friction (`DoorDef::closer`,
-    /// `DoorDef::friction`), applied as torques by `push_doors`.
+
     pub(crate) door_hinges: HashMap<String, (f32, f32)>,
 
-    // ORDER MATTERS, and it is load-bearing rather than stylistic. Rust drops
-    // fields in declaration order, and a cooked TriangleMesh is owned by the
-    // physics object inside the foundation: releasing one after the foundation
-    // has gone is a use-after-free, and it segfaults at teardown rather than
-    // where the mistake is.
-    //
-    // So the sequence has to be: `scene` first (it releases the actors that
-    // reference the meshes), then `terrain_meshes`, then `foundation` last.
-    //
-    // This was already wrong -- terrain_meshes sat after foundation -- and it
-    // had never been caught because nothing exercised a cooked terrain collider
-    // in a test. The glTF terrain_collider path had the same fault.
     pub(crate) terrain_meshes: Vec<Owner<TriangleMesh>>,
     pub(crate) foundation: PxFoundation,
 }
@@ -241,17 +215,10 @@ impl PhysicsWorld {
         }
     }
 
-    /// How deep standing water is over ground at `ground_y`, at a world x/z:
-    /// the highest surface standing there, less the ground. `None` where no
-    /// water stands; negative where the ground is above the surface, as on a
-    /// beach the waves run up.
     pub fn water_depth_at(&self, x: f32, z: f32, ground_y: f32) -> Option<f32> {
         self.water.iter().filter_map(|w| w.surface_at(x, z)).reduce(f32::max).map(|surface| surface - ground_y)
     }
 
-    /// How far the water over a world x/z on ground at `ground_y` is deeper
-    /// than its own wading limit (`WaterDef::max_wade_depth`), metres; the
-    /// most of any water standing there. Negative where it can be waded.
     pub fn water_wade_excess_at(&self, x: f32, z: f32, ground_y: f32) -> Option<f32> {
         self.water.iter().filter_map(|w| w.surface_at(x, z).map(|s| s - ground_y - w.wade_depth())).reduce(f32::max)
     }
@@ -317,8 +284,6 @@ impl PhysicsWorld {
             self.spawn_actor(obj, def);
         }
 
-        // After rigid bodies, so an authored `rigid_body` on a brush keeps the
-        // shape its author chose. See `GameObject::solid`.
         for obj in &scene.objects {
             let Some(def) = &obj.brush else { continue };
             if obj.is_solid_brush() {
@@ -347,11 +312,6 @@ impl PhysicsWorld {
             self.spawn_terrain_colliders(obj, def, game_dir);
         }
 
-        // The ground's heights, loaded once for its collider and for the water
-        // measured against it. A failure warns and leaves the scene without
-        // ground rather than aborting the load: a level that opens with
-        // nothing to stand on is diagnosable, and a runtime that refuses to
-        // start is not.
         let terrain = scene.terrain.as_ref().and_then(|def| match crate::terrain::load(def, game_dir) {
             Ok(source) => Some(source),
             Err(e) => {
@@ -363,20 +323,16 @@ impl PhysicsWorld {
             self.spawn_scene_terrain(source.as_ref());
         }
 
-        // Trees stand on that same ground; without any, scatter sits at y = 0.
         match &terrain {
             Some(source) => self.spawn_scatter_trunks(scene, &SourceGround(source.as_ref())),
             None => self.spawn_scatter_trunks(scene, &crate::scatter::FlatGround(0.0)),
         }
 
-        // After the terrain is loaded: a walk mat drapes over its heights.
         for obj in &scene.objects {
             let Some(def) = &obj.walk_area else { continue };
             self.spawn_walk_area(obj, def, terrain.as_deref());
         }
 
-        // By the same heightfield the ground collider was cooked from, and by
-        // the drawn surface's own rule (see `WaterFootprint`).
         self.water = scene
             .water
             .iter()
@@ -387,7 +343,6 @@ impl PhysicsWorld {
     }
 }
 
-/// The loaded terrain as the scatter resolver sees it.
 struct SourceGround<'a>(&'a dyn crate::terrain::TerrainSource);
 
 impl crate::scatter::Ground for SourceGround<'_> {

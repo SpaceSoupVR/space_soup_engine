@@ -1,4 +1,3 @@
-
     #[test]
     fn duplicate_ids_get_renamed_to_stay_unique() {
         let json = r#"{

@@ -1,14 +1,3 @@
-    /// Particle emitters and lasers survive a scene round trip.
-    ///
-    /// This used to load game/scenes/lobby.json and assert that specific props --
-    /// smoke_grenade, laser_green, laser_red -- were in it. They were, until a
-    /// lobby redesign removed twenty-two objects, and then this failed. It was
-    /// never testing the redesign: it is a parser test, and it broke because
-    /// someone rearranged a room.
-    ///
-    /// A test that asserts against a live, hand-edited game asset fails whenever
-    /// a designer does their job. This one owns its fixture, so it now fails only
-    /// when the thing it names is actually broken.
     #[test]
     fn particle_emitters_and_lasers_round_trip_through_a_scene() {
         let dir = std::env::temp_dir().join(format!("space_soup_pl_scene_{}", std::process::id()));
@@ -59,7 +48,6 @@
             assert_eq!(is_green, expected_green, "{id} kept the wrong colour through the load");
         }
 
-        // An object with neither component must not acquire one by default.
         let plain = scene.find_object("plain_box").expect("plain_box exists");
         assert!(plain.particle_emitter.is_none());
         assert!(plain.laser.is_none());

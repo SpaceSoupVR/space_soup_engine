@@ -1,38 +1,8 @@
-//! Brush solids: convex volumes defined by their planes.
-//!
-//! The runtime half of `scene_editor_web/frontend/src/lib/brush.js`. A brush is
-//! authored as a set of planes, each carrying its own surface properties, and
-//! the polygons are derived by clipping every plane against all the others.
-//!
-//! # This file is a mirror, and it is held to that
-//!
-//! Two independent implementations of a geometry algorithm drift silently, and
-//! the failure mode is specific and nasty: a wall the level designer walked
-//! around in the editor is one the player walks *through* in the headset,
-//! because the two produced different triangles from the same planes. Nothing
-//! errors. Nothing logs. The scene loads.
-//!
-//! The terrain triangulation learned this the expensive way and now carries
-//! `REFERENCE_INDEX_CHECKSUM`. This module carries the same guard from the
-//! start: [`brush_checksum`] is byte-identical arithmetic to the JavaScript,
-//! and `tests::matches_editor_checksum` pins a reference brush's value. If a
-//! change here alters the geometry, that test fails rather than the headset
-//! quietly disagreeing with the editor.
-//!
-//! Everything is `f64` for the same reason. The editor computes in JavaScript
-//! numbers, which are `f64`; doing the derivation in `f32` here would round
-//! differently at every clip and the checksums would part company for reasons
-//! that have nothing to do with a bug.
-
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Tolerance for plane classification, and the grid vertices are snapped to.
-///
-/// Shared by both implementations. Changing it changes the geometry.
 const EPS: f64 = 1e-5;
 
-/// How far a seed polygon extends before it is clipped down to a real face.
 const HUGE: f64 = 1e5;
 
 pub type Vec3 = [f64; 3];
@@ -68,8 +38,7 @@ fn cross(a: Vec3, b: Vec3) -> Vec3 {
 
 #[inline]
 fn length(a: Vec3) -> f64 {
-    // `hypot3` rather than `sqrt(dot)` would be more accurate and would NOT
-    // match `Math.hypot`, which is what the editor uses. Matching wins.
+
     (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt()
 }
 
@@ -82,10 +51,6 @@ fn normalize(a: Vec3) -> Vec3 {
     }
 }
 
-/// A plane as `dot(n, p) = d`, with `n` pointing OUT of the solid.
-///
-/// A point is inside when `dot(n, p) <= d`. Inverting that convention turns a
-/// solid inside out, and it renders only when the camera is inside it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Plane {
     pub n: Vec3,
@@ -110,15 +75,9 @@ impl Plane {
     }
 }
 
-/// One face of a brush: a plane plus how a material sits on it.
-///
-/// `scale` is METRES PER TILE, not texels per unit as in the Quake and Source
-/// lineage. That makes a surface's appearance independent of the material's
-/// pixel dimensions, so replacing a 1K texture with a 4K one does not silently
-/// rescale every wall it is used on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrushFace {
-    /// `[nx, ny, nz, d]`.
+
     pub plane: [f64; 4],
     #[serde(default = "default_material")]
     pub material: String,
@@ -144,19 +103,7 @@ fn default_material() -> String {
 fn default_scale() -> [f64; 2] {
     [2.0, 2.0]
 }
-/// Metres per lightmap texel on a face that does not choose its own.
-///
-/// MEASURED, not guessed. At the old 0.25 a wall chart came out 24x80 texels
-/// for a 6 x 20 m surface, so one texel was a 25 cm square -- and every
-/// artefact reported from the headset (the "light rectangles that appear and
-/// disappear", the corner leak on the back wall) measured as flat plateaus with
-/// hard steps between them in the rendered frame, which is the shape of a
-/// lightmap texel and not of any shader gradient. Bilinear filtering then
-/// spreads a wrong texel a full 25 cm into the wall beside it.
-///
-/// 0.125 is the finest that still packs inside `MAX_ATLAS` at this level's
-/// size; Unity's own example scenes bake at 32 texels per unit, so this is
-/// still coarse by contemporary standards rather than extravagant.
+
 fn default_lightmap() -> f64 {
     0.125
 }
@@ -169,7 +116,6 @@ impl BrushFace {
         }
     }
 
-    /// The projection axes, falling back to the by-direction defaults.
     pub fn axes(&self) -> (Vec3, Vec3) {
         let (du, dv) = default_axes(self.plane().n);
         let u = self.u_axis.unwrap_or(du);
@@ -177,7 +123,6 @@ impl BrushFace {
         rotate_axes(u, v, self.plane().n, self.rotation)
     }
 
-    /// Where a world point lands in this face's texture, in tiles.
     pub fn uv(&self, p: Vec3) -> [f64; 2] {
         let (u, v) = self.axes();
         let su = if self.scale[0] == 0.0 { 1.0 } else { self.scale[0] };
@@ -189,12 +134,6 @@ impl BrushFace {
     }
 }
 
-/// Default projection axes by which world direction a face mostly points.
-///
-/// Six discrete cases rather than a continuous basis, so that two faces of the
-/// same wall get identical axes and their brickwork lines up across the corner.
-/// Y-up, matching glTF and the renderer -- NOT the Z-up table you will find in
-/// any Quake or Source reference.
 pub fn default_axes(n: Vec3) -> (Vec3, Vec3) {
     let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
     if ay >= ax && ay >= az {
@@ -219,24 +158,16 @@ pub fn default_axes(n: Vec3) -> (Vec3, Vec3) {
 fn rotate_axes(u: Vec3, v: Vec3, n: Vec3, degrees: f64) -> (Vec3, Vec3) {
     let r = degrees.to_radians();
     let (c, s) = (r.cos(), r.sin());
-    // Rodrigues, simplified: u and v are perpendicular to n already, so the
-    // dot(n, u) * n term is zero and this is a plain rotation in the plane.
+
     let rot = |a: Vec3| add(scale(a, c), scale(cross(n, a), s));
     (rot(u), rot(v))
 }
 
-/// A convex solid: its faces, and nothing else. There is no vertex list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrushSolid {
     pub faces: Vec<BrushFace>,
 }
 
-/// What a `GameObject` stores: the solids that make the shape, and the tool
-/// solids carved out of them.
-///
-/// Keeping the cutting tools rather than baking their result is the
-/// non-destructive half of the CSG design. The runtime evaluates them at load;
-/// see `evaluate`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BrushDef {
     #[serde(default)]
@@ -245,13 +176,9 @@ pub struct BrushDef {
     pub subtract: Vec<BrushSolid>,
 }
 
-/* -------------------------------------------------------------- geometry -- */
-
 fn plane_basis(n: Vec3) -> (Vec3, Vec3) {
     let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
-    // The LEAST aligned world axis. Crossing with the most-aligned one gives a
-    // zero-length vector and a NaN basis, on precisely the axis-aligned faces
-    // that make up almost every building.
+
     let seed = if ax <= ay && ax <= az {
         [1.0, 0.0, 0.0]
     } else if ay <= az {
@@ -274,12 +201,6 @@ fn seed_polygon(pl: Plane) -> Vec<Vec3> {
     ]
 }
 
-/// Sutherland-Hodgman, keeping `dot(n, p) <= d`.
-///
-/// The epsilon is applied to the classification, not the output, so a vertex
-/// lying exactly on the cutting plane counts as on both sides and survives.
-/// Dropping it is how clipping against a coincident plane silently deletes a
-/// face.
 pub fn clip_polygon(poly: &[Vec3], pl: Plane) -> Vec<Vec3> {
     if poly.is_empty() {
         return Vec::new();
@@ -303,9 +224,7 @@ pub fn clip_polygon(poly: &[Vec3], pl: Plane) -> Vec<Vec3> {
 
 #[inline]
 fn snap(x: f64) -> f64 {
-    // `Math.round` in the editor rounds half AWAY FROM ZERO; Rust's `round`
-    // does the same. `f64::round_ties_even` does not, and would part the two
-    // implementations on exactly the values that sit on the grid.
+
     (x / EPS).round() * EPS
 }
 
@@ -326,10 +245,6 @@ fn dedupe(poly: Vec<Vec3>) -> Vec<Vec3> {
     out
 }
 
-/// The polygon of each face, or `None` where a plane bounds nothing.
-///
-/// A redundant plane -- one entirely outside the volume the others describe --
-/// is normal rather than an error, and is very common after a subtraction.
 pub fn solid_polygons(solid: &BrushSolid) -> Vec<Option<Vec<Vec3>>> {
     (0..solid.faces.len())
         .map(|i| {
@@ -380,7 +295,6 @@ pub fn solid_bounds(solid: &BrushSolid) -> Option<(Vec3, Vec3)> {
     min.map(|lo| (lo, max))
 }
 
-/// Volume, via the divergence theorem over the face polygons.
 pub fn solid_volume(solid: &BrushSolid) -> f64 {
     let polys = solid_polygons(solid);
     let mut total = 0.0;
@@ -400,14 +314,8 @@ pub fn contains_point(solid: &BrushSolid, p: Vec3, tolerance: f64) -> bool {
     solid.faces.iter().all(|f| f.plane().distance(p) <= tolerance)
 }
 
-/* ------------------------------------------------- EXPOSED SURFACE -- */
-
-/// How far in front of a face a point must be to count as the space that face
-/// looks into. Well clear of `EPS`, so a piece that merely TOUCHES the face's
-/// plane from behind is never mistaken for one covering it from in front.
 const EXPOSURE_PROBE: f64 = 1e-3;
 
-/// Twice the signed area of a convex polygon, measured along `n`.
 fn polygon_area(poly: &[Vec3], n: Vec3) -> f64 {
     polygon_winding(poly, n).abs() * 0.5
 }
@@ -420,17 +328,6 @@ fn polygon_centroid(poly: &[Vec3]) -> Vec3 {
     scale(c, 1.0 / poly.len().max(1) as f64)
 }
 
-/// `poly` minus the part of it that `cover` sits directly in front of.
-///
-/// Splits the polygon by each of the cover's planes in turn: the part outside a
-/// plane cannot be under the cover and is kept; what survives every plane lies
-/// within the cover's footprint. That remainder is discarded only if the space
-/// just in front of it is actually INSIDE the cover -- a piece touching the
-/// face from behind shares its footprint and covers nothing.
-///
-/// A cover plane coplanar with the face is skipped rather than split on: every
-/// point of the polygon lies on it, and `clip_polygon` would keep the whole
-/// polygon on BOTH sides.
 fn subtract_cover(poly: &[Vec3], face: Plane, cover: &BrushSolid) -> Vec<Vec<Vec3>> {
     let mut kept = Vec::new();
     let mut rest: Vec<Vec3> = poly.to_vec();
@@ -457,26 +354,6 @@ fn subtract_cover(poly: &[Vec3], face: Plane, cover: &BrushSolid) -> Vec<Vec<Vec
     kept
 }
 
-/// Every face of every piece, cut down to the parts that border EMPTY SPACE.
-///
-/// A real solid has surface only where it meets air. `evaluate` returns a
-/// brush as convex pieces that touch one another, and each piece's faces are
-/// whole: the face a piece presses against its neighbour, and the stretch of a
-/// long wall that runs on behind the ceiling slab or into the end wall, are
-/// all still there. Drawn and lightmapped, those hidden parts made every
-/// junction in `test_room` two surfaces passing through each other instead of
-/// one shared edge -- the main hall alone rendered 17 faces that lie entirely
-/// inside solid geometry, and its side walls' inner faces ran 0.3 m up through
-/// the ceiling slab and into both end walls. Edge samples shaded from those
-/// hidden parts are lit from positions inside the walls, which the headset drew
-/// as a dotted seam along the ceiling (2026-09-23).
-///
-/// This is the step map compilers have always taken after CSG (qbsp, vbsp):
-/// clip each face by the pieces in front of it and keep what is left.
-///
-/// Indexed `[solid][face]`, each entry a list of convex fragments (empty for a
-/// face with nothing exposed). `solid_polygons` is deliberately left whole --
-/// physics builds convex hulls from it and needs every piece complete.
 pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
     let bounds: Vec<Option<(Vec3, Vec3)>> = solids.iter().map(solid_bounds).collect();
     let overlaps = |a: (Vec3, Vec3), b: (Vec3, Vec3)| {
@@ -516,8 +393,6 @@ pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
         .collect()
 }
 
-/* ------------------------------------------------------------------- CSG -- */
-
 fn face_inheriting(pl: Plane, from: Option<&BrushFace>) -> BrushFace {
     let (u, v) = default_axes(pl.n);
     BrushFace {
@@ -533,9 +408,6 @@ fn face_inheriting(pl: Plane, from: Option<&BrushFace>) -> BrushFace {
     }
 }
 
-/// Cut a solid with a plane. The new surface inherits the material of whichever
-/// existing face the cut is most parallel to, so slicing a brick wall gives two
-/// brick walls rather than two walls with an untextured cross-section.
 pub fn split_solid(solid: &BrushSolid, cut: Plane) -> (Option<BrushSolid>, Option<BrushSolid>) {
     let mut best: Option<&BrushFace> = None;
     let mut best_alignment = f64::NEG_INFINITY;
@@ -560,12 +432,6 @@ pub fn split_solid(solid: &BrushSolid, cut: Plane) -> (Option<BrushSolid>, Optio
     )
 }
 
-/// `target` minus `tool`, as disjoint convex pieces.
-///
-/// Peels off the part of the target outside each tool plane in turn; what
-/// survives every plane is inside the tool and is discarded. An empty result
-/// means the tool swallowed the target, which is the honest answer and not a
-/// reason to hand back the target untouched.
 pub fn subtract_solid(target: &BrushSolid, tool: &BrushSolid) -> Vec<BrushSolid> {
     if !is_valid_solid(target) {
         return Vec::new();
@@ -573,9 +439,7 @@ pub fn subtract_solid(target: &BrushSolid, tool: &BrushSolid) -> Vec<BrushSolid>
     if !is_valid_solid(tool) {
         return vec![target.clone()];
     }
-    // Bounds rejection first: the polygon derivation is quadratic and runs
-    // several times per plane below, and most brush pairs in a level never
-    // touch.
+
     match (solid_bounds(target), solid_bounds(tool)) {
         (Some((amin, amax)), Some((bmin, bmax))) => {
             for i in 0..3 {
@@ -601,7 +465,7 @@ pub fn subtract_solid(target: &BrushSolid, tool: &BrushSolid) -> Vec<BrushSolid>
 }
 
 impl BrushDef {
-    /// The convex pieces this brush actually contributes to the level.
+
     pub fn evaluate(&self) -> Vec<BrushSolid> {
         if self.solids.is_empty() {
             return Vec::new();
@@ -631,7 +495,6 @@ impl BrushDef {
         self.evaluate().iter().map(solid_volume).sum()
     }
 
-    /// Every material this brush needs loaded.
     pub fn materials(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for s in &self.solids {
@@ -662,36 +525,19 @@ impl BrushDef {
     }
 }
 
-/* --------------------------------------------------------------- meshing -- */
-
-/// Render data for one material.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BrushMeshGroup {
     pub material: String,
     pub positions: Vec<f32>,
     pub normals: Vec<f32>,
     pub uvs: Vec<f32>,
-    /// The face's u axis per vertex, with `w` carrying the bitangent's
-    /// handedness -- four floats each.
-    ///
-    /// Emitted here rather than derived from the triangles' uvs by whoever
-    /// renders this. The usual derivation is an approximation that goes
-    /// degenerate on thin triangles, and it would be approximating something
-    /// this data knows exactly: `uv` was GENERATED from these axes a few lines
-    /// below, so anything that has to undo that is reconstructing an input.
+
     pub tangents: Vec<f32>,
-    /// Lightmap coordinate, 0..1 over the brush's own atlas -- two floats each.
-    ///
-    /// A SECOND set, unrelated to `uvs`. Texture uv is in tiles and shared
-    /// between faces so brickwork lines up across a corner; lighting needs one
-    /// unshared patch per face, or two walls sample each other's shadows. See
-    /// `brush_lightmap`, which decides the layout for the baker and for this
-    /// together so the two cannot disagree about which texel is which surface.
+
     pub uv2: Vec<f32>,
     pub indices: Vec<u32>,
 }
 
-/// Positive when a polygon is wound counter-clockwise as seen from `n`'s side.
 pub fn polygon_winding(poly: &[Vec3], n: Vec3) -> f64 {
     let mut sum = [0.0, 0.0, 0.0];
     for i in 0..poly.len() {
@@ -700,39 +546,17 @@ pub fn polygon_winding(poly: &[Vec3], n: Vec3) -> f64 {
     dot(sum, n)
 }
 
-/// Triangulate a brush into render groups, one per material.
-///
-/// Vertices are NOT shared between faces even where they coincide: a brush's
-/// faces meet at hard edges and need distinct normals, and sharing would
-/// average them into a bevel that is not there.
-///
-/// Groups come back in first-seen order rather than sorted, because
-/// [`brush_checksum`] hashes them in order and the editor's `Map` preserves
-/// insertion order. Sorting here would be tidier and would break the parity
-/// guarantee.
 pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
     let layout = crate::brush_lightmap::brush_lightmap_layout(brush);
     brush_mesh_in_atlas(brush, &layout, 0)
 }
 
-/// The same, for a brush that shares a level-wide lightmap atlas.
-///
-/// `object` is this brush's index in the list the layout was built from. Pass
-/// the wrong one and the geometry is perfect while its lighting is another
-/// brush's -- which looks like a broken bake rather than a mixed-up index, so
-/// the two are always produced from the same list in the same order.
-/// One brush face after CSG, with every attribute the renderer needs, its
-/// vertices in winding order.
-///
-/// The per-polygon half of `brush_mesh_in_atlas`, separated so a caller that
-/// needs to work on whole polygons -- T-junction repair, which cannot be done
-/// on triangles -- shares this attribute computation instead of copying it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BrushPolygon {
     pub material: String,
     pub positions: Vec<[f32; 3]>,
     pub normal: [f32; 3],
-    /// The face's u axis; `w` is the bitangent's handedness.
+
     pub tangent: [f32; 4],
     pub uvs: Vec<[f32; 2]>,
     pub uv2: Vec<[f32; 2]>,
@@ -745,8 +569,7 @@ pub fn brush_polygons_in_atlas(
 ) -> Vec<BrushPolygon> {
     let mut out = Vec::new();
     let solids = brush.evaluate();
-    // EXPOSED SURFACE ONLY -- see `exposed_fragments`. A face with several
-    // fragments emits one polygon per fragment, all sharing the face's chart.
+
     let exposed = exposed_fragments(&solids);
     for (si, solid) in solids.iter().enumerate() {
         for (i, poly) in exposed[si]
@@ -849,12 +672,6 @@ mod tangent_tests {
         }
     }
 
-    /// The tangent must lie IN the face, not across it.
-    ///
-    /// A tangent with a component along the normal tilts the whole frame, so a
-    /// normal map would perturb the surface in a direction the surface does not
-    /// have -- lighting that is subtly wrong everywhere rather than obviously
-    /// wrong anywhere.
     #[test]
     fn a_tangent_is_perpendicular_to_its_face() {
         for g in brush_mesh(&wall()) {
@@ -869,14 +686,6 @@ mod tangent_tests {
         }
     }
 
-    /// Handedness is measured, not assumed.
-    ///
-    /// `default_axes` turns out to be consistently left-handed for all six
-    /// directions, so an unauthored box shows one sign -- pinned here so that a
-    /// change to those defaults is noticed rather than silently flipping every
-    /// wall's normal map. What is NOT fixed is an AUTHORED axis pair, which is
-    /// what aligning a texture in the editor writes, and which the next test
-    /// covers.
     #[test]
     fn an_unauthored_box_has_one_consistent_handedness() {
         let mut signs = std::collections::HashSet::new();
@@ -895,8 +704,7 @@ mod tangent_tests {
 
     #[test]
     fn an_authored_flip_flips_the_reported_handedness() {
-        // The case the measurement exists for. Reversing v mirrors the basis,
-        // and a renderer told otherwise lights the face from the wrong side.
+
         let mut solid = block_solid([-2.0, 0.0, -0.15], [2.0, 2.0, 0.15], "concrete");
         let (u, v) = solid.faces[0].axes();
         solid.faces[0].u_axis = Some(u);
@@ -916,11 +724,6 @@ mod tangent_tests {
         );
     }
 
-    /// The tangent is the axis the uv was generated from, not a guess at it.
-    ///
-    /// Stepping along the tangent must increase u and leave v alone. If the two
-    /// ever disagreed, a normal map would be applied rotated relative to the
-    /// texture it belongs to.
     #[test]
     fn stepping_along_the_tangent_increases_u() {
         let solid = block_solid([-2.0, 0.0, -0.15], [2.0, 2.0, 0.15], "concrete");
@@ -936,17 +739,10 @@ mod tangent_tests {
     }
 }
 
-/// A stable fingerprint of the evaluated geometry.
-///
-/// FNV-1a over the quantised positions then the indices of each material group,
-/// in group order -- byte-for-byte the same arithmetic as `brushChecksum` in
-/// the editor. This is the guard against the two implementations drifting; see
-/// the module header for what drift actually costs.
 pub fn brush_checksum(brush: &BrushDef) -> u32 {
     let mut h: u32 = 2166136261;
     let mut mix = |x: f64| {
-        // `as i32` after rounding, matching the editor's `| 0`, so that both
-        // wrap the same way on a value no sane brush will ever reach.
+
         let q = (x * 1000.0).round() as i32;
         for byte in 0..4 {
             h ^= ((q >> (byte * 8)) & 0xff) as u32;
@@ -964,10 +760,6 @@ pub fn brush_checksum(brush: &BrushDef) -> u32 {
     h
 }
 
-/* ------------------------------------------------------------ primitives -- */
-
-/// An axis-aligned box. Used by the tests, and by anything constructing level
-/// geometry from code rather than from a file.
 pub fn block_solid(min: Vec3, max: Vec3, material: &str) -> BrushSolid {
     const NORMALS: [Vec3; 6] = [
         [1.0, 0.0, 0.0],
@@ -1038,14 +830,14 @@ mod tests {
     fn cuts_a_doorway_through_a_wall() {
         let brush = wall_with_door();
         let pieces = brush.evaluate();
-        // Wall minus the part of the doorway inside it.
+
         let expected = 4.0 * 3.0 * 0.3 - 1.0 * 2.1 * 0.3;
         assert!((brush.volume() - expected).abs() < 1e-3, "{}", brush.volume());
-        // The doorway is genuinely open, and the wall either side is not.
+
         assert!(!pieces.iter().any(|s| contains_point(s, [2.0, 1.0, 0.15], EPS)));
         assert!(pieces.iter().any(|s| contains_point(s, [0.5, 1.0, 0.15], EPS)));
         assert!(pieces.iter().any(|s| contains_point(s, [3.5, 1.0, 0.15], EPS)));
-        // And the lintel above it is.
+
         assert!(pieces.iter().any(|s| contains_point(s, [2.0, 2.5, 0.15], EPS)));
     }
 
@@ -1061,8 +853,7 @@ mod tests {
 
     #[test]
     fn every_triangle_is_wound_outward() {
-        // A brush that renders only from inside is always a winding assumption
-        // nobody measured. This measures it.
+
         for g in brush_mesh(&wall_with_door()) {
             for t in g.indices.chunks(3) {
                 let p = |i: u32| {
@@ -1092,7 +883,7 @@ mod tests {
         let top = s.faces.iter().find(|f| f.plane().n[1] > 0.9).unwrap();
         let a = top.uv([0.0, 1.0, 0.0]);
         let b = top.uv([2.0, 1.0, 0.0]);
-        // Default scale is 2 metres per tile, so two metres is exactly one tile.
+
         assert!((b[0] - a[0] - 1.0).abs() < 1e-9);
     }
 
@@ -1121,7 +912,7 @@ mod tests {
         });
         assert_eq!(groups.len(), 2);
         let wall = groups.iter().find(|g| g.material == "wall").unwrap();
-        assert_eq!(wall.positions.len() / 3, 20); // five quads
+        assert_eq!(wall.positions.len() / 3, 20);
     }
 
     #[test]
@@ -1140,13 +931,6 @@ mod tests {
         assert_eq!(face.axes().0, default_axes([0.0, 1.0, 0.0]).0);
     }
 
-    /// The parity guard. See the module header for what drift costs.
-    ///
-    /// These values come from running `brushChecksum` in the editor over the
-    /// same two brushes. If this test fails after a change here, this
-    /// implementation and the editor's now produce different triangles from the
-    /// same planes, and a level will be a different shape in the headset than
-    /// it was on screen.
     #[test]
     fn matches_editor_checksum() {
         let plain = BrushDef {
@@ -1158,11 +942,7 @@ mod tests {
             3876927263,
             "plain block disagrees with the editor"
         );
-        // Moved from 2111997196 on 2026-09-23, deliberately and in BOTH
-        // implementations at once: the mesh is now exposed surface only (see
-        // `exposed_fragments` / `exposedFragments`), which drops the faces the
-        // door cut leaves pressed between pieces. Recomputed by running the
-        // editor's `brushChecksum` on this same brush.
+
         assert_eq!(
             brush_checksum(&wall_with_door()),
             4259575697,
@@ -1170,20 +950,12 @@ mod tests {
         );
     }
 
-    /// The editor writes a file; the engine has to read that exact file.
-    ///
-    /// Checksum parity proves the two AGREE about geometry. This proves the
-    /// scene format actually carries a brush from one to the other -- a
-    /// serialization mismatch would make every brush silently vanish on load
-    /// with the object still present, which looks like a rendering bug and is
-    /// not one.
     #[test]
     fn loads_a_brush_from_a_scene_file() {
         let dir = std::env::temp_dir().join(format!("brush_scene_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("brushtest.json");
-        // Written in the editor's on-disk shape: camelCase texture fields,
-        // planes as four numbers, `subtract` present.
+
         std::fs::write(
             &path,
             r#"{
@@ -1222,11 +994,10 @@ mod tests {
         assert_eq!(brush.solids.len(), 1);
         assert_eq!(brush.subtract.len(), 1);
         assert_eq!(brush.materials(), vec!["brick".to_string()]);
-        // Same doorway, same three pieces, same volume as every other test here.
+
         assert_eq!(brush.evaluate().len(), 3);
         assert!((brush.volume() - 2.97).abs() < 1e-6, "{}", brush.volume());
 
-        // And a save/load cycle through the engine is lossless.
         let out = dir.join("resaved.json");
         scene.save(&out).expect("saves");
         let again = crate::scene::Scene::load(&out).expect("reloads");
@@ -1239,7 +1010,7 @@ mod tests {
 
     #[test]
     fn matches_editor_piece_count_and_volume() {
-        // Also pinned from the editor: three convex pieces, 2.97 cubic metres.
+
         let brush = wall_with_door();
         assert_eq!(brush.evaluate().len(), 3);
         assert!((brush.volume() - 2.97).abs() < 1e-6, "{}", brush.volume());
@@ -1259,9 +1030,7 @@ mod uv2_tests {
 
     #[test]
     fn every_vertex_gets_a_lightmap_coordinate() {
-        // One missing pair silently shifts every following vertex's lighting by
-        // one, which looks like a subtly wrong bake rather than a buffer that is
-        // the wrong length.
+
         for g in brush_mesh(&room()) {
             assert_eq!(g.uv2.len() / 2, g.positions.len() / 3, "material {}", g.material);
         }
@@ -1278,9 +1047,7 @@ mod uv2_tests {
 
     #[test]
     fn the_two_uv_sets_are_genuinely_different() {
-        // Texture uv is in TILES and repeats; a lightmap coordinate is 0..1 and
-        // must not. If these ever came out equal, the lighting would be tiled
-        // across the wall along with the brickwork.
+
         let g = &brush_mesh(&room())[0];
         assert_ne!(g.uvs, g.uv2, "lightmap uv is just the texture uv");
         assert!(
@@ -1291,8 +1058,7 @@ mod uv2_tests {
 
     #[test]
     fn two_faces_do_not_share_lightmap_space() {
-        // The whole point of a second uv set. Sampled at their centres, no two
-        // faces of a box may land on the same texel.
+
         let brush = room();
         let layout = crate::brush_lightmap::brush_lightmap_layout(&brush);
         let mut seen = std::collections::HashSet::new();
@@ -1320,8 +1086,6 @@ mod exposed_surface_tests {
         solids.iter().any(|s| contains_point(s, p, -1e-4))
     }
 
-    /// Two blocks pressed together are one solid to anyone standing outside:
-    /// the faces where they meet are inside it and must not survive.
     #[test]
     fn faces_two_pieces_press_together_are_gone() {
         let a = block_solid([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], "default");
@@ -1344,10 +1108,9 @@ mod exposed_surface_tests {
         assert_eq!(total, 10, "a 2x1x1 box has 10 unit faces showing, not {total}");
     }
 
-    /// A wall that runs on behind a slab keeps only the part below it.
     #[test]
     fn a_face_is_trimmed_where_another_piece_covers_it() {
-        // A tall slab with a ceiling slab lying against its inner face.
+
         let wall = block_solid([2.7, 0.0, -2.0], [3.0, 3.4, 2.0], "default");
         let ceiling = block_solid([-2.7, 3.1, -2.0], [2.7, 3.4, 2.0], "default");
         let solids = vec![wall, ceiling];
@@ -1360,13 +1123,10 @@ mod exposed_surface_tests {
         let frags = &exposed[0][inner];
         assert!(!frags.is_empty(), "the inner face vanished entirely");
         let top = frags.iter().flatten().map(|p| p[1]).fold(f64::MIN, f64::max);
-        // The ceiling covers only x < 2.7; the wall face sits AT x = 2.7 and
-        // the ceiling piece touches it from in front for y 3.1..3.4.
+
         assert!((top - 3.1).abs() < 1e-6, "inner wall face reaches y = {top}, not 3.1");
     }
 
-    /// THE LEVEL: every surface the main hall draws must face empty space and
-    /// have solid behind it, and its ceiling must span the room and no more.
     #[test]
     fn the_shipped_hall_draws_only_surface_that_borders_empty_space() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../game/scenes/test_room.json");

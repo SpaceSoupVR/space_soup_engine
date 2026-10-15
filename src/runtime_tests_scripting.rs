@@ -240,9 +240,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
         let casing = rt.scene().find_object("casing1").expect("spawn_object should create a new live object");
         assert!(!casing.hidden, "spawned copy should not inherit the template's hidden flag");
-        // spawn_object and apply_impulse both land in the same frame's command batch, which is
-        // applied before that frame's physics step, so the position has already moved a bit off
-        // the exact spawn point by the time this first update() call returns.
+
         assert!(
             casing.cuboid.position.distance(Vec3::new(1.0, 2.0, 3.0)) < 0.1,
             "spawned copy should appear near the requested spawn point, got {:?}",
@@ -393,9 +391,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         assert!(sounds.iter().all(|s| s.clip == "shot.wav"));
     }
 
-
-    // ── Button edges and polled axes ─────────────────────────────────────────
-
     #[test]
     fn button_up_and_hand_reach_scripts_and_axes_can_be_polled() {
         let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -408,8 +403,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         )
         .unwrap();
 
-        // Records what it saw into vars. `on_press` is kept alongside the new hooks
-        // to prove the old one-arg form still fires for existing scripts.
         std::fs::write(
             scenes_dir.join("test.json"),
             r#"{
@@ -454,8 +447,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         );
         assert!(var(&rt, "up").is_none(), "nothing was released yet");
 
-        // Polled, not evented: this is what lets a script know the trigger is STILL
-        // held, which an edge cannot say.
         assert!((var(&rt, "trig").unwrap().as_float().unwrap() - 0.75).abs() < 1e-6);
         assert!((var(&rt, "stick").unwrap().as_float().unwrap() - -0.5).abs() < 1e-6);
 
@@ -506,8 +497,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         let rig = PlayerRig::default();
         let hidden = |rt: &GameRuntime| rt.scene().find_object("gun").unwrap().hidden_parts.clone();
 
-        // Nothing is hidden until something says so -- "visible" is the default for
-        // every part of every model that never mentions this.
         assert!(hidden(&rt).is_empty());
 
         let press = |button: &str| {
@@ -524,7 +513,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         assert_eq!(hidden(&rt), vec!["mag_full".to_string()],
             "hiding one part must not hide the one that was made visible in the same batch");
 
-        // Idempotent: holding the button must not stack duplicates.
         rt.update(dt, &one_player(player, frame(rig.clone(), press("grip"))));
         assert_eq!(hidden(&rt), vec!["mag_full".to_string()]);
 
@@ -587,7 +575,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             rt.scene().objects.iter().filter(|o| o.id.contains("#mag_full#")).count()
         };
 
-        // Below the threshold nothing happens, however long it is held there.
         rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.5))));
         rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.8))));
         assert_eq!(detached(rt_ref(&rt)), 0, "a blend short of the threshold must not fire");
@@ -599,14 +586,11 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             "the source part must stop being drawn, or the magazine appears twice"
         );
 
-        // Held past the line, and jittering across it, must not fire again --
-        // a hand near a threshold crosses it many times a second.
         rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.95))));
         rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.84))));
         rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
         assert_eq!(detached(rt_ref(&rt)), 1, "jitter around the threshold must not re-fire");
 
-        // Fully released and pulled again is a new, deliberate motion.
         rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.0))));
         rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.9))));
         assert_eq!(detached(rt_ref(&rt)), 2, "a fresh pull should detach again");
@@ -657,7 +641,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         let player = PlayerId::new();
         let rig = PlayerRig::default();
 
-        // The bolt is posed 3 units away from the gun's own origin.
         let mut input = InputFrame::default();
         let mut parts = std::collections::HashMap::new();
         parts.insert("bolt".to_string(), ([3.0f32, 0.0, 0.0], [0.0f32, 0.0, 0.0, 1.0]));
@@ -692,8 +675,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
         )
         .unwrap();
-        // Pulling the charging handle locks the bolt back; firing is only legal
-        // while it is forward.
+
         std::fs::write(
             scenes_dir.join("test.json"),
             r#"{
@@ -729,7 +711,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
                 .unwrap_or_default()
         };
 
-        // Bolt forward to begin with, so firing is allowed.
         rt.update(dt, &one_player(player, frame(rig.clone(), InputFrame::default())));
         assert!(
             rt.collect_render_meshes().iter().any(|m| m.id == "gun"),
@@ -737,7 +718,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         );
         assert!(gated(&rt).is_empty(), "firing should be legal before the bolt is locked back");
 
-        // Pull the charging handle past the threshold.
         let mut pull = InputFrame::default();
         let mut clips = std::collections::HashMap::new();
         clips.insert("charging_handle".to_string(), 0.95);
@@ -762,7 +742,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
         )
         .unwrap();
-        // Exactly the m4a1's shape in the shipped lobby: grip points, no script.
+
         std::fs::write(
             scenes_dir.join("test.json"),
             r#"{
@@ -783,9 +763,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         std::fs::remove_dir_all(&dir).ok();
         let dt = 1.0 / 60.0;
         let player = PlayerId::new();
-        // A rig with an actual right hand. PlayerRig::default() has no joints, and
-        // an attach silently warns rather than failing when the hand is missing --
-        // so a rig-less fixture would have "passed" this test by never attaching.
+
         let mut rig = PlayerRig::new();
         rig.joints.insert(
             crate::rig::JointId::HandGrip(crate::events::Hand::Right),
@@ -805,7 +783,6 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
              not one object in the shipped lobby scene had an on_grab, so nothing in it could be picked up"
         );
 
-        // The default release has to mirror it, or the object stays welded on.
         let mut release = InputFrame::default();
         release.released.push(("gun".to_string(), crate::events::Hand::Right));
         rt.update(dt, &one_player(player, frame(rig.clone(), release)));
@@ -823,7 +800,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
         )
         .unwrap();
-        // Deliberately does NOT attach: proves the default did not also fire.
+
         std::fs::write(
             scenes_dir.join("test.json"),
             r#"{
@@ -873,7 +850,7 @@ fn per_trigger_condition_and_counter_gate_a_repeated_action() {
         r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
     )
     .unwrap();
-    // Feeding is legal only while the magazine has rounds, and each feed spends one.
+
     std::fs::write(
         scenes_dir.join("test.json"),
         r#"{
@@ -906,12 +883,12 @@ fn per_trigger_condition_and_counter_gate_a_repeated_action() {
         i.part_blends.insert("gun".to_string(), c);
         rt.update(dt, &one_player(player, frame(rig.clone(), i)));
     };
-    // Three racks; the magazine holds two.
-    feed(&mut rt, 0.95); // cross -> 2 -> 1
-    feed(&mut rt, 0.0); // rearm
-    feed(&mut rt, 0.95); // cross -> 1 -> 0
-    feed(&mut rt, 0.0); // rearm
-    feed(&mut rt, 0.95); // cross -> gated out (mag_rounds is 0)
+
+    feed(&mut rt, 0.95);
+    feed(&mut rt, 0.0);
+    feed(&mut rt, 0.95);
+    feed(&mut rt, 0.0);
+    feed(&mut rt, 0.95);
     assert_eq!(
         rt.script_host.var_string("mag_rounds").as_deref(),
         Some("0"),
@@ -921,10 +898,7 @@ fn per_trigger_condition_and_counter_gate_a_repeated_action() {
 
 #[test]
 fn a_realtime_light_can_be_flickered_from_a_script() {
-    // The question this answers: does making a light flicker need the baked
-    // channels that do not exist yet? It does not -- a Realtime light is
-    // uploaded every frame, so a script that changes its intensity in
-    // on_update is already a flickering light.
+
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join("space_soup_engine_flicker_test");
     let scenes_dir = dir.join("scenes");
@@ -935,8 +909,6 @@ fn a_realtime_light_can_be_flickered_from_a_script() {
     )
     .unwrap();
 
-    // `t` accumulates dt, so the value depends on the frame rather than being
-    // a constant a broken implementation could also produce.
     std::fs::write(
         scenes_dir.join("test.json"),
         r#"{
@@ -966,8 +938,6 @@ fn a_realtime_light_can_be_flickered_from_a_script() {
         seen.push(lamp.map(|l| l.intensity));
     }
 
-    // Present every frame, and CHANGING -- a light stuck at its authored value
-    // would still be "present" and would prove nothing.
     assert!(seen.iter().all(|v| v.is_some()), "the lamp left the render list: {seen:?}");
     let values: Vec<f32> = seen.into_iter().map(|v| v.unwrap()).collect();
     assert!(
@@ -978,12 +948,7 @@ fn a_realtime_light_can_be_flickered_from_a_script() {
 
 #[test]
 fn a_baked_light_ignores_a_scripted_intensity_change() {
-    // The trap, pinned rather than left to be discovered. A Baked light is not
-    // uploaded -- its contribution is in the lightmap -- so set_light_intensity
-    // succeeds, changes the scene, and changes nothing anyone can see.
-    //
-    // This is the gap per-light baked channels would close. Until then the
-    // answer for a flickering light is to leave it Realtime.
+
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join("space_soup_engine_flicker_baked_test");
     let scenes_dir = dir.join("scenes");

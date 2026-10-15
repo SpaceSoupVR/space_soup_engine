@@ -1,6 +1,3 @@
-//! Water as something a walk wades into, as far as wading goes. There is no
-//! view from under the surface, so a head must never go there.
-
 use std::path::Path;
 
 use glam::Vec3;
@@ -12,7 +9,6 @@ use crate::runtime_test_support::PHYSX_TEST_LOCK;
 use crate::scene::{GameObject, Scene};
 use crate::water::WaterDef;
 
-/// Flat ground at y = 0, with water standing at `surface` over x 2..10.
 fn pool(surface: f32) -> PhysicsWorld {
     let mut scene: Scene = serde_json::from_str(r#"{"name":"water_test","objects":[]}"#).unwrap();
     scene.objects = vec![GameObject {
@@ -31,9 +27,6 @@ fn pool(surface: f32) -> PhysicsWorld {
     physics
 }
 
-/// Walk in a straight line in 5 cm steps, through the collision the headset
-/// and the server both run every frame. Returns where the walk ended and the
-/// deepest water it stood in.
 fn wade(physics: &PhysicsWorld, from: Vec3, to: Vec3) -> (Vec3, f32) {
     let mut loco = Locomotion::new(LocomotionMode::Smooth);
     loco.player_offset = from;
@@ -73,19 +66,13 @@ fn shallow_water_is_waded_through() {
 
 #[test]
 fn a_player_out_of_their_depth_can_walk_back_to_the_shore() {
-    // Put there by a spawn or a teleport: a metre deep is no reason to be
-    // stuck, only a reason not to go deeper.
+
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let physics = pool(1.0);
     let (end, _) = wade(&physics, Vec3::new(6.0, 0.0, 0.0), Vec3::new(-2.0, 0.0, 0.0));
     assert!(end.x < -1.99, "held in the water, at x = {}", end.x);
 }
 
-/// THE REAL LEVEL: off the cove's beach straight out to sea -- in up to the
-/// limit, and no further -- and from the pond's bank to its middle, all the
-/// way: the pond is authored to be walked into on its bed
-/// (`max_wade_depth`; it held the player at a wall a step in, headset
-/// 2026-10-08).
 #[test]
 fn the_shipped_beach_is_waded_into_and_no_further_and_the_pond_all_the_way() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());

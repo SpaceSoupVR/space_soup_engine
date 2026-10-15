@@ -1,6 +1,3 @@
-//! Brushes as physical barriers. A room whose walls can be walked through is
-//! not a room.
-
 use std::path::Path;
 
 use glam::Vec3;
@@ -13,8 +10,6 @@ use crate::rigid_physics_spawn::brush_collision_triangles;
 use crate::runtime_test_support::PHYSX_TEST_LOCK;
 use crate::scene::{GameObject, Scene};
 
-/// A closed 6 m box with a 5.6 m room carved out of it: walls 0.3 m thick,
-/// floor at y = 0.
 fn sealed_room() -> BrushDef {
     BrushDef {
         solids: vec![block_solid([-3.0, -0.3, -3.0], [3.0, 3.2, 3.0], "m")],
@@ -39,20 +34,14 @@ fn world_with(objects: Vec<GameObject>) -> PhysicsWorld {
     physics
 }
 
-/// Walk a player in a straight line in 5 cm steps, through the same collision
-/// the headset and the server both run every frame.
 fn walk(physics: &PhysicsWorld, from: Vec3, to: Vec3) -> Vec3 {
     walk_with_head(physics, from, to, Vec3::ZERO)
 }
 
-/// Where a headset reports a head standing `head` from the rig origin: in world
-/// space, built from this locomotion's own offset.
 fn head_at(loco: &Locomotion, head: Vec3) -> Option<Vec3> {
     Some(loco.player_offset + head + Vec3::Y * 1.7)
 }
 
-/// The same walk, by a player standing `head` away from their play area's
-/// centre. Moves the RIG ORIGIN from `from` to `to` and returns where it ended.
 fn walk_with_head(physics: &PhysicsWorld, from: Vec3, to: Vec3, head: Vec3) -> Vec3 {
     let mut loco = Locomotion::new(LocomotionMode::Smooth);
     loco.player_offset = from;
@@ -102,8 +91,6 @@ fn a_brush_marked_not_solid_is_walked_through() {
     assert!(end.x > 4.9, "stopped at x = {} by a brush marked solid: false", end.x);
 }
 
-/// A one-sided mesh wound the wrong way is solid from exactly one side, so both
-/// sides are asked.
 #[test]
 fn the_wall_is_solid_from_inside_the_room_and_from_outside() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -170,7 +157,6 @@ fn physics_ray(physics: &PhysicsWorld) -> bool {
     physics.raycast(Vec3::new(0.0, 1.0, 0.0), Vec3::X, 10.0).is_some()
 }
 
-/// THE REAL LEVEL: you get into the hall by its door, and nowhere else.
 #[test]
 fn the_shipped_hall_is_entered_by_its_door_and_not_through_its_walls() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -182,7 +168,6 @@ fn the_shipped_hall_is_entered_by_its_door_and_not_through_its_walls() {
         assert!(physics.has_collider(id), "'{id}' is not solid");
     }
 
-    // The doorway spans x -0.8..0.8 at floor level through the z = 3.7..4.0 wall.
     let entered = walk(&physics, Vec3::new(0.0, 0.0, 8.0), Vec3::new(0.0, 0.0, -3.0));
     assert!(entered.z < -2.9, "the doorway did not let the player in: stopped at {entered:?}");
     assert!(entered.y.abs() < 0.01, "not standing on the hall floor: {entered:?}");
@@ -194,9 +179,6 @@ fn the_shipped_hall_is_entered_by_its_door_and_not_through_its_walls() {
     assert!(side.x < 2.7 && side.x > 2.0, "the side wall did not stop the player: {side:?}");
 }
 
-/// On a headset the rig origin is the centre of the play area, and the player
-/// is usually standing somewhere else in it. The camera is where the HEAD is, so
-/// that is what a wall has to stop.
 #[test]
 fn a_player_standing_away_from_their_play_area_centre_is_stopped_at_the_wall() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -214,7 +196,7 @@ fn walking_into_a_wall_in_the_real_room_pushes_the_rig_back() {
     let physics = world_with(vec![room_object(None)]);
     let mut loco = Locomotion::new(LocomotionMode::Smooth);
     let mut head_x = 0.0;
-    // Four metres of real walking toward +x, with the stick untouched.
+
     for _ in 0..80 {
         head_x += 0.05;
         let start = loco.collision_start(head_at(&loco, Vec3::new(head_x, 0.0, 0.0)));
@@ -242,9 +224,6 @@ fn a_teleport_is_not_stopped_by_the_walls_it_crosses() {
     assert!((loco.player_offset.x - 5.0).abs() < 1e-4, "the teleport was blocked at x = {}", loco.player_offset.x);
 }
 
-/// A LOW ROOM KEEPS YOU ON ITS FLOOR. The ground probe used to start 3 m above
-/// the feet, which is above the roof of any room lower than that: walking into
-/// test_room's 2.6 m hallway stood the player on its roof (headset, 2026-09-24).
 #[test]
 fn a_room_with_a_low_ceiling_keeps_the_player_on_its_floor() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -261,8 +240,6 @@ fn a_room_with_a_low_ceiling_keeps_the_player_on_its_floor() {
     assert!(end.y.abs() < 0.01, "stood on the roof, at y = {}", end.y);
 }
 
-/// THE REAL LEVEL: from the hall, through its side door, along the hallway and
-/// into the brick room -- on the floor all the way.
 #[test]
 fn the_shipped_hallway_is_walked_through_on_its_floor() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -271,8 +248,7 @@ fn the_shipped_hallway_is_walked_through_on_its_floor() {
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);
     assert!(physics.has_collider("hallway"), "the hallway is not solid");
-    // The hallway's doors stood wide open: this is the floor and the walls,
-    // not the doors (see `rigid_physics_door::tests` for walking through them).
+
     let doors: Vec<(String, crate::door::DoorGeom)> = physics.doors().map(|(id, g)| (id.to_string(), *g)).collect();
     for (id, g) in &doors {
         let (p, r) = g.pose_at(g.hi);

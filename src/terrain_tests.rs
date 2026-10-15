@@ -1,11 +1,3 @@
-//! Heightfield sampling and patch generation.
-//!
-//! `height_at` is the query everything else leans on -- locomotion, foot
-//! placement, spawn resolution -- so it is tested against hand-computable
-//! fields rather than against fixtures, and the interpolation is checked at the
-//! places where an off-by-one in the index maths hides: sample points, cell
-//! midpoints, and the far edge.
-
 use glam::Vec3;
 
 use crate::physics::Aabb;
@@ -13,9 +5,8 @@ use crate::terrain::{Heightfield, TerrainSource};
 
 const FULL: u16 = u16::MAX;
 
-/// A 3x3 field, 20m square, heights 0..10m. Rows run +z, columns +x.
 fn ramp() -> Heightfield {
-    // Height rises with x: 0, 5, 10 across each row.
+
     let half = FULL / 2;
     let samples = vec![
         0, half, FULL,
@@ -31,7 +22,7 @@ fn flat_at(height: u16) -> Heightfield {
 
 #[test]
 fn rejects_a_sample_count_that_does_not_match_the_resolution() {
-    // A truncated read would otherwise produce terrain silently flat at one edge.
+
     let err = Heightfield::new(vec![0; 8], [3, 3], [10.0, 10.0], [0.0, 1.0], Vec3::ZERO)
         .unwrap_err();
     assert!(err.contains("needs 9"), "unhelpful error: {err}");
@@ -49,7 +40,7 @@ fn rejects_a_zero_size() {
 
 #[test]
 fn decodes_little_endian_u16_samples() {
-    // 0x0000 and 0xFFFF, four of them.
+
     let bytes = [0, 0, 0xFF, 0xFF, 0, 0, 0xFF, 0xFF];
     let field =
         Heightfield::from_raw_le(&bytes, [2, 2], [10.0, 10.0], [0.0, 100.0], Vec3::ZERO).unwrap();
@@ -73,15 +64,14 @@ fn height_matches_the_samples_at_sample_points() {
 
 #[test]
 fn interpolates_between_samples_rather_than_stepping() {
-    // Halfway across the first 10m cell of a 0..5m ramp is 2.5m. Nearest-sample
-    // lookup would answer 0 here, and the player would climb a staircase.
+
     let field = ramp();
     assert!((field.height_at(5.0, 0.0).unwrap() - 2.5).abs() < 1e-3);
 }
 
 #[test]
 fn interpolates_along_z_too() {
-    // Heights rise with z instead: 0 on the first row, 10 on the last.
+
     let half = FULL / 2;
     let field = Heightfield::new(
         vec![0, 0, 0, half, half, half, FULL, FULL, FULL],
@@ -106,8 +96,7 @@ fn answers_none_outside_the_field() {
 
 #[test]
 fn the_far_edge_is_inside_the_field() {
-    // The exact maximum lands on the last sample; an unclamped index would run
-    // off the end of the array here.
+
     let field = ramp();
     assert!(field.height_at(20.0, 20.0).is_some());
 }
@@ -143,8 +132,6 @@ fn bounds_cover_the_whole_field_and_its_height_range() {
     assert_eq!(b.max, Vec3::new(31.0, 14.0, 43.0));
 }
 
-// ------------------------------------------------------------------- patches
-
 fn whole_of(field: &Heightfield) -> Aabb {
     field.bounds()
 }
@@ -154,7 +141,7 @@ fn a_full_patch_covers_every_sample() {
     let field = ramp();
     let patch = field.patch(whole_of(&field), 1);
     assert_eq!(patch.positions.len(), 9);
-    // Two triangles per cell, four cells.
+
     assert_eq!(patch.indices.len(), 4 * 6);
 }
 
@@ -168,9 +155,7 @@ fn a_coarser_step_produces_fewer_vertices() {
 
 #[test]
 fn a_coarse_patch_still_reaches_the_far_edge() {
-    // The reason the last index is appended explicitly: a step that does not
-    // divide the field evenly would otherwise stop short and leave a gap
-    // between this patch and its neighbour.
+
     let field = flat_grid(5, 5);
     let patch = field.patch(whole_of(&field), 3);
     let max_x = patch.positions.iter().fold(f32::MIN, |m, p| m.max(p.x));
@@ -208,9 +193,7 @@ fn patch_indices_are_all_in_range() {
 
 #[test]
 fn patch_triangles_wind_counter_clockwise_seen_from_above() {
-    // The renderer culls back faces with front_face(Ccw). Cuboids were once
-    // wound the other way and every one of them lit inside-out while erroring
-    // nowhere; terrain would fail the same way, over the whole map.
+
     let field = flat_grid(3, 3);
     let patch = field.patch(whole_of(&field), 1);
 

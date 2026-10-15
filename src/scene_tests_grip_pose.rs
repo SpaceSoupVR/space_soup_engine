@@ -1,4 +1,3 @@
-
     #[test]
     fn legacy_grip_pose_migrates_to_both_hands() {
         let json = r#"{

@@ -132,17 +132,10 @@ impl AttachmentTable {
         self.primary.contains_key(object_id)
     }
 
-    /// Is this exact (player, joint) the attachment that drives the object's pose?
-    ///
-    /// Several joints can hold one object, but only the primary positions it. The
-    /// client needs this to stop a second hand overwriting the first's transform,
-    /// which it did unconditionally because nothing on the wire distinguished them.
     pub fn is_primary(&self, object_id: &str, player: PlayerId, joint: JointId) -> bool {
         self.primary.get(object_id) == Some(&(player, joint))
     }
 
-    /// Does this player already hold this object by any joint? Gates support grips,
-    /// which may only be taken once the object is genuinely in hand.
     pub fn held_by_player(&self, object_id: &str, player: PlayerId) -> bool {
         self.attachments
             .keys()
@@ -192,7 +185,6 @@ impl AttachmentTable {
     }
 }
 
-
 #[cfg(test)]
 mod primary_and_support_tests {
     use super::*;
@@ -202,9 +194,6 @@ mod primary_and_support_tests {
         JointId::HandGrip(hand)
     }
 
-    // Two hands on one object: the FIRST to grab positions it, and the second must
-    // not. The client used to write the object's transform once per hand, so the
-    // right hand always won regardless of which the server considered primary.
     #[test]
     fn only_the_first_hand_to_grab_is_primary() {
         let mut t = AttachmentTable::new();
@@ -219,8 +208,6 @@ mod primary_and_support_tests {
         );
     }
 
-    // Releasing the primary hands the object to the hand still holding it, rather
-    // than dropping an object the player is visibly still carrying.
     #[test]
     fn releasing_the_primary_promotes_the_remaining_hand() {
         let mut t = AttachmentTable::new();

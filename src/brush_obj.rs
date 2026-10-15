@@ -1,42 +1,3 @@
-//! Brush geometry as Wavefront OBJ, with its quads and n-gons intact.
-//!
-//! For handing a blockout to an artist. The point of the whole plane-set
-//! representation is that a wall face is a QUAD and a pillar cap is an octagon;
-//! exporting that as triangle soup would throw away the one thing that makes the
-//! handoff worth doing, because the first thing anyone does in Blender is select
-//! an edge loop, and there are no edge loops in a triangulated box.
-//!
-//! # Why OBJ
-//!
-//! glTF is the format this project uses everywhere else and it is the wrong
-//! choice here: glTF is triangles-only by specification, so it cannot carry an
-//! n-gon at all. FBX can, and is a binary format with no readable spec. OBJ is
-//! text, has no dependencies, states an n-gon as plainly as `f 1 2 3 4`, carries
-//! UVs and per-face material assignment, and every DCC tool on earth reads it.
-//!
-//! # Internal faces are dropped
-//!
-//! A brush with a doorway cut in it evaluates to eleven convex pieces, and the
-//! partitions BETWEEN those pieces are surfaces no player can ever see -- they
-//! exist only because a concave shape has to be represented as convex parts.
-//! In-game they are invisible (coincident, back to back, never drawn from a
-//! playable position). In Blender they are clutter sitting inside the mesh, and
-//! an artist would delete every one by hand.
-//!
-//! So they are detected and dropped: a face is internal when another piece has a
-//! face on the exactly opposite plane whose bounds overlap it. That also removes
-//! the seams where the slabs of a hollow room meet, which is the same problem
-//! wearing a different hat. `keep_internal` turns it off for anyone who wants to
-//! see the decomposition itself.
-//!
-//! # Axes and UVs
-//!
-//! Written Y-up, unrotated, which is what Blender's OBJ importer assumes with
-//! its default Forward `-Z` / Up `Y` -- so the default import settings are the
-//! correct ones and there is nothing to remember. The V coordinate IS flipped,
-//! because OBJ's `vt` runs bottom-up and the face projection here runs top-down
-//! so that lettering on a wall comes out readable.
-
 use crate::brush::{
     solid_polygons, BrushDef, BrushFace, BrushSolid, Plane, Vec3,
 };
@@ -44,21 +5,15 @@ use crate::scene::Scene;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-/// How coincident two planes must be to count as the same surface.
-///
-/// Looser than the geometry epsilon on purpose: these planes are derived
-/// independently through different clip sequences, so they agree to about a
-/// micron rather than exactly, and a tolerance tight enough to be "the same
-/// number" would match nothing.
 const COINCIDENT_EPS: f64 = 1e-4;
 
 #[derive(Debug, Clone)]
 pub struct ObjExportOptions {
-    /// Keep the partitions between convex pieces instead of dropping them.
+
     pub keep_internal: bool,
-    /// Basename used for the `mtllib` line and the companion `.mtl` file.
+
     pub material_library: String,
-    /// Where the material library's textures sit, relative to the `.mtl`.
+
     pub texture_root: String,
 }
 
@@ -77,7 +32,7 @@ pub struct ObjExportStats {
     pub objects: usize,
     pub vertices: usize,
     pub faces: usize,
-    /// Faces with more than three vertices -- the reason this exporter exists.
+
     pub ngons: usize,
     pub quads: usize,
     pub triangles: usize,
@@ -92,7 +47,6 @@ pub struct ObjExport {
     pub stats: ObjExportStats,
 }
 
-/// One face polygon, resolved and ready to write.
 struct Polygon<'a> {
     points: Vec<Vec3>,
     face: &'a BrushFace,
@@ -126,7 +80,6 @@ fn overlaps(a: &Polygon, b: &Polygon) -> bool {
     true
 }
 
-/// True when `a` and `b` are the same surface seen from opposite sides.
 fn back_to_back(a: &Polygon, b: &Polygon) -> bool {
     let n = a.plane.n;
     let m = b.plane.n;
@@ -155,10 +108,6 @@ fn polygons_of(solids: &[BrushSolid]) -> Vec<Polygon<'_>> {
     out
 }
 
-/// Which polygons face another piece across a shared surface.
-///
-/// Quadratic in the polygon count, which is fine: this runs once per export on
-/// a level's worth of blockout, not per frame.
 fn internal_flags(polys: &[Polygon]) -> Vec<bool> {
     let mut flags = vec![false; polys.len()];
     for i in 0..polys.len() {
@@ -172,7 +121,6 @@ fn internal_flags(polys: &[Polygon]) -> Vec<bool> {
     flags
 }
 
-/// A material name OBJ and MTL can both refer to without quoting.
 fn mtl_name(material: &str) -> String {
     let cleaned: String = material
         .chars()
@@ -185,12 +133,6 @@ fn mtl_name(material: &str) -> String {
     }
 }
 
-/// Write one brush object's geometry into an OBJ, returning what was written.
-///
-/// `vertex_base` is the running 1-based vertex count, because OBJ indices are
-/// absolute across the whole file rather than per object -- the single most
-/// common way a hand-rolled OBJ writer produces a mesh that looks like an
-/// explosion.
 fn write_object(
     obj: &mut String,
     name: &str,
@@ -225,9 +167,6 @@ fn write_object(
     let _ = writeln!(obj, "\no {name}");
     stats.objects += 1;
 
-    // Positions and UVs first, then faces referencing them. Vertices are not
-    // shared between faces: brush faces meet at hard edges, and welding them
-    // would ask Blender to average normals across a corner.
     for poly in &kept {
         for p in &poly.points {
             let _ = writeln!(obj, "v {:.6} {:.6} {:.6}", p[0], p[1], p[2]);
@@ -236,15 +175,11 @@ fn write_object(
     for poly in &kept {
         for p in &poly.points {
             let uv = poly.face.uv(*p);
-            // OBJ's V runs bottom-up; the face projection runs top-down so that
-            // lettering on a wall is readable. Flip, or every texture in Blender
-            // is mirrored vertically.
+
             let _ = writeln!(obj, "vt {:.6} {:.6}", uv[0], -uv[1]);
         }
     }
 
-    // Grouped by material so Blender gets one material slot per material rather
-    // than a `usemtl` line between every face.
     let mut by_material: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, poly) in kept.iter().enumerate() {
         by_material
@@ -269,9 +204,7 @@ fn write_object(
         for &i in indices {
             let poly = kept[i];
             let n = poly.points.len();
-            // ONE `f` line for the whole polygon. This is the entire point of
-            // the exporter: a wall face arrives in Blender as a quad, not as
-            // two triangles with a diagonal through it.
+
             let mut line = String::from("f");
             for k in 0..n {
                 let v = *vertex_base + offsets[i] + k + 1;
@@ -296,11 +229,6 @@ fn write_object(
     stats.vertices += running;
 }
 
-/// Export every brush in a scene.
-///
-/// Objects without a brush are skipped rather than exported as their bounding
-/// cuboid: this is a geometry handoff, and a box standing in for a rifle would
-/// be worse than its absence.
 pub fn export_scene(scene: &Scene, opts: &ObjExportOptions) -> ObjExport {
     let mut obj = String::new();
     let mut stats = ObjExportStats::default();
@@ -329,7 +257,6 @@ pub fn export_scene(scene: &Scene, opts: &ObjExportOptions) -> ObjExport {
     ObjExport { obj, mtl, stats }
 }
 
-/// Export a single brush, for tests and for exporting one selected object.
 pub fn export_brush(name: &str, brush: &BrushDef, opts: &ObjExportOptions) -> ObjExport {
     let mut obj = String::new();
     let mut stats = ObjExportStats::default();
@@ -346,9 +273,7 @@ fn write_mtl(materials: &[String], opts: &ObjExportOptions) -> String {
     for material in materials {
         let name = mtl_name(material);
         let _ = writeln!(mtl, "\nnewmtl {name}");
-        // Fully diffuse. The engine lights these with its own model and the
-        // artist will replace the shading anyway; what matters is that the
-        // colour map and the UVs arrive attached to the right faces.
+
         let _ = writeln!(mtl, "Kd 1.000 1.000 1.000");
         let _ = writeln!(mtl, "Ks 0.000 0.000 0.000");
         let _ = writeln!(mtl, "d 1.0");
@@ -356,9 +281,7 @@ fn write_mtl(materials: &[String], opts: &ObjExportOptions) -> String {
         if material != "default" {
             let root = opts.texture_root.trim_end_matches('/');
             let _ = writeln!(mtl, "map_Kd {root}/{material}/color.jpg");
-            // `map_Bump -bm` rather than `norm`: Blender's OBJ importer wires
-            // map_Bump into a normal-map node and ignores `norm`, which is a
-            // later extension it does not read.
+
             let _ = writeln!(mtl, "map_Bump -bm 1.0 {root}/{material}/normal.jpg");
         }
     }
@@ -370,7 +293,6 @@ mod tests {
     use super::*;
     use crate::brush::block_solid;
 
-    /// Sugar for the octagon fixture below.
     trait SolidFaces {
         fn solids_faces(self) -> Vec<BrushFace>;
     }
@@ -398,7 +320,6 @@ mod tests {
         obj.lines().filter(|l| l.starts_with("f ")).collect()
     }
 
-    /// The whole reason this exists.
     #[test]
     fn a_box_exports_as_six_quads_not_twelve_triangles() {
         let out = export_brush("wall", &wall(), &ObjExportOptions::default());
@@ -413,13 +334,7 @@ mod tests {
 
     #[test]
     fn a_pillar_cap_exports_as_a_single_ngon() {
-        // An octagonal prism, built the way the editor's cylinder primitive
-        // does: cut the four vertical corners off a box with tangent planes.
-        //
-        // `d` has to be measured from a real point on the plane, because
-        // `Plane::new` normalizes the normal -- passing a distance computed
-        // against the un-normalized one puts every cut somewhere else, which is
-        // how the first version of this test "failed" with a correct exporter.
+
         let mut faces = block_solid([0.0, 0.0, 0.0], [2.0, 4.0, 2.0], "metal").solids_faces();
         for (nx, nz) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
             let pl = Plane::new([nx, 0.0, nz], 0.0);
@@ -455,7 +370,6 @@ mod tests {
         assert!(out.stats.ngons >= out.stats.quads, "n-gon count includes quads");
     }
 
-    /// An artist should get the surface, not the convex decomposition.
     #[test]
     fn partitions_between_pieces_are_dropped() {
         let opts = ObjExportOptions::default();
@@ -480,8 +394,6 @@ mod tests {
         assert_eq!(out.stats.internal_dropped, 0);
     }
 
-    /// OBJ indices are absolute across the file, not per object. Getting this
-    /// wrong produces a mesh that looks like an explosion.
     #[test]
     fn vertex_indices_continue_across_objects() {
         let mut scene = Scene::default();
@@ -561,8 +473,7 @@ mod tests {
 
     #[test]
     fn geometry_is_written_y_up_unrotated() {
-        // Blender's OBJ importer defaults (Forward -Z, Up Y) convert this
-        // correctly, so the file must NOT be pre-rotated.
+
         let out = export_brush("wall", &wall(), &ObjExportOptions::default());
         let ys: Vec<f64> = out
             .obj
@@ -570,7 +481,7 @@ mod tests {
             .filter(|l| l.starts_with("v "))
             .map(|l| l.split_whitespace().nth(2).unwrap().parse().unwrap())
             .collect();
-        // The wall is 3m tall in Y and 0.3m deep in Z.
+
         assert!((ys.iter().cloned().fold(f64::MIN, f64::max) - 3.0).abs() < 1e-4);
     }
 

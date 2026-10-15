@@ -26,38 +26,12 @@ pub use crate::scene_rig::{
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GameObject {
-    /// The human name. Displayed in the editor, and the handle every script
-    /// uses: `move_object("m4a1_bolt", ..)`, `get_object_x`, `play_animation`,
-    /// `raycast_hit_object`. Renameable, and NOT what structure hangs off --
-    /// see `uuid`.
+
     pub id: String,
 
-    /// Stable identity, assigned once and never changed.
-    ///
-    /// Exists because `parent` has to point at something a rename cannot break.
-    /// Structure used to be inferred from the id string -- the editor's
-    /// `familyRoot()` split ids on `_` and asked whether a shorter one existed,
-    /// so `m4a1_mag` was a child of `m4a1` by spelling alone. Renaming an object
-    /// silently reparented it, and two compound props could not share a part
-    /// name.
-    ///
-    /// Deliberately NOT used for script references. The whole scripting surface
-    /// is name-based and there are four structural cross-object references in
-    /// the entire lobby, so migrating those to uuids would break every
-    /// hand-written script to fix four fields. Names stay the scripting
-    /// contract; uuids carry structure.
-    ///
-    /// `None` on a file written before this existed, which loads as a flat
-    /// scene exactly as it did before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
 
-    /// The `uuid` of this object's transform parent, if it has one.
-    ///
-    /// When set, `cuboid.position` and `cuboid.rotation` are **parent-relative**
-    /// as stored. `Scene::load` leaves them that way so a load/save round trip
-    /// is lossless; `resolve_world_transforms` composes them into world space,
-    /// and the runtime calls it before anything reads a transform.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
 
@@ -67,19 +41,6 @@ pub struct GameObject {
     #[serde(default)]
     pub mesh: Option<MeshRef>,
 
-    /// Level geometry built from planes -- walls, rooms, stairs, structures.
-    ///
-    /// A THIRD shape kind alongside `cuboid` and `mesh`, deliberately living on
-    /// GameObject rather than in an array of its own on Scene. Everything the
-    /// engine already does to an object -- triggers, animation states,
-    /// `breakable` damage stages, physics, parenting, `hidden`, tags -- applies
-    /// to a brush with no system learning what a brush is. That is Source's
-    /// "tie a solid to an entity", except that here there is nothing to tie: it
-    /// was an entity from the start.
-    ///
-    /// `cuboid` is still populated on a brush object, at the brush's bounds, and
-    /// is a REPORT of the geometry rather than an input to it. The renderer must
-    /// not scale by `half_size` when this is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brush: Option<crate::brush::BrushDef>,
 
@@ -89,18 +50,6 @@ pub struct GameObject {
     #[serde(default)]
     pub hidden: bool,
 
-    /// Free-form labels for organising a scene: "cover", "lighting", "audio",
-    /// "blockout", "pass-2".
-    ///
-    /// Organisation rather than behaviour, which is why it is not an authorable
-    /// component: nothing in the runtime reads a tag today. It lives on
-    /// GameObject rather than in an editor sidecar because it is the natural
-    /// seed for data layers -- streaming a district, enabling a lighting pass,
-    /// turning a whole gameplay set on for a mode -- and a sidecar keyed by
-    /// object id would break on exactly the rename that `uuid` exists to
-    /// survive.
-    ///
-    /// Skipped when empty so existing scenes gain nothing on their next save.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 
@@ -116,19 +65,6 @@ pub struct GameObject {
     #[serde(default)]
     pub part_animations: Vec<PartAnimationDef>,
 
-    /// Parts of this object's model that are not drawn.
-    ///
-    /// State, not an animation channel. A keyframe interpolates, and "half
-    /// visible" is either meaningless or a fade nobody asked for; worse, part
-    /// animations keep only each channel's LAST keyframe, so a hide-then-show
-    /// timeline cannot even be represented in the file. Visibility is a thing a
-    /// part IS, so it lives on the object and is changed by events.
-    ///
-    /// The case that needs it: a magazine model carrying both a loaded and an
-    /// empty magazine as separate parts, where exactly one should be drawn.
-    ///
-    /// Rendering already knows how to do this -- the same joint-exclusion path
-    /// that hides your own avatar's head from your view.
     #[serde(default)]
     pub hidden_parts: Vec<String>,
 
@@ -156,19 +92,12 @@ pub struct GameObject {
     #[serde(default)]
     pub slider_joint: Option<SliderJointDef>,
 
-    /// A door: this object's cuboid is the leaf as it hangs closed, turning
-    /// about one vertical edge. See [`crate::door`]. Skipped when absent, so
-    /// scenes without doors are unchanged by a save.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub door: Option<crate::door::DoorDef>,
 
     #[serde(default)]
     pub terrain_collider: Option<TerrainColliderDef>,
 
-    /// A walkable mat: this object's cuboid footprint is draped over the
-    /// scene's terrain and cooked into a floor the player walks on, ringed
-    /// by an invisible fence wall they cannot cross. See [`crate::walk_area`].
-    /// Skipped when absent, so scenes without one are unchanged by a save.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub walk_area: Option<crate::walk_area::WalkAreaDef>,
 
@@ -181,9 +110,6 @@ pub struct GameObject {
     #[serde(default)]
     pub particle_emitter: Option<ParticleEmitterDef>,
 
-    /// A special effect drawn here: fire, smoke, embers or dust. See
-    /// [`EffectDef`]. Skipped when absent, so scenes without one are
-    /// unchanged by a save.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<EffectDef>,
 
@@ -196,87 +122,46 @@ pub struct GameObject {
     #[serde(default)]
     pub teleportal: Option<TeleportalDef>,
 
-    /// An interactive prop placed here, linked by its `.prop.json` (made in
-    /// SSStudio's prop studio). The prop file names its own model; this
-    /// object only says where the prop sits in the scene.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prop: Option<PropRef>,
 
-    /// A selection pad: putting a controller inside this object's box
-    /// chooses something for the player (their body, their hands).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector: Option<SelectorDef>,
 
-    /// A menu shown on this object as a fixed panel in the world. See
-    /// `MenuPanelDef`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu_panel: Option<MenuPanelDef>,
 
-    /// A baked cubemap reflection captured here, with this object's cuboid as
-    /// the room it is parallax-corrected against. See
-    /// [`crate::reflection_probe`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflection_probe: Option<crate::reflection_probe::ReflectionProbeDef>,
 
-    /// How this object comes apart under fire, if it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub breakable: Option<BreakableDef>,
 
-    /// A region that notices who is inside it without stopping them.
-    ///
-    /// Independent of `rigid_body` on purpose: a zone that also blocks is
-    /// unusual but not nonsense (a pressure plate you stand on), and tying the
-    /// two together would make it unauthorable. The editor's "trigger zone"
-    /// affordance sets the conventional combination -- volume on, collision
-    /// off, hidden -- rather than the engine forbidding the others.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_volume: Option<crate::trigger_volume::TriggerVolumeDef>,
 
-    /// Whether this object is a physical barrier: players stop at it, bodies
-    /// land on it, rays hit it.
-    ///
-    /// `None` is automatic, and automatic is what almost every object wants: a
-    /// brush is solid unless it is a trigger. That is Unreal's and Quake's
-    /// convention -- level geometry blocks by default and walking through it is
-    /// the thing you opt into (Unreal's Non-solid brush, Source's
-    /// func_illusionary). A room whose walls you can walk through is not a room.
-    ///
-    /// `Some(false)` makes a brush walk-through: a bead curtain, a hedge, a
-    /// hologram. `Some(true)` forces it, even on a trigger, because someone
-    /// wrote it down.
-    ///
-    /// Only brushes build a collider from this. Everything else collides through
-    /// `rigid_body` or `terrain_collider`, which say what shape to use; a brush
-    /// needs no telling, because its planes ARE the shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solid: Option<bool>,
 }
 
-/// What a selection pad chooses: `set` is "body" or "hands", `value` the
-/// choice ("boy" / "soldier", "default" / "gloves").
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SelectorDef {
     pub set: String,
     pub value: String,
 }
 
-/// A menu (`game/menus/<menu>.menu.json`) drawn on this object's front face
-/// as a fixed panel in the world: it does not follow or turn with the
-/// player, and it is always showing. For a base's notice board.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MenuPanelDef {
     pub menu: String,
 }
 
-/// A link to a prop file: `path` is relative to the game folder when the
-/// file is inside it, otherwise absolute.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PropRef {
     pub path: String,
 }
 
 impl GameObject {
-    /// Whether this object's brush is built as a collider. See `solid`.
+
     pub fn is_solid_brush(&self) -> bool {
         self.brush.is_some()
             && self
@@ -311,30 +196,21 @@ impl GameObject {
     }
 }
 
-/// Display settings: how unbounded light is mapped to a screen.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PostDef {
-    /// Linear multiplier applied BEFORE the tone curve, like a camera's stop.
-    ///
-    /// Before, because that is what choosing an exposure means: picking which
-    /// part of the scene's range to land on the display. Applied after the
-    /// curve it would only brighten an already-compressed image.
+
     #[serde(default = "default_exposure")]
     pub exposure: f32,
     #[serde(default)]
     pub tonemap: ToneMapDef,
 }
 
-/// Mirrors `space_soup::renderer::tonemap::ToneMapping`.
-///
-/// Mirrored rather than shared for the same reason `LightKind` is: the scene
-/// format is the engine's, and it does not depend on the renderer crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ToneMapDef {
-    /// Filmic shoulder -- highlights roll off instead of clipping.
+
     #[default]
     Aces,
-    /// Hard clamp. What every scene did before tone mapping existed.
+
     None,
 }
 
@@ -352,54 +228,21 @@ impl Default for PostDef {
 pub struct Scene {
     pub name: String,
 
-    /// How this scene's radiance becomes pixels: exposure and tone curve.
-    ///
-    /// Per scene rather than global because it is a look, and two levels in one
-    /// project routinely want different ones -- a night exterior and a lit
-    /// interior are not graded the same way. Defaulted, so every scene already
-    /// on disk gets the standard filmic response with no edit.
     #[serde(default)]
     pub post: PostDef,
 
-    /// The scene's ground, if it has authored terrain.
-    ///
-    /// Optional and skipped when absent, so every existing scene is unchanged.
-    /// A scene without terrain is exactly what the lobby is today: geometry
-    /// made of objects, with `terrain_collider` marking some of it walkable.
-    /// That path is untouched -- this is the ground you sculpt, not the props
-    /// standing on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terrain: Option<TerrainDef>,
 
-    /// Standing water in the scene.
-    ///
-    /// A list, not one body: a level can hold a pond and a flooded basement at
-    /// different heights, and they are independent surfaces. Skipped when empty
-    /// so every scene already on disk is byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub water: Vec<crate::water::WaterDef>,
 
-    /// Areas of rain and snow, and the most each may leave on the ground.
-    /// See `weather`. Skipped when empty, so every scene already on disk is
-    /// unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub weather: Vec<crate::weather::WeatherDef>,
 
-    /// Procedural placement layers -- trees, grass, rocks.
-    ///
-    /// Parameters, not output. Five thousand scattered trees are a handful of
-    /// strokes plus a seed here, and are resolved to instances at load; storing
-    /// them as objects would put them in `objects`, which is the one thing that
-    /// would make this format unusable at map scale.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scatter: Vec<ScatterLayer>,
 
-    /// The sky, and therefore most of the lighting.
-    ///
-    /// One per scene rather than per project: the sky is the most
-    /// level-defining choice there is, and two levels routinely want different
-    /// ones. Only the id is stored -- the panorama lives in the shared library
-    /// under game/skies/, so several levels can use one download.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sky: Option<SkyDef>,
 
@@ -411,76 +254,50 @@ fn default_sky_intensity() -> f32 {
     1.0
 }
 
-/// Which sky a scene uses, and how it is oriented and exposed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkyDef {
-    /// Library id -- the directory under game/skies/ holding sky.hdr.
+
     pub id: String,
 
-    /// Multiplier on the panorama's own values.
-    ///
-    /// An HDRI carries real intensity, so the default is 1.0 and means "as
-    /// photographed". This exists because a level is not obliged to be lit as
-    /// brightly as the day the panorama was shot.
     #[serde(default = "default_sky_intensity")]
     pub intensity: f32,
 
-    /// Turn the sky about Y, in degrees.
-    ///
-    /// The single most useful control an HDRI has: it puts the sun where the
-    /// level needs it without going back to the library for another sky.
     #[serde(default)]
     pub rotation_deg: f32,
 
-    /// Draw the panorama behind the level, as opposed to only lighting with it.
-    ///
-    /// Separable because an indoor level often wants a studio probe's LIGHT
-    /// with its own ceiling overhead rather than a photographed room visible
-    /// through the windows.
     #[serde(default = "default_true")]
     pub show_background: bool,
 
-    /// THE TIME OF DAY: a moving sun, a moon, stars and a sky made by an
-    /// atmosphere model rather than photographed. Absent -- the default --
-    /// the photographed panorama lights the level exactly as it always has,
-    /// with its own sun. See `space_soup_sky::time_of_day`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_of_day: Option<TimeOfDayDef>,
 }
 
-/// A scene's day: where on Earth, which day, the hour, and how fast it passes.
-///
-/// Every field has a default, so `"time_of_day": {}` is a frozen 3 pm on the
-/// June solstice at 40 degrees north, with north turned so the sun stands where
-/// the scene's photographed sky has its sun (`north_deg` absent).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TimeOfDayDef {
-    /// Local solar time at the start, hours (12 = noon).
+
     #[serde(default = "default_start_hour")]
     pub start_hour: f32,
-    /// Real minutes one 24-hour day takes. 0 = time stands still.
+
     #[serde(default)]
     pub day_minutes: f32,
     #[serde(default = "default_latitude")]
     pub latitude_deg: f32,
-    /// 1..365; 172 is the June solstice.
+
     #[serde(default = "default_day_of_year")]
     pub day_of_year: f32,
-    /// Where north points, as an azimuth (`atan2(x, z)`, degrees). Absent:
-    /// turned so the sun at `start_hour` stands at the photographed sky's
-    /// sun's azimuth, so the level keeps the side it was lit from.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub north_deg: Option<f32>,
-    /// The moon's age as a fraction of its month: 0 new, 0.5 full.
+
     #[serde(default = "default_moon_phase")]
     pub moon_phase: f32,
-    /// 1 = a dark site's naked-eye stars.
+
     #[serde(default = "default_one")]
     pub star_density: f32,
-    /// 0 none .. 1 a suburb's sky glow.
+
     #[serde(default)]
     pub light_pollution: f32,
-    /// Haze: the aerosol density, 1 = a clear day.
+
     #[serde(default = "default_one")]
     pub turbidity: f32,
 }
@@ -508,8 +325,7 @@ impl Default for TimeOfDayDef {
 }
 
 impl TimeOfDayDef {
-    /// The sky model's parameters. `photographed_sun` is the scene's HDRI's sun
-    /// direction, which an absent `north_deg` aligns to.
+
     pub fn params(&self, photographed_sun: Option<[f32; 3]>) -> space_soup_sky::time_of_day::TimeOfDayParams {
         let p = space_soup_sky::time_of_day::TimeOfDayParams {
             start_hour: self.start_hour,
@@ -559,24 +375,6 @@ impl Scene {
         Ok(())
     }
 
-    /// Compose parent-relative transforms into world space, in place.
-    ///
-    /// Stored transforms are parent-relative whenever `parent` is set, because
-    /// that is what makes moving a compound prop one edit rather than N. But
-    /// eleven modules read `cuboid.position` expecting world space, so rather
-    /// than teach all of them about hierarchy, the runtime flattens once at
-    /// load and they carry on unchanged.
-    ///
-    /// The tradeoff that buys: moving a parent AT RUNTIME (a script calling
-    /// `move_object` on it) does not drag its children, because after this call
-    /// there is no hierarchy left in memory to propagate through. Static level
-    /// structure is what this is for. Runtime propagation needs the composition
-    /// to live in the render/physics path instead, which is a much larger
-    /// change and is not needed until something authored moves as a group.
-    ///
-    /// Unknown parents and cycles are dropped with a warning rather than
-    /// failing the load: a scene that is half-broken should still open in the
-    /// editor so it can be fixed there.
     pub fn resolve_world_transforms(&mut self) {
         let index_of: std::collections::HashMap<&str, usize> = self
             .objects
@@ -585,7 +383,6 @@ impl Scene {
             .filter_map(|(i, o)| o.uuid.as_deref().map(|u| (u, i)))
             .collect();
 
-        // Parent index per object, and the roots to walk down from.
         let parents: Vec<Option<usize>> = self
             .objects
             .iter()
@@ -618,10 +415,7 @@ impl Scene {
                         self.name,
                         self.objects[i].id
                     );
-                    // Clearing the link, not just treating it as a root: the
-                    // composition step below reads `parents[i]`, so leaving it
-                    // set made the object compose against itself and double its
-                    // own offset.
+
                     parents[i] = None;
                     roots.push(i);
                 }
@@ -629,8 +423,6 @@ impl Scene {
             }
         }
 
-        // Iterative so a deep hierarchy cannot blow the stack, and so anything
-        // left unvisited is provably in a cycle.
         let mut visited = vec![false; self.objects.len()];
         let mut stack: Vec<usize> = roots;
         while let Some(i) = stack.pop() {
@@ -733,75 +525,26 @@ mod particle_and_laser_scene_test {
     include!("scene_tests_particle_laser.rs");
 }
 
-/// A structure that changes shape as it takes damage.
-///
-/// Deliberately built on `hidden_parts` rather than on fractured geometry. A
-/// wall model carries its intact courses AND the rubble that replaces them as
-/// ordinary named parts; a damage stage just declares which parts are hidden.
-/// That reuses a rendering path the engine already has -- the same one that
-/// hides a loaded magazine when the empty one should show -- and it means
-/// breaching needs no mesh cutting, no debris simulation and no per-frame
-/// physics cost.
-///
-/// What it cannot do is produce a hole where the artist did not author one.
-/// That is the trade: a fracture system makes any hole and costs a great deal;
-/// this makes the holes a level designer chose, for almost nothing.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BreakableDef {
-    /// Damage the object absorbs before its last stage is reached.
-    ///
-    /// Stages are placed on a 0..1 fraction of this, so retuning how tough
-    /// something is never means re-authoring where its stages sit.
+
     pub health: f32,
 
-    /// Damage states, ascending by `at`.
-    ///
-    /// The state BEFORE the first stage is the object as authored -- whatever
-    /// `hidden_parts` already says. So a stage list never has to describe the
-    /// intact object, and adding breakability to an existing prop changes
-    /// nothing until it is actually shot.
     #[serde(default)]
     pub stages: Vec<DamageStage>,
 }
 
-/// One step in a structure's collapse.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DamageStage {
-    /// Fraction of `health` at which this stage takes over, in 0..=1.
+
     pub at: f32,
 
-    /// The parts hidden while this stage is current.
-    ///
-    /// Replaces `hidden_parts` wholesale rather than adding to it, because a
-    /// stage is a STATE and not a delta. A delta list would make the result
-    /// depend on which stages were passed through, so a wall shot slowly would
-    /// end up looking different from one shot at once.
     #[serde(default)]
     pub hidden_parts: Vec<String>,
 
-    /// Whether the object still blocks movement and fire at this stage.
-    ///
-    /// This is the one that matters for breaching: the hole has to be
-    /// shootable and walkable, not just visible.
     #[serde(default = "default_true")]
     pub solid: bool,
 
-    /// Whether the object is gone entirely at this stage -- not drawn at all.
-    ///
-    /// `hidden_parts` cannot express this. It names parts INSIDE a model, and
-    /// the renderer only consults it for objects that have a `mesh`; a brush
-    /// has no named parts to hide, so a wall chunk had no way to stop being
-    /// drawn no matter what stage it reached.
-    ///
-    /// That gap did not matter while a breakable was one authored model
-    /// carrying its own rubble. It matters for a FRACTURED wall, where the
-    /// pieces are separate convex brushes and a piece is not a state of a model
-    /// but a thing that is either there or is not.
-    ///
-    /// Deliberately separate from `solid` rather than implied by it. A chunk
-    /// that is shot away is both; a wall left standing but shot through wants
-    /// `solid: false` while still being drawn, and collapsing the two would
-    /// make that unauthorable.
     #[serde(default)]
     pub removed: bool,
 }
@@ -811,18 +554,10 @@ fn default_true() -> bool {
 }
 
 impl BreakableDef {
-    /// The stage a given amount of damage puts this object in, if any.
-    ///
-    /// `None` means undamaged -- the object as authored. Stages are matched by
-    /// the HIGHEST threshold passed rather than the first, so a single large
-    /// hit lands on the same stage that several small ones would accumulate to.
-    /// Anything else makes a tank shell less destructive than a rifle.
+
     pub fn stage_for(&self, damage: f32) -> Option<&DamageStage> {
         if self.health <= 0.0 {
-            // Zero health means every hit is total. Guarding here rather than
-            // rejecting it at load: an author dragging a slider through zero
-            // should not produce a division that yields NaN and a stage list
-            // that silently never matches.
+
             return self.stages.last();
         }
         let fraction = (damage / self.health).clamp(0.0, 1.0);
@@ -832,18 +567,11 @@ impl BreakableDef {
             .max_by(|a, b| a.at.total_cmp(&b.at))
     }
 
-    /// Whether the object still blocks at this damage level.
-    ///
-    /// A `removed` stage is never solid, whatever `solid` says. An object that
-    /// is not drawn and still blocks fire is an invisible wall -- the exact
-    /// visual/physical split this system exists to avoid -- and requiring an
-    /// author to set both correctly means one of them will eventually be wrong.
     pub fn is_solid_at(&self, damage: f32) -> bool {
         self.stage_for(damage)
             .map_or(true, |s| s.solid && !s.removed)
     }
 
-    /// The parts hidden at this damage level, given the object's authored set.
     pub fn hidden_parts_at<'a>(&'a self, damage: f32, authored: &'a [String]) -> &'a [String] {
         match self.stage_for(damage) {
             Some(stage) => &stage.hidden_parts,
@@ -894,9 +622,6 @@ mod breakable_tests {
         assert_eq!(w.stage_for(80.0).unwrap().at, 0.8);
     }
 
-    /// THE case. One big hit must land on the same stage that many small hits
-    /// accumulate to -- otherwise a tank shell is less destructive than a
-    /// rifle, which is the kind of thing nobody notices until a playtest.
     #[test]
     fn one_large_hit_reaches_the_same_stage_as_many_small_ones() {
         let w = wall();
@@ -912,15 +637,12 @@ mod breakable_tests {
         assert_eq!(one_shell.hidden_parts, many_rounds.hidden_parts);
     }
 
-    /// A stage replaces `hidden_parts` wholesale, so the result cannot depend
-    /// on which stages were passed through on the way.
     #[test]
     fn a_stage_is_a_state_not_a_delta() {
         let w = wall();
         let authored = vec!["scaffold".to_string()];
         let straight_to_breached = w.hidden_parts_at(100.0, &authored).to_vec();
 
-        // Same object, reached gradually.
         let _ = w.hidden_parts_at(45.0, &authored);
         let _ = w.hidden_parts_at(85.0, &authored);
         let gradually = w.hidden_parts_at(100.0, &authored).to_vec();
@@ -929,8 +651,6 @@ mod breakable_tests {
         assert_eq!(gradually, vec!["intact_render", "cracked_render"]);
     }
 
-    /// The one that makes breaching work: the hole has to be shootable and
-    /// walkable, not merely visible.
     #[test]
     fn a_breached_stage_stops_blocking() {
         let w = wall();
@@ -944,9 +664,6 @@ mod breakable_tests {
         assert_eq!(w.stage_for(1_000_000.0).unwrap().at, 0.8);
     }
 
-    /// Zero health must not divide to NaN and silently match no stage -- an
-    /// author dragging a slider through zero should get "everything breaks it",
-    /// not a prop that has quietly become invulnerable.
     #[test]
     fn zero_health_breaks_immediately_rather_than_never() {
         let w = BreakableDef { health: 0.0, ..wall() };
@@ -961,9 +678,6 @@ mod breakable_tests {
         assert!(w.is_solid_at(999.0));
     }
 
-    /// Stages out of order must still resolve by the highest threshold passed,
-    /// because an editor that lets stages be reordered will eventually produce
-    /// an unsorted list.
     #[test]
     fn stages_resolve_by_threshold_not_by_list_order() {
         let w = BreakableDef {
@@ -977,8 +691,6 @@ mod breakable_tests {
         assert_eq!(w.stage_for(50.0).unwrap().hidden_parts, vec!["chipped"]);
     }
 
-    /// Absent on an object that is not breakable, so existing scenes gain
-    /// nothing on their next save.
     #[test]
     fn the_component_is_skipped_when_absent() {
         let obj = GameObject { id: "wall".into(), ..Default::default() };
@@ -998,9 +710,6 @@ mod breakable_tests {
         assert_eq!(back.breakable, Some(wall()));
     }
 
-    /// `solid` defaults to true, so a stage authored without it is still a
-    /// wall -- the safe direction, since a stage that silently stopped
-    /// blocking would be a hole nobody put there.
     #[test]
     fn solid_defaults_to_true_when_a_stage_omits_it() {
         let stage: DamageStage =
@@ -1013,12 +722,6 @@ mod breakable_tests {
 mod breakable_editor_parity {
     use super::*;
 
-    /// The exact JSON the editor's Breakable card produced, captured from the
-    /// running app after clicking "Add Breakable" and "Add stage" twice.
-    ///
-    /// Pasted verbatim rather than constructed, because the point is to catch
-    /// the editor and the engine disagreeing about the shape -- and a fixture
-    /// built from the Rust types cannot disagree with the Rust types.
     const FROM_EDITOR: &str = r#"{
         "health": 100,
         "stages": [
@@ -1035,16 +738,11 @@ mod breakable_editor_parity {
         assert_eq!(def.stages[0].at, 0.4);
         assert!(def.stages[1].solid);
 
-        // And it resolves the way the card's labels claim: "at 40% damage (40)".
         assert!(def.stage_for(39.0).is_none());
         assert_eq!(def.stage_for(40.0).unwrap().at, 0.4);
         assert_eq!(def.stage_for(80.0).unwrap().at, 0.8);
     }
 
-    /// The editor writes integers for whole numbers (`"health": 100`), which
-    /// must still parse into an f32 field. A serde float that rejected an
-    /// integer literal would fail only on the values an author is most likely
-    /// to type.
     #[test]
     fn an_integer_health_parses_as_a_float() {
         let def: BreakableDef =

@@ -42,7 +42,7 @@
         assert_eq!(right.hand, Hand::Right);
         assert_eq!(right.local_pos, [0.0, -0.02, 0.11]);
         assert_eq!(right.grab_range, Some(0.12));
-        assert_eq!(right.hand_offset_pos, Some([0.0, -0.05, 0.02])); // decoupled hand transform
+        assert_eq!(right.hand_offset_pos, Some([0.0, -0.05, 0.02]));
         assert_eq!(right.hand_offset_rot, Some([0.0, 0.0, 0.0, 1.0]));
 
         let left = obj.grip_point("foregrip").expect("left-hand point");
@@ -50,7 +50,7 @@
         assert_eq!(left.hand, Hand::Left);
         assert_eq!(left.grab_range, None);
         assert_eq!(left.local_rot, [0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(left.hand_offset_pos, None); // absent -> hand sits on the anchor
+        assert_eq!(left.hand_offset_pos, None);
 
         let out = std::env::temp_dir().join("grip_points_authoring_test_out.json");
         scene.save(&out).unwrap();
@@ -58,10 +58,6 @@
         std::fs::remove_file(&out).ok();
         assert_eq!(reloaded.objects[0].grip_points, obj.grip_points);
     }
-
-    // Part-scoped grips: a grip on a moving part has to travel with that part.
-    // Without this the hand is correct only while the part is at rest, which is
-    // exactly when nobody is looking at it.
 
     fn grip(part: Option<&str>) -> crate::GripPointDef {
         serde_json::from_value(serde_json::json!({
@@ -77,7 +73,7 @@
     fn a_part_scoped_grip_rides_its_part_and_a_plain_one_does_not() {
         use glam::{Quat, Vec3};
         let obj_pos = Vec3::new(1.0, 0.0, 0.0);
-        // The bolt is 8.9 cm back from the receiver -- an AR-15's full stroke.
+
         let handle = (Vec3::new(1.0, 0.0, -0.089), Quat::IDENTITY);
 
         let (scoped, _) = grip(Some("charging_handle")).anchor_world(
@@ -110,9 +106,7 @@
     #[test]
     fn the_part_rotation_carries_the_grip_offset() {
         use glam::{Quat, Vec3};
-        // A part rotated a quarter turn about Y takes its grip offset with it:
-        // +Z local becomes +X world. A grip that ignored part rotation would
-        // stay on +Z and sit beside the part rather than on it.
+
         let g: crate::GripPointDef = serde_json::from_value(serde_json::json!({
             "name": "g", "hand": "left", "local_pos": [0.0, 0.0, 1.0], "part": "bolt",
         }))
@@ -128,8 +122,7 @@
     #[test]
     fn the_hand_pose_uses_hand_offset_and_still_rides_the_part() {
         use glam::{Quat, Vec3};
-        // The reach anchor and the hand are authored separately: reach at the
-        // handle's tip, hand 3 cm down it. Both must ride the part.
+
         let g: crate::GripPointDef = serde_json::from_value(serde_json::json!({
             "name": "g", "hand": "left",
             "local_pos": [0.0, 0.0, 0.0],
@@ -144,10 +137,6 @@
             "hand offset must compose on top of the part pose, got {hand:?}"
         );
     }
-
-    // A support grip (the offhand on a rifle's handguard) must not be a way to pick
-    // the object up -- every authored grip used to be independently grabbable, so the
-    // m4a1 could be carried by its barrel with no hand on the pistol grip.
 
     #[test]
     fn support_defaults_to_false_and_deserializes_when_set() {

@@ -1,43 +1,6 @@
-//! T-junction repair for brush geometry.
-//!
-//! # The crack this removes
-//!
-//! Subtracting one brush from another produces faces that END partway along a
-//! neighbour's edge. The room carved out of a shell has a ceiling whose corner
-//! lands at y = 3.1 on the shell's front-wall edge, which runs from y = -0.3 to
-//! 3.4 without a vertex there. The two triangles meeting along that line do not
-//! share an edge, only a line, and float rounding in the rasteriser puts them a
-//! fraction of a pixel apart. The gap shows whatever is behind the wall -- the
-//! grass outdoors -- as single pixels that flicker as the head moves.
-//!
-//! Measured on `test_room` before this existed: 408 vertex-on-edge incidences
-//! across 204 triangles.
-//!
-//! # The repair
-//!
-//! The standard one from brush compilers (qbsp's T-junction pass): wherever a
-//! vertex of any polygon lies strictly inside another polygon's edge, split that
-//! edge at the vertex, so both sides share it exactly.
-//!
-//! Done on POLYGONS rather than triangles, and a repaired polygon is then
-//! triangulated from its centroid rather than from a corner. A corner fan fails
-//! precisely here: points inserted on the corner's own two edges are collinear
-//! with it, those triangles have zero area, and the edge they were meant to
-//! share is covered by a triangle that still spans it whole. From an interior
-//! point every boundary segment gets a triangle of its own.
-//!
-//! Attributes are interpolated linearly, which is exact rather than approximate:
-//! a brush face is planar and both its texture and lightmap coordinates are
-//! affine functions of position on it.
-
 use crate::brush::BrushPolygon;
 use std::collections::HashSet;
 
-/// How close, in metres, a vertex must be to an edge to count as lying on it,
-/// and how far from the edge's ends it must be to count as inside it.
-///
-/// A tenth of a millimetre: well above float noise on level-scale coordinates,
-/// far below any real gap between surfaces an author would intend.
 pub const T_JUNCTION_TOLERANCE: f32 = 1e-4;
 
 fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
@@ -50,8 +13,6 @@ fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
 
-/// Every distinct vertex position across all polygons, sorted by x so an edge
-/// only has to look at the points inside its own x-range.
 fn vertex_index(polys: &[BrushPolygon]) -> Vec<[f32; 3]> {
     let q = |v: f32| (v / T_JUNCTION_TOLERANCE).round() as i64;
     let mut seen = HashSet::new();
@@ -67,7 +28,6 @@ fn vertex_index(polys: &[BrushPolygon]) -> Vec<[f32; 3]> {
     out
 }
 
-/// The points lying strictly inside edge `a -> b`, as `(t, position)` in order.
 fn points_inside_edge(index: &[[f32; 3]], a: [f32; 3], b: [f32; 3]) -> Vec<(f32, [f32; 3])> {
     let tol = T_JUNCTION_TOLERANCE;
     let ab = sub(b, a);
@@ -84,9 +44,7 @@ fn points_inside_edge(index: &[[f32; 3]], a: [f32; 3], b: [f32; 3]) -> Vec<(f32,
             break;
         }
         let t = dot(sub(*c, a), ab) / len2;
-        // Strictly INSIDE: at least the tolerance away from both ends, so an
-        // edge's own endpoints and the corners it already shares are never
-        // counted as junctions on it.
+
         if t * len <= tol || (1.0 - t) * len <= tol {
             continue;
         }
@@ -104,7 +62,6 @@ fn points_inside_edge(index: &[[f32; 3]], a: [f32; 3], b: [f32; 3]) -> Vec<(f32,
     found
 }
 
-/// How many vertices lie inside some other polygon edge. Zero means watertight.
 pub fn count_t_junctions(polys: &[BrushPolygon]) -> usize {
     let index = vertex_index(polys);
     polys
@@ -118,10 +75,6 @@ pub fn count_t_junctions(polys: &[BrushPolygon]) -> usize {
         .sum()
 }
 
-/// Split every polygon edge at the vertices lying inside it.
-///
-/// Returns each polygon with a flag saying whether it changed, so an untouched
-/// polygon can keep the exact triangulation it always had.
 pub fn fix_t_junctions(polys: &[BrushPolygon]) -> Vec<(BrushPolygon, bool)> {
     let index = vertex_index(polys);
     polys
@@ -142,8 +95,7 @@ pub fn fix_t_junctions(polys: &[BrushPolygon]) -> Vec<(BrushPolygon, bool)> {
                 out.uv2.push(p.uv2[k]);
                 for (t, c) in points_inside_edge(&index, p.positions[k], p.positions[next]) {
                     changed = true;
-                    // The OTHER polygon's position exactly, so the two sides
-                    // share one vertex bit for bit.
+
                     out.positions.push(c);
                     out.uvs.push(lerp2(p.uvs[k], p.uvs[next], t));
                     out.uv2.push(lerp2(p.uv2[k], p.uv2[next], t));
@@ -154,7 +106,6 @@ pub fn fix_t_junctions(polys: &[BrushPolygon]) -> Vec<(BrushPolygon, bool)> {
         .collect()
 }
 
-/// A polygon as triangles, with per-vertex attributes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Triangulated {
     pub positions: Vec<[f32; 3]>,
@@ -163,12 +114,6 @@ pub struct Triangulated {
     pub indices: Vec<u32>,
 }
 
-/// Triangulate a convex brush polygon.
-///
-/// An unrepaired polygon fans from its first corner, exactly as
-/// `brush_mesh_in_atlas` does, so geometry that had no junction is unchanged.
-/// A repaired one fans from its centroid; see the module note for why a corner
-/// fan cannot be used once edges carry inserted points.
 pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
     let n = poly.positions.len();
     let mut out = Triangulated::default();
@@ -184,26 +129,7 @@ pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
         }
         return out;
     }
-    // EAR CLIPPING OVER STRICTLY CONVEX CORNERS -- every vertex used, none
-    // invented, no triangle without area (2026-09-23).
-    //
-    // History, because each attempt failed differently. A fan from an INVENTED
-    // centroid vertex reached zero T-junctions but put a vertex in no other
-    // representation of the surface, and shipped a sawtooth along room edges
-    // (2026-09-10). A fan from one real corner invented nothing, but a fan
-    // triangle spanning a run of collinear inserted points has no area, and
-    // dropping it discarded the very sub-edges that were the repair: test_room
-    // went 408 -> 300, not 0. Both also made long slivers radiating from one
-    // point.
-    //
-    // A convex polygon whose edges carry extra collinear points always has a
-    // corner whose triangle with its two neighbours has real area. Cut that
-    // corner off and the rest is still such a polygon. Collinear points are
-    // never cut on their own (their triangle is empty) -- they stay until they
-    // become the BASE of a neighbour's ear, so every one ends up as a triangle
-    // vertex and every sub-edge survives. Among the valid corners the one whose
-    // triangle has the largest smallest angle is cut first, which keeps the
-    // triangles fat instead of fanning slivers.
+
     let pos = &poly.positions;
     let mut ring: Vec<usize> = (0..n).collect();
     while ring.len() > 3 {
@@ -214,13 +140,7 @@ pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
             if triangle_is_degenerate(pos[a], pos[b], pos[c]) {
                 continue;
             }
-            // NOTHING MAY LIE ON THE NEW CHORD a-c. Cutting this corner makes
-            // a-c an edge of what remains; if another vertex sits on it, that
-            // vertex is now a T-junction on our own triangle and the rest of
-            // the ring can collapse into a collinear run with nothing left to
-            // cut. Caught by `a_rectangle_with_points_on_one_edge_uses_every_sub_edge`:
-            // cutting a far corner of the ceiling ran the chord straight across
-            // the front edge, through both doorway corners.
+
             if ring
                 .iter()
                 .any(|&v| v != a && v != b && v != c && on_segment(pos[v], pos[a], pos[c]))
@@ -243,8 +163,6 @@ pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
     out
 }
 
-/// Whether `p` lies on the segment a-b, strictly between its ends, to the
-/// T-junction tolerance.
 fn on_segment(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> bool {
     let ab = sub(b, a);
     let len2 = dot(ab, ab);
@@ -261,8 +179,6 @@ fn on_segment(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> bool {
     dot(d, d) < T_JUNCTION_TOLERANCE * T_JUNCTION_TOLERANCE
 }
 
-/// The smallest interior angle of a triangle, in radians. Used to prefer fat
-/// ears over slivers when several corners could be cut.
 fn min_angle(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
     let ang = |p: [f32; 3], q: [f32; 3], r: [f32; 3]| {
         let u = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
@@ -274,12 +190,6 @@ fn min_angle(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
     ang(a, b, c).min(ang(b, c, a)).min(ang(c, a, b))
 }
 
-/// Whether three points are collinear (or coincident) enough to enclose no
-/// area worth rasterising.
-///
-/// Scaled by the edge lengths, so it means the same thing for a trim piece and
-/// for a warehouse wall -- an absolute area threshold would call every small
-/// triangle degenerate.
 fn triangle_is_degenerate(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> bool {
     let e0 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     let e1 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
@@ -292,12 +202,10 @@ fn triangle_is_degenerate(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> bool {
     two_area <= 1e-4 * l0.max(1e-6) * l1.max(1e-6)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// An axis-aligned quad in the z = 0 plane, uv = (x, y), uv2 = (x, y) / 4.
     fn quad(x0: f32, y0: f32, x1: f32, y1: f32) -> BrushPolygon {
         let corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
         BrushPolygon {
@@ -310,9 +218,6 @@ mod tests {
         }
     }
 
-    /// A 2 x 2 square with two 1 x 1 squares against its right edge: the point
-    /// (2, 1) is a corner of both small squares and lies inside the big
-    /// square's edge from (2, 0) to (2, 2). Exactly one junction.
     fn one_junction() -> Vec<BrushPolygon> {
         vec![quad(0.0, 0.0, 2.0, 2.0), quad(2.0, 0.0, 3.0, 1.0), quad(2.0, 1.0, 3.0, 2.0)]
     }
@@ -329,11 +234,6 @@ mod tests {
             .sum()
     }
 
-    /// THE DETECTOR, checked on both branches before anything relies on it.
-    ///
-    /// A "zero junctions after the repair" assertion is worthless if the counter
-    /// can only ever say zero -- so it must find the one known junction here
-    /// AND report none where two equal squares share a whole edge.
     #[test]
     fn the_detector_finds_a_known_junction_and_invents_none() {
         assert_eq!(count_t_junctions(&one_junction()), 1, "missed the known junction at (2, 1)");
@@ -345,7 +245,7 @@ mod tests {
     fn repair_leaves_no_junction_behind() {
         let fixed: Vec<BrushPolygon> = fix_t_junctions(&one_junction()).into_iter().map(|(p, _)| p).collect();
         assert_eq!(count_t_junctions(&fixed), 0);
-        // And it split the RIGHT polygon: the big square gained one vertex.
+
         assert_eq!(fixed[0].positions.len(), 5);
         assert_eq!(fixed[1].positions.len(), 4);
     }
@@ -359,7 +259,6 @@ mod tests {
         }
     }
 
-    /// The same outline without the inserted points, for measuring area.
     fn quad_from(p: &BrushPolygon) -> BrushPolygon {
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for v in &p.positions {
@@ -371,8 +270,6 @@ mod tests {
         quad(x0, y0, x1, y1)
     }
 
-    /// A corner fan would leave degenerate triangles; the centroid fan leaves
-    /// none, which is what makes the split edge actually covered.
     #[test]
     fn a_repaired_polygon_has_no_zero_area_triangle() {
         let (p, repaired) = fix_t_junctions(&one_junction()).remove(0);
@@ -388,8 +285,6 @@ mod tests {
         }
     }
 
-    /// Inserted and centroid vertices carry the texture and lightmap coordinates
-    /// the face's affine maps give at their positions.
     #[test]
     fn attributes_stay_on_the_faces_affine_maps() {
         let (p, repaired) = fix_t_junctions(&one_junction()).remove(0);
@@ -414,13 +309,10 @@ mod tests {
 mod corner_fan_tests {
     use super::{triangulate, BrushPolygon};
 
-    /// A wall quad with an extra vertex inserted mid-edge -- exactly what a
-    /// T-junction repair produces, and exactly the shape that breaks a naive
-    /// fan from vertex 0.
     fn repaired_wall() -> BrushPolygon {
         let positions = vec![
             [0.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],   // <- inserted, COLLINEAR with its neighbours
+            [2.0, 0.0, 0.0],
             [4.0, 0.0, 0.0],
             [4.0, 3.0, 0.0],
             [0.0, 3.0, 0.0],
@@ -444,10 +336,6 @@ mod corner_fan_tests {
             .sum()
     }
 
-    /// THE REGRESSION THIS REPLACES. The old repaired path pushed the
-    /// boundary's mean as an extra vertex -- a point present in no other
-    /// representation of this geometry, while the lightmap is baked against
-    /// the unrepaired mesh.
     #[test]
     fn a_repaired_polygon_invents_no_new_vertices() {
         let poly = repaired_wall();
@@ -462,9 +350,6 @@ mod corner_fan_tests {
         assert_eq!(t.uv2.len(), poly.uv2.len());
     }
 
-    /// Fanning from a collinear inserted vertex -- or from a vertex next to one
-    /// -- yields triangles of zero area. That is very likely why a centroid was
-    /// reached for; a real corner avoids it without inventing anything.
     #[test]
     fn no_triangle_is_degenerate_even_though_a_vertex_is_collinear() {
         let poly = repaired_wall();
@@ -484,7 +369,6 @@ mod corner_fan_tests {
         }
     }
 
-    /// The surface must still be exactly covered -- no gaps, no double cover.
     #[test]
     fn the_repaired_fan_covers_the_same_area() {
         let poly = repaired_wall();
@@ -495,10 +379,6 @@ mod corner_fan_tests {
         assert!(a > 11.9 && a < 12.1, "a 4x3 wall should cover 12 m2, got {a}");
     }
 
-    /// The repaired fan never emits MORE triangles than a plain one, and never
-    /// emits none. It may emit fewer, because a fan triangle spanning a
-    /// collinear run is dropped -- that triangle covered no area, which
-    /// `the_repaired_fan_covers_the_same_area` is what actually proves.
     #[test]
     fn the_repaired_fan_is_no_larger_than_a_plain_one() {
         let poly = repaired_wall();
@@ -514,9 +394,6 @@ mod ear_clip_tests {
     use super::*;
     use crate::brush::BrushPolygon;
 
-    /// The front of test_room's hall ceiling: a rectangle whose front edge
-    /// carries the two doorway corners at x = +-0.8. Every sub-edge of that
-    /// edge must appear as a triangle edge, or the T-junction stays open.
     #[test]
     fn a_rectangle_with_points_on_one_edge_uses_every_sub_edge() {
         let positions = vec![

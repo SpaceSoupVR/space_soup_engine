@@ -1,10 +1,3 @@
-//! A zone that notices you, does not stop you, and is not drawn.
-//!
-//! Every assertion here is about OBSERVABLE consequence -- a var that changed,
-//! a door that stopped blocking a ray -- rather than about the occupancy map,
-//! because "the map says you are inside" and "the door opened" are different
-//! claims and only the second one is the feature.
-
 use glam::Vec3;
 use space_soup_protocol::PlayerId;
 use std::collections::HashMap;
@@ -14,10 +7,6 @@ use crate::rig::PlayerRig;
 use crate::runtime::GameRuntime;
 use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
-/// A 4m zone at the origin, a door 20m away, and a brush-shaped zone at 40m.
-///
-/// The door is authored SOLID so a test can watch a volume open it, which is
-/// the whole point of the feature and not something an occupancy flag proves.
 fn scene_json() -> String {
     r#"{
       "name": "zones",
@@ -68,17 +57,10 @@ fn runtime(tag: &str) -> GameRuntime {
         r#"{"name":"zones","version":"0.1.0","entry_scene":"zones","scenes":["zones"]}"#,
     )
     .expect("write manifest");
-    // The directory STAYS. One of these tests reloads the scene, which reads it
-    // from disk again -- and a failure leaving its evidence behind is worth more
-    // than a tidy temp directory, which is why the breach tests do the same.
+
     GameRuntime::load(&dir).expect("runtime loads")
 }
 
-/// Put the player at a world position and run one tick.
-///
-/// Drives `client_offset`, the client-authoritative path, because it sets the
-/// position verbatim -- going through locomotion input would mean simulating a
-/// walk and asserting on where the walk ended up.
 fn stand_at(rt: &mut GameRuntime, at: Vec3) {
     let player = PlayerId::local();
     let mut f = frame(PlayerRig::default(), InputFrame::default());
@@ -134,8 +116,6 @@ fn the_zone_itself_never_blocks_anything() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut rt = runtime("passable");
 
-    // THE defining property. A volume that blocked would be a wall, and it
-    // would be a wall you cannot see, which is the worst thing a level can have.
     assert!(
         rt.rigid_physics
             .raycast(Vec3::new(0.0, 1.0, -5.0), Vec3::Z, 10.0)
@@ -183,9 +163,7 @@ fn arming_a_volume_while_someone_stands_in_it_fires_on_the_next_tick() {
     let mut rt = runtime("arm");
 
     stand_at(&mut rt, Vec3::new(0.0, 0.0, 80.0));
-    // A disabled volume reports itself EMPTY rather than frozen. If it kept its
-    // occupants, arming it here would find them already inside and never fire
-    // an enter -- the zone would be permanently, silently dead.
+
     rt.scene
         .objects
         .iter_mut()
@@ -203,10 +181,6 @@ fn a_zone_is_entered_at_chest_height_not_at_the_feet() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut rt = runtime("probe");
 
-    // entry_zone spans y 1..3 in world terms (centre 1, half 2 -> -1..3). A
-    // player whose FEET are at y=0 has their chest inside it; testing the floor
-    // point would work here too, so the case that matters is a volume raised
-    // clear of the ground.
     stand_at(&mut rt, Vec3::ZERO);
     assert_eq!(var(&rt, "in_entry").as_deref(), Some("1"));
 }
@@ -220,14 +194,12 @@ fn a_reload_re_arms_a_spent_volume() {
     assert_eq!(var(&rt, "enemies").as_deref(), Some("3"));
 
     rt.load_scene("zones").expect("reload");
-    // The var store is rebuilt with the scene, so this is genuinely a fresh
-    // level rather than the same one with its counters carried over.
+
     assert_eq!(var(&rt, "enemies"), None, "a reload clears the vars too");
 
     stand_at(&mut rt, Vec3::new(30.0, 0.0, 30.0));
     stand_at(&mut rt, Vec3::new(0.0, 0.0, 60.0));
-    // Replaying a level has to actually replay it: a once-only ambush that had
-    // already sprung must spring again.
+
     assert_eq!(var(&rt, "enemies").as_deref(), Some("3"));
 }
 
@@ -249,9 +221,6 @@ fn a_script_can_ask_whether_a_zone_is_occupied() {
     );
 }
 
-/// `is_occupied` is the escape hatch, and a registered function nothing calls
-/// is invisible to every other test here -- they would all keep passing while it
-/// was misspelled, took the wrong type, or was never registered.
 #[test]
 fn a_script_can_branch_on_occupancy() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -294,8 +263,6 @@ fn a_script_can_branch_on_occupancy() {
     assert_eq!(var(&rt, "seen").as_deref(), Some("yes"));
 }
 
-/// The shapes the editor writes, parsed by the engine. Nothing else checks
-/// that the two agree, and a mismatch is a zone that silently does nothing.
 mod editor_shapes {
     use crate::trigger_volume::{TriggerVolumeDef, VolumeAction};
 
@@ -323,8 +290,7 @@ mod editor_shapes {
 
     #[test]
     fn an_empty_zone_writes_no_empty_lists() {
-        // Otherwise every trigger zone in every scene carries two empty arrays
-        // and a null, and the file stops being readable.
+
         let json = serde_json::to_string(&TriggerVolumeDef::default()).expect("serialises");
         assert_eq!(json, r#"{"enabled":true,"once":false}"#);
     }

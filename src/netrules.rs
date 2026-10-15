@@ -1,24 +1,15 @@
-//! Network rules: what a player sends and receives, how often, and when it can
-//! be skipped. Authored in SSStudio's Online page, one `game/netrules.json`.
-//!
-//! The default rules describe the protocol as it behaves today: everything,
-//! every frame. Tightening a rule is how bandwidth comes down. This module only
-//! decides and stores; the client and server have to ask it (`SendGate`) before
-//! they send for it to have any effect.
-
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// How many decimals a number keeps on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Precision {
-    /// As the float is (about 7 digits).
+
     Full,
-    /// 3 decimals: millimetres for positions.
+
     Millimetre,
-    /// 2 decimals: centimetres.
+
     Centimetre,
 }
 
@@ -45,23 +36,22 @@ impl Precision {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FingerMode {
-    /// No finger data: hands are a fixed pose.
+
     None,
-    /// A curl value per finger.
+
     Curl,
-    /// Every joint of every finger.
+
     All,
 }
 
-/// The player's pose: head, hands, floor, flashlight.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PoseRule {
     pub enabled: bool,
-    /// Sends per second; 0 means every frame.
+
     pub hz: f32,
-    /// Skip the send unless head or a hand moved at least this far (cm). 0 = never skip.
+
     pub only_if_moved_cm: f32,
-    /// ...or the head turned at least this many degrees.
+
     pub only_if_turned_deg: f32,
     pub head: bool,
     pub left_hand: bool,
@@ -71,12 +61,11 @@ pub struct PoseRule {
     pub precision: Precision,
 }
 
-/// Controllers, movement and body joints.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InputRule {
     pub enabled: bool,
     pub hz: f32,
-    /// Skip the send when nothing in it changed since the last one.
+
     pub only_if_changed: bool,
     pub buttons_and_sticks: bool,
     pub movement: bool,
@@ -86,44 +75,40 @@ pub struct InputRule {
     pub precision: Precision,
 }
 
-/// The world the server sends each player.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorldRule {
-    /// Server ticks per second that produce a world update.
+
     pub tick_hz: f32,
-    /// Send only what changed since the last update instead of everything.
+
     pub only_changes: bool,
-    /// Skip objects farther than this from the player (m). 0 = send all.
+
     pub only_within_m: f32,
 }
 
-/// Other players, as one player sees them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayersRule {
-    /// Updates per second per other player; 0 = as fast as they send.
+
     pub hz: f32,
     pub only_within_m: f32,
-    /// Show at most this many others (nearest first). 0 = no limit.
+
     pub max_players: u32,
     pub flashlight: bool,
     pub precision: Precision,
 }
 
-/// Which message a custom rule is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Message {
-    /// The player's pose, sent to the server.
+
     Pose,
-    /// Controllers and fingers, sent to the server.
+
     Input,
-    /// The world, sent to a player.
+
     World,
-    /// Other players, sent to a player.
+
     OtherPlayers,
 }
 
-/// A piece of data a rule can take out of a message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Field {
@@ -138,38 +123,36 @@ pub enum Field {
     BodyJoints,
 }
 
-/// "Only if": when a custom rule applies.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "if", rename_all = "snake_case")]
 pub enum Cond {
-    /// The player isn't moving.
+
     StandingStill,
-    /// The player is moving.
+
     Moving,
     HandsTracked,
     HandsNotTracked,
-    /// More (or fewer) players are connected than this.
+
     PlayersMoreThan { n: u32 },
     PlayersFewerThan { n: u32 },
-    /// The thing being sent about (an object or another player) is farther than this from the player.
+
     FartherThan { m: f32 },
     InScene { scene: String },
     MenuOpen { menu: String },
 }
 
-/// "Do": what a custom rule changes about the message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum Act {
-    /// Don't send it at all.
+
     Skip,
-    /// Send it at most this often.
+
     LimitRate { hz: f32 },
     SetPrecision { precision: Precision },
-    /// Leave this out of it.
+
     Drop { field: Field },
     FingersAs { mode: FingerMode },
-    /// Send only what changed (World).
+
     OnlyChanges,
 }
 
@@ -190,13 +173,12 @@ impl CustomRule {
     }
 }
 
-/// What is true right now, for deciding which custom rules apply.
 #[derive(Clone, Debug, Default)]
 pub struct Context {
     pub standing_still: bool,
     pub hands_tracked: bool,
     pub players: u32,
-    /// Distance from the player to the thing the message is about, if it is about one.
+
     pub distance_m: Option<f32>,
     pub scene: String,
     pub open_menus: Vec<String>,
@@ -218,11 +200,10 @@ impl Cond {
     }
 }
 
-/// The result of running every custom rule for one message.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Resolved {
     pub skip: bool,
-    /// The slowest rate any rule asked for.
+
     pub hz_cap: Option<f32>,
     pub precision: Option<Precision>,
     pub dropped: Vec<Field>,
@@ -236,13 +217,13 @@ pub struct NetRules {
     pub input: InputRule,
     pub world: WorldRule,
     pub players: PlayersRule,
-    /// Rules the author added on top of the four above.
+
     #[serde(default)]
     pub rules: Vec<CustomRule>,
 }
 
 impl Default for NetRules {
-    /// Today's behaviour: everything, every frame, full precision.
+
     fn default() -> Self {
         NetRules {
             pose: PoseRule {
@@ -280,7 +261,7 @@ pub fn rules_path(game_dir: &Path) -> PathBuf {
 }
 
 impl NetRules {
-    /// Run the custom rules that are about `message` and apply in `ctx`.
+
     pub fn resolve(&self, message: Message, ctx: &Context) -> Resolved {
         let mut out = Resolved::default();
         for r in self.rules.iter().filter(|r| r.enabled && r.message == message && r.only_if.iter().all(|c| c.holds(ctx))) {
@@ -302,8 +283,6 @@ impl NetRules {
         out
     }
 
-    /// The base rules with one custom rule's changes folded in, as if it applied.
-    /// For showing what a rule is worth.
     pub fn with_rule_applied(&self, rule: &CustomRule) -> NetRules {
         let mut r = self.clone();
         r.rules.clear();
@@ -354,7 +333,6 @@ impl NetRules {
     }
 }
 
-/// Decides, frame by frame, whether the pose should go out under a `PoseRule`.
 #[derive(Debug, Default)]
 pub struct SendGate {
     last_t: Option<f32>,
@@ -363,8 +341,7 @@ pub struct SendGate {
 }
 
 impl SendGate {
-    /// `t`: seconds. `points`: head and hand positions (m). `yaw_deg`: head yaw.
-    /// Records the pose when it says yes.
+
     pub fn should_send(&mut self, rule: &PoseRule, t: f32, points: &[[f32; 3]], yaw_deg: f32) -> bool {
         if !rule.enabled {
             return false;
@@ -420,7 +397,7 @@ mod tests {
         let mut g = SendGate::default();
         let r = PoseRule { hz: 10.0, ..rule() };
         let sent: Vec<bool> = (0..20).map(|i| g.should_send(&r, i as f32 / 72.0, &[[0.0; 3]], 0.0)).collect();
-        // 20 frames at 72 Hz is 0.28 s: at 10 Hz that is 3 sends.
+
         assert_eq!(sent.iter().filter(|s| **s).count(), 3);
     }
 
@@ -442,7 +419,7 @@ mod tests {
         assert!(!g.should_send(&r, 0.1, &[[0.004, 0.0, 0.0]], 0.0));
         assert!(g.should_send(&r, 0.2, &[[0.02, 0.0, 0.0]], 0.0));
         assert!(g.should_send(&r, 0.3, &[[0.02, 0.0, 0.0]], 5.0));
-        // Yaw wraps: 359 to 1 is 2 degrees.
+
         assert!(g.should_send(&r, 0.4, &[[0.02, 0.0, 0.0]], 359.0));
         assert!(g.should_send(&r, 0.5, &[[0.02, 0.0, 0.0]], 1.0));
         assert!(!g.should_send(&r, 0.6, &[[0.02, 0.0, 0.0]], 2.0));
@@ -476,7 +453,7 @@ mod tests {
         let got = r.resolve(Message::Pose, &still);
         assert_eq!(got.hz_cap, Some(5.0));
         assert_eq!(got.dropped, vec![Field::Flashlight]);
-        // Not standing still, or too few players, or another message: nothing.
+
         assert_eq!(r.resolve(Message::Pose, &Context { players: 8, ..Default::default() }), Resolved::default());
         assert_eq!(r.resolve(Message::Pose, &Context { standing_still: true, players: 2, ..Default::default() }), Resolved::default());
         assert_eq!(r.resolve(Message::World, &still), Resolved::default());

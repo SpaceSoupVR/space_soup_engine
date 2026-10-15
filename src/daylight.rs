@@ -1,54 +1,23 @@
-//! THE LEVEL'S BAKED LIGHT BY SOURCE, so a moving sun can relight it.
-//!
-//! A baked product -- the brush atlas's bounce, a probe's photograph -- is the
-//! sum of what each light put there, and light adds. The baker
-//! (`BAKE_DAYLIGHT_LAYERS=1 bake lightmap ...`) writes the brush atlas a second
-//! time split three ways: what the LAMPS lit, what the SKY's ambient lit, and
-//! what the SUN lit (its bounce; its direct light on the brushes is shaded live).
-//! A lamps-only probe bake (`BAKE_DAYLIGHT=off bake probe ...`) writes the
-//! photographs as the lamps alone light them. At any hour the renderer rebuilds
-//!
-//! ```text
-//! atlas = lamps + sky x k_sky + sun x k_sun        probe = lamps + daylight x k
-//! ```
-//!
-//! with each k what that source gives now over what it gave in the bake
-//! (`space_soup_sky::time_of_day::LayerWeights`). The layers live beside the
-//! scene, apart from its shipped bake, in `<scene>.daylight/`: a renderer that
-//! does not know them never reads them, and the shipped bake is untouched.
-
 use std::path::{Path, PathBuf};
 
 use crate::lightmaps::{decode_png_rgba, LightmapEncoding, LightmapEntry, LightmapIndex, LightmapTarget, LIGHTMAP_FORMAT_VERSION};
 
-/// Where a scene's daylight layers live.
 pub fn daylight_dir(game_dir: &Path, scene_name: &str) -> PathBuf {
     game_dir.join("scenes").join(format!("{scene_name}.daylight"))
 }
 
-/// The lamps-only probe photographs, laid out as the scene's own probe
-/// directory is -- and at the same path RELATIVE TO [`daylight_dir`] as the
-/// shipped ones are to the game directory, so every probe loader reads them
-/// with `daylight_dir` as its game directory.
 pub fn daylight_probe_dir(game_dir: &Path, scene_name: &str) -> PathBuf {
     crate::reflection_probe::probe_dir(&daylight_dir(game_dir, scene_name), scene_name)
 }
 
-/// The brush atlas as the lamps alone light it.
 pub const BRUSH_LAMPS_ID: &str = "__brushes_lamps__";
-/// The brush atlas as the sky's ambient alone lights it.
+
 pub const BRUSH_SKY_ID: &str = "__brushes_sky__";
-/// The brush atlas as the sun alone lights it (its bounce).
+
 pub const BRUSH_SUN_ID: &str = "__brushes_sunlight__";
 
-/// The brush atlas's three layers. Defined in the sky crate, which both the
-/// renderer and this engine take: the renderer relights with it and must not
-/// depend on the engine.
 pub use space_soup_sky::time_of_day::AtlasLayers as BrushLayers;
 
-/// Write the brush layers -- each `(id, width, height, png bytes)`, half-float
-/// PNGs as the lightmaps are -- replacing the daylight directory's atlases
-/// (its probes are left alone).
 pub fn write_brush_layers(game_dir: &Path, scene_name: &str, images: &[(String, u32, u32, Vec<u8>)]) -> std::io::Result<PathBuf> {
     let dir = daylight_dir(game_dir, scene_name);
     std::fs::create_dir_all(&dir)?;
@@ -70,8 +39,6 @@ pub fn write_brush_layers(game_dir: &Path, scene_name: &str, images: &[(String, 
     Ok(dir)
 }
 
-/// The brush layers, or `None` when the scene has none (or they are of
-/// another format).
 pub fn load_brush_layers(game_dir: &Path, scene_name: &str) -> Option<BrushLayers> {
     let dir = daylight_dir(game_dir, scene_name);
     let index: LightmapIndex = serde_json::from_str(&std::fs::read_to_string(dir.join("index.json")).ok()?).ok()?;
@@ -111,7 +78,7 @@ mod tests {
         assert!(l.matches(&full, 2, 1, 1e-4));
         let night = l.combine([0.0; 3], [0.0; 3]);
         assert_eq!(&night[..4], &l.lamps[..4]);
-        // A re-baked level's atlas is not these layers'.
+
         let mut other = full.clone();
         other[0] *= 2.0;
         assert!(!l.matches(&other, 2, 1, 0.05));

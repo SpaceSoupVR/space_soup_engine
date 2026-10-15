@@ -1,10 +1,3 @@
-//! Scatter resolution.
-//!
-//! The headline property is stability under edit: raising density, adding a
-//! stroke or changing the palette must not relocate instances the author has
-//! already hand-placed. Nothing about that failure is loud -- the forest simply
-//! comes back different, and every override is now attached to the wrong tree.
-
 use glam::Vec3;
 
 use crate::scatter::{
@@ -63,8 +56,7 @@ fn a_different_seed_gives_a_different_forest() {
 
 #[test]
 fn raising_density_appends_and_does_not_move_what_was_there() {
-    // THE property. Get this wrong and every hand-placed edit in the level
-    // silently attaches to a different object.
+
     let sparse = resolve(&layer(0.2), &FLAT);
     let dense = resolve(&layer(0.6), &FLAT);
 
@@ -108,14 +100,13 @@ fn instances_land_inside_the_stroke() {
 
 #[test]
 fn instances_are_spread_rather_than_piled_in_the_middle() {
-    // sqrt on the radius is what makes the disc uniform; without it everything
-    // clusters at the centre and every stroke has a bald rim.
+
     let all = resolve(&layer(0.8), &FLAT);
     let outer = all
         .iter()
         .filter(|i| (i.position.x.powi(2) + i.position.z.powi(2)).sqrt() > 7.07)
         .count();
-    // Beyond r/sqrt(2) is half the disc's area, so roughly half should be there.
+
     let fraction = outer as f32 / all.len() as f32;
     assert!((0.35..0.65).contains(&fraction), "outer half held {fraction:.2} of instances");
 }
@@ -127,8 +118,6 @@ fn slot_count_follows_area_and_density() {
     let b = slot_count(&stroke(1, 0.2));
     assert!(b > a);
 }
-
-// ------------------------------------------------------------------ overrides
 
 #[test]
 fn a_removed_instance_stays_removed_through_a_regeneration() {
@@ -163,7 +152,7 @@ fn a_moved_instance_keeps_its_new_position() {
 
 #[test]
 fn a_hand_edit_survives_a_density_change() {
-    // The whole point: scatter, nudge one, then change your mind about density.
+
     let mut l = layer(0.2);
     let target = resolve(&l, &FLAT)[4].key;
     l.overrides.push(ScatterOverride::Transform {
@@ -201,8 +190,6 @@ fn an_override_naming_a_prototype_that_does_not_exist_is_ignored() {
     assert_eq!(kept.prototype, 0, "should fall back rather than index out of bounds");
 }
 
-// -------------------------------------------------------------------- palette
-
 #[test]
 fn weights_bias_the_palette() {
     let mut l = layer(2.0);
@@ -217,8 +204,7 @@ fn weights_bias_the_palette() {
 
 #[test]
 fn a_zero_weight_prototype_is_never_placed() {
-    // Kept in the palette but not placed -- more useful than deleting it while
-    // iterating on a look.
+
     let mut l = layer(2.0);
     l.prototypes = vec![proto("used.glb"), ScatterPrototype { weight: 0.0, ..proto("unused.glb") }];
     assert!(!resolve(&l, &FLAT).iter().any(|i| i.prototype == 1));
@@ -240,9 +226,6 @@ fn scale_stays_inside_the_prototype_range() {
     }
 }
 
-// ---------------------------------------------------------------------- slope
-
-/// Ground that is flat on one side of x=0 and a wall on the other.
 struct HalfCliff;
 
 impl Ground for HalfCliff {
@@ -273,8 +256,7 @@ fn a_generous_slope_limit_plants_the_cliff_too() {
 
 #[test]
 fn a_hand_placed_instance_on_a_cliff_is_left_alone() {
-    // Slope rejection is for the generator's guesses, not for the author's
-    // decisions. Re-rejecting a moved tree would delete deliberate work.
+
     let mut l = layer(1.0);
     l.prototypes[0].max_slope_deg = 20.0;
     let target = resolve(&l, &HalfCliff)[0].key;
@@ -304,18 +286,6 @@ fn instances_sit_on_the_ground_they_are_given() {
     assert!(all.iter().all(|i| (i.position.y - 17.5).abs() < 1e-4));
 }
 
-// ----------------------------------------------------------------- the mixer
-
-/// Reference values for the mixer, pinned so another language can be checked
-/// against them.
-///
-/// These are the contract, not an implementation detail: the editor's preview
-/// has to place instances exactly where the runtime will, and if these numbers
-/// ever change then every scattered level in existence changes with them.
-///
-/// Confirmed independently against a Python implementation of the same steps,
-/// which is the actual claim being made -- that this is reproducible from the
-/// written-down algorithm rather than from Rust's particular arithmetic.
 #[test]
 fn the_mixer_matches_its_reference_values() {
     use crate::scatter::mix32;
@@ -325,19 +295,15 @@ fn the_mixer_matches_its_reference_values() {
     assert_eq!(mix32(12345), 0x912e_fcf7);
 }
 
-// -------------------------------------------------- scatter on real terrain
-
-/// The payoff: trees sit on sculpted ground, and the steep parts stay bare.
 #[test]
 fn scatter_follows_a_real_heightfield() {
     use crate::terrain::{Heightfield, TerrainSource};
 
-    // A 17x17 field over 64m: flat at 0, rising to a steep ridge along +x.
     let n = 17usize;
     let mut samples = Vec::with_capacity(n * n);
     for _iz in 0..n {
         for ix in 0..n {
-            // Flat for the first half, then a sharp climb.
+
             let t = if ix < 8 { 0.0 } else { (ix - 8) as f32 / 8.0 };
             samples.push((t * u16::MAX as f32) as u16);
         }
@@ -358,7 +324,6 @@ fn scatter_follows_a_real_heightfield() {
     let all = resolve(&l, &field);
     assert!(!all.is_empty(), "nothing was planted at all");
 
-    // Every instance sits ON the ground rather than at y=0.
     for inst in &all {
         let expected = TerrainSource::height_at(&field, inst.position.x, inst.position.z).unwrap();
         assert!(
@@ -368,23 +333,12 @@ fn scatter_follows_a_real_heightfield() {
         );
     }
 
-    // And the steep half is bare, because the ridge exceeds 25 degrees.
     let on_flat = all.iter().filter(|i| i.position.x < -4.0).count();
     let on_ridge = all.iter().filter(|i| i.position.x > 8.0).count();
     assert!(on_flat > 0, "the flat half should be planted");
     assert_eq!(on_ridge, 0, "{on_ridge} instances were planted on the steep ridge");
 }
 
-/// Emits the cross-language fixture for the JITTER fields.
-///
-/// The existing reference pins the default path, which proves adding
-/// `yaw_range` and `tilt_deg` moved nothing. It cannot say whether the two
-/// languages agree once those fields are actually used -- and a tilt composed
-/// in a different order, or a yaw lerped in degrees rather than turns, would
-/// look plausible in both and place a forest differently in each.
-///
-/// Run with `cargo test emit_jitter_reference -- --ignored --nocapture` and put
-/// the output in scene_editor_web/frontend/src/lib/__scatter_jitter_reference.json.
 #[test]
 #[ignore]
 fn emit_jitter_reference() {
@@ -405,7 +359,6 @@ fn emit_jitter_reference() {
     println!("]");
 }
 
-/// A layer that actually exercises the jitter fields.
 fn jitter_reference_layer() -> ScatterLayer {
     ScatterLayer {
         id: "jitter".into(),
@@ -417,8 +370,7 @@ fn jitter_reference_layer() -> ScatterLayer {
                 weight: 2.0,
                 scale_range: [0.6, 2.2],
                 max_slope_deg: 60.0,
-                // A narrowed yaw, so the turns conversion is doing real work
-                // rather than collapsing to the identity the default gives.
+
                 yaw_range: [30.0, 150.0],
                 tilt_deg: 12.0,
             },
@@ -428,8 +380,7 @@ fn jitter_reference_layer() -> ScatterLayer {
                 scale_range: [1.0, 1.0],
                 max_slope_deg: 60.0,
                 yaw_range: [0.0, 360.0],
-                // Zero tilt alongside a tilted sibling, so the skip path and the
-                // composed path are both covered by one fixture.
+
                 tilt_deg: 0.0,
             },
         ],

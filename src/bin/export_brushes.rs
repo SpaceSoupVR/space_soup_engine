@@ -1,17 +1,3 @@
-//! Export a scene's brush geometry as OBJ + MTL, for handing to an artist.
-//!
-//! ```text
-//! export_brushes <scene.json> <out.obj> [--keep-internal] [--textures <path>]
-//! ```
-//!
-//! Writes `<out.obj>` and a sibling `.mtl`, and prints a one-line JSON summary
-//! on stdout so the editor's server can report what happened without parsing
-//! the file back.
-//!
-//! A separate binary rather than an editor-only feature because a handoff is a
-//! pipeline step: it wants to be runnable from a script, from CI, and from a
-//! Makefile, not only from a browser with the level open.
-
 use space_soup_engine::brush_obj::{export_scene, ObjExportOptions};
 use space_soup_engine::scene::Scene;
 use std::path::{Path, PathBuf};
@@ -45,10 +31,6 @@ fn main() {
         }
     }
 
-    // The MTL must sit beside the OBJ and be named after it, or Blender resolves
-    // `mtllib` against the OBJ's directory and silently imports with no
-    // materials at all -- geometry arrives, textures do not, and nothing says
-    // why.
     let stem = obj_path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
