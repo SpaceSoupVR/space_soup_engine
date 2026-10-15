@@ -1,38 +1,3 @@
-//! STATIONARY LAMPS' SHADOW CHANNELS: which channel of the brush atlas's
-//! stationary masks holds each stationary lamp's baked shadows.
-//!
-//! A stationary lamp (`LightMode::Stationary`) is shaded every frame -- its
-//! real cone, falloff and highlight -- while its shadows come from the bake: a
-//! signed distance to the shadow's edge and the penumbra's width there, two
-//! bytes per lamp, in an RGBA mask on the brush charts. Two lamps per layer.
-//!
-//! The penumbra is the bulb's: a lamp is a few centimetres of glowing glass,
-//! not a point, so a housing's edge casts a soft shadow that widens with
-//! distance -- and a cage's 3 mm wire, two metres from the floor, casts only a
-//! faint band. As a point light it drew a crisp black cross through the pool
-//! (offline_frame, 2026-09-27).
-//!
-//! # Computed, not stored
-//!
-//! The baker writes each lamp's mask into its channel; the runtime tells each
-//! lamp which channel to read. Both call [`scene_stationary_channels`] on the
-//! same scene, so they cannot disagree, and no file has to carry the mapping --
-//! the editor's own bake path included. A scene edited after its bake is stale
-//! anyway, and `lightmaps` already warns about that.
-//!
-//! # Sharing channels
-//!
-//! Two lamps may share a channel when no brush texel is reached by both --
-//! within range, inside the cone -- because each then reads its channel only
-//! where the other's mask is not. Measured at the lightmap's own texels, with
-//! [`REACH_SLACK`] to spare. Greedy graph colouring, most-constrained lamp
-//! first, ties broken by id so the answer is the same on every machine. A lamp
-//! that finds no free channel is left unshadowed and reported: the level has
-//! more than [`MAX_STATIONARY_CHANNELS`] lamps lighting one spot.
-//!
-//! This is Unreal's stationary-light channel assignment, which colours with
-//! four; eight here, four RGBA layers.
-
 use std::collections::HashSet;
 
 use glam::Vec3;
@@ -42,48 +7,35 @@ use crate::brush_lightmap::BrushLightmapLayout;
 use crate::scene::GameObject;
 use crate::scene_light::{LightKind, LightMode};
 
-/// How many stationary lamps may light any one texel: four RGBA mask layers.
 pub const MAX_STATIONARY_CHANNELS: usize = 8;
 
-/// Lamps per RGBA mask layer: each takes two bytes, distance and penumbra.
 pub const STATIONARY_LAMPS_PER_LAYER: usize = 2;
 
-/// The most RGBA mask layers a level can have: one per two channels.
 pub const MAX_STATIONARY_LAYERS: usize = MAX_STATIONARY_CHANNELS / STATIONARY_LAMPS_PER_LAYER;
 
-/// The radius of a lamp's glowing part, in metres: its penumbra. A household
-/// bulb is about 6 cm across.
 pub const STATIONARY_BULB_RADIUS: f32 = 0.03;
 
-/// How far past a lamp's range, as a fraction of it, and past its cone, in
-/// cosine, a texel still counts as reached when deciding which lamps may share
-/// a channel. The shader's falloff ends exactly at the range, so a margin here
-/// only ever keeps two lamps apart that could have shared; never the reverse.
 pub const REACH_SLACK: f32 = 0.05;
 
-/// One stationary lamp, resolved to where it is and how it points.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StationaryLamp {
     pub object_id: String,
-    /// Index into the object's FULL light list -- the same numbering as the
-    /// render light's id, `object#index`.
+
     pub light_index: usize,
     pub position: Vec3,
     pub direction: Vec3,
     pub kind: LightKind,
     pub range: f32,
-    /// Cosine of the outer cone's half-angle; ignored for a point lamp.
+
     pub cos_outer: f32,
 }
 
 impl StationaryLamp {
-    /// The render light's id: `object#index`.
+
     pub fn id(&self) -> String {
         format!("{}#{}", self.object_id, self.light_index)
     }
 
-    /// Whether this lamp's light can reach `p` at all: in range and, for a
-    /// spot, inside the cone -- each widened by `slack`.
     pub fn reaches(&self, p: Vec3, slack: f32) -> bool {
         let to = p - self.position;
         let d2 = to.length_squared();
@@ -101,8 +53,6 @@ impl StationaryLamp {
     }
 }
 
-/// Every enabled stationary point or spot lamp in `objects`, posed through its
-/// socket exactly as the baker and the renderer pose it.
 pub fn stationary_lamps(objects: &[GameObject]) -> Vec<StationaryLamp> {
     let mut out = Vec::new();
     for o in objects {
@@ -130,11 +80,8 @@ pub fn stationary_lamps(objects: &[GameObject]) -> Vec<StationaryLamp> {
     out
 }
 
-/// A mask channel for each of `lamps`, in order: `None` where none was free.
-/// See the module note.
 pub fn assign_channels(lamps: &[StationaryLamp], layout: &BrushLightmapLayout) -> Vec<Option<u8>> {
-    // Lamps are named by bit, so at most 64 take part; past that they all
-    // lose the colouring anyway.
+
     let n = lamps.len().min(64);
     let mut adjacency = vec![0u64; n];
     let mut seen: HashSet<u64> = HashSet::new();
@@ -175,28 +122,22 @@ pub fn assign_channels(lamps: &[StationaryLamp], layout: &BrushLightmapLayout) -
     channel
 }
 
-/// The whole assignment for a scene: every stationary lamp and its channel.
 pub fn scene_stationary_channels(objects: &[GameObject]) -> Vec<(StationaryLamp, Option<u8>)> {
     let lamps = stationary_lamps(objects);
     if lamps.is_empty() {
         return Vec::new();
     }
-    // The same brushes in the same order as the baker's atlas: every object
-    // with a brush, in scene order.
+
     let brushes: Vec<&BrushDef> = objects.iter().filter_map(|o| o.brush.as_ref()).collect();
     let layout = crate::brush_lightmap::scene_brush_lightmap_layout(&brushes);
     let channels = assign_channels(&lamps, &layout);
     lamps.into_iter().zip(channels).collect()
 }
 
-/// How many RGBA mask layers `channels` need: one per two lamps, at least one
-/// when any lamp has a channel.
 pub fn mask_layers(channels: &[Option<u8>]) -> usize {
     channels.iter().flatten().map(|&c| c as usize / STATIONARY_LAMPS_PER_LAYER + 1).max().unwrap_or(0)
 }
 
-/// Where channel `c` lives: its layer, and the first of its two components
-/// (distance; the penumbra is the next).
 pub fn channel_slot(c: u8) -> (usize, usize) {
     let c = c as usize;
     (c / STATIONARY_LAMPS_PER_LAYER, (c % STATIONARY_LAMPS_PER_LAYER) * 2)
@@ -210,7 +151,6 @@ mod tests {
         serde_json::from_str(json).expect("the test object parses")
     }
 
-    /// A floor 20 m long, as one brush.
     fn floor() -> GameObject {
         object(
             r#"{"id":"floor","brush":{"solids":[{"faces":[
@@ -227,8 +167,6 @@ mod tests {
         ))
     }
 
-    /// Two lamps whose light meets on the floor need different channels; a
-    /// third far enough from both can share with either.
     #[test]
     fn lamps_that_meet_get_different_channels_and_far_ones_share() {
         let objects = [floor(), lamp("a", -6.0, 4.0), lamp("b", -2.0, 4.0), lamp("c", 7.0, 3.0)];
@@ -240,8 +178,6 @@ mod tests {
         assert_eq!(mask_layers(&got.iter().map(|(_, c)| *c).collect::<Vec<_>>()), 1);
     }
 
-    /// The same scene always colours the same way -- the baker and the runtime
-    /// each compute it and must agree.
     #[test]
     fn the_assignment_is_deterministic() {
         let objects = [floor(), lamp("b", -2.0, 4.0), lamp("a", -6.0, 4.0), lamp("c", 7.0, 3.0)];
@@ -250,7 +186,6 @@ mod tests {
         assert_eq!(one, two);
     }
 
-    /// Nine lamps all lighting one spot: eight get channels, one does not.
     #[test]
     fn past_eight_at_one_spot_a_lamp_goes_unshadowed() {
         let mut objects = vec![floor()];

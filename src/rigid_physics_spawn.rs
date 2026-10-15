@@ -17,16 +17,6 @@ use crate::rigid_physics::{
 use crate::scene::{BodyMode, ColliderShape, GameObject, RigidBodyDef, SliderJointDef, TerrainColliderDef};
 use crate::brush::{self, BrushDef};
 
-/// A brush's collision surface: every face of every convex piece CSG leaves,
-/// fanned into triangles wound so their normal points OUT of the solid.
-///
-/// The winding is load-bearing. PhysX raycasts ignore a triangle mesh's back
-/// faces by default, so a wall wound inside-out is solid from outside and not
-/// there at all from inside the room -- the side a player walks at it from.
-///
-/// Faces between two pieces of one brush are included and harmless: they lie
-/// inside solid material, and nothing starting in open air reaches one without
-/// crossing a real face first.
 pub(crate) fn brush_collision_triangles(def: &BrushDef) -> (Vec<[f32; 3]>, Vec<u32>) {
     let mut points: Vec<[f32; 3]> = Vec::new();
     let mut indices = Vec::new();
@@ -131,16 +121,11 @@ fn cook_triangle_mesh(
 
 impl PhysicsWorld {
     pub(crate) fn spawn_actor(&mut self, obj: &GameObject, def: &RigidBodyDef) {
-        // Gated HERE rather than at each call site, so `enabled` cannot be
-        // honoured on load and forgotten by the spawn path, or the reverse.
-        // Turning collision on at runtime therefore means setting the flag and
-        // calling this -- there is no second way to do it.
+
         if !def.enabled {
             return;
         }
-        // A second actor under the same id would overwrite this map entry while
-        // its predecessor stayed in the PhysX scene: an invisible collider that
-        // nothing can find to remove, and the object would then be solid twice.
+
         if self.statics.contains_key(&obj.id) || self.dynamic.contains_key(&obj.id) {
             log::debug!("rigid_physics: '{}' already has a collider", obj.id);
             return;
@@ -203,10 +188,7 @@ impl PhysicsWorld {
                 };
                 match created {
                     Some(mut actor) => {
-                        // Take the pointer BEFORE handing ownership to the
-                        // scene, exactly as the dynamic path does. The scene
-                        // owns the actor from here; this map only borrows, so
-                        // it can be dropped without releasing anything.
+
                         let ptr: *mut PxRigidStatic = &mut *actor as *mut PxRigidStatic;
                         self.scene.add_static_actor(actor);
                         self.statics.insert(obj.id.clone(), ptr);
@@ -396,18 +378,6 @@ impl PhysicsWorld {
         }
     }
 
-    /// Static trunk colliders for the scene's scattered trees and rocks.
-    ///
-    /// Scatter is resolved here exactly as the editor and the renderer resolve
-    /// it (same layer, same ground, same seed), so every trunk stands where its
-    /// tree is drawn. Each solid placement gets one upright capsule: a trunk
-    /// a player walks into and around, not a canopy. Bushes and grass are
-    /// walked through, as they are in life.
-    ///
-    /// One shape per placement rather than one cooked mesh: a forest is a few
-    /// thousand capsules, and PhysX handles that as a broad-phase job it is
-    /// built for, while cooking a tree mesh per model would couple physics to
-    /// asset loading for no gain in a game where nobody climbs trees.
     pub(crate) fn spawn_scatter_trunks(&mut self, scene: &crate::scene::Scene, ground: &dyn crate::scatter::Ground) {
         if scene.scatter.is_empty() {
             return;
@@ -416,7 +386,7 @@ impl PhysicsWorld {
             log::warn!("rigid_physics: failed to create scatter trunk material");
             return;
         };
-        // PhysX capsules lie along their local X; stand this one up.
+
         let upright = to_px_transform(Vec3::ZERO, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
         let mut trunks = 0usize;
         for layer in &scene.scatter {
@@ -430,9 +400,7 @@ impl PhysicsWorld {
                 }
                 let radius = (TRUNK_RADIUS * inst.scale).clamp(TRUNK_RADIUS_MIN, TRUNK_RADIUS_MAX);
                 let geo = PxCapsuleGeometry::new(radius, TRUNK_HALF_HEIGHT);
-                // Centred so the capsule starts a little below the ground (a
-                // trunk on a slope has no gap at its downhill side) and
-                // reaches well over head height.
+
                 let centre = inst.position + Vec3::Y * (TRUNK_HALF_HEIGHT - TRUNK_SINK);
                 let transform = to_px_transform(centre, Quat::IDENTITY);
                 match self.foundation.create_rigid_static(transform, &geo, material.as_mut(), upright, ()) {
@@ -450,18 +418,6 @@ impl PhysicsWorld {
         }
     }
 
-    /// Static collider for the scene's sculpted ground.
-    ///
-    /// Cooked as a triangle mesh rather than a PhysX heightfield. PhysX 5.1 has
-    /// PxHeightField and it would be considerably more compact, but the safe
-    /// `physx` wrapper does not expose it -- reaching it means unsafe FFI
-    /// against physx-sys, which is not worth doing before anything has measured
-    /// terrain collision as a cost. The triangle path is already proven here by
-    /// the glTF terrain colliders and shares its cooking code.
-    ///
-    /// A failure warns and leaves the scene without ground rather than aborting
-    /// the load: a level that opens with nothing to stand on is diagnosable, and
-    /// a runtime that refuses to start is not.
     pub(crate) fn spawn_scene_terrain(&mut self, source: &dyn crate::terrain::TerrainSource) {
         let patch = source.patch(source.bounds(), 1);
         if patch.positions.is_empty() || patch.indices.is_empty() {
@@ -487,9 +443,6 @@ impl PhysicsWorld {
         self.terrain_meshes.push(owned);
         let mesh_idx = self.terrain_meshes.len() - 1;
 
-        // Already in world space -- patch() bakes the terrain origin into every
-        // vertex -- so the actor sits at identity rather than carrying a second
-        // transform that could disagree with the one the editor previewed.
         let scale_px = PxVec3::new(1.0, 1.0, 1.0);
         let rot_px = PxQuat::new(0.0, 0.0, 0.0, 1.0);
         let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };
@@ -522,23 +475,6 @@ impl PhysicsWorld {
         );
     }
 
-    /// Static collider for a solid brush: the surface its CSG leaves, cooked as
-    /// a triangle mesh.
-    ///
-    /// A triangle mesh rather than a convex hull per piece. Godot's CSG makes
-    /// the same choice (a concave trimesh, static only), and it is the cooking
-    /// path the terrain has already proven on the headset. Convex pieces are
-    /// only needed for a brush that MOVES, which a static one never does.
-    ///
-    /// World space, at identity: a brush's planes are already where they are
-    /// drawn, and its `cuboid` is a report of its bounds rather than a transform
-    /// -- the renderer and the trigger volumes read it the same way.
-    ///
-    /// Registered in `statics` under the object's id, so a breach removes it
-    /// through `despawn_static` like any other wall. An object that already has
-    /// a collider -- an authored `rigid_body`, spawned earlier in `rebuild` --
-    /// keeps that one: someone chose the shape on purpose, and two actors under
-    /// one id would leave one that nothing can remove.
     pub(crate) fn spawn_brush_collider(&mut self, obj: &GameObject, def: &BrushDef) {
         if self.statics.contains_key(&obj.id)
             || self.dynamic.contains_key(&obj.id)
@@ -598,17 +534,13 @@ impl PhysicsWorld {
         );
     }
 
-    /// Static collider for a walk mat: the floor draped over the terrain plus
-    /// its boundary fence, cooked as one PhysX triangle mesh exactly like the
-    /// sculpted ground ([`Self::spawn_scene_terrain`]). The vertices are built
-    /// in world space, so the actor sits at identity.
     pub(crate) fn spawn_walk_area(
         &mut self,
         obj: &GameObject,
         def: &crate::walk_area::WalkAreaDef,
         terrain: Option<&dyn crate::terrain::TerrainSource>,
     ) {
-        // Physics affords a fine grid; the editor previews a coarser one.
+
         const MAX_CELLS: usize = 128 * 128;
         let c = &obj.cuboid;
         let mesh = crate::walk_area::build(c.position, c.half_size.x, c.half_size.z, def, MAX_CELLS, &|x, z| {
@@ -785,20 +717,14 @@ impl PhysicsWorld {
     }
 }
 
-/// Trunk radius at scale 1, metres. The library oaks are 20-27 m tall at
-/// scale 1 with trunks about this thick; the editor places them at ~0.5.
 const TRUNK_RADIUS: f32 = 0.7;
 const TRUNK_RADIUS_MIN: f32 = 0.12;
 const TRUNK_RADIUS_MAX: f32 = 1.2;
-/// Half the capsule's straight length: it spans the ground to ~4 m up, so a
-/// standing player's head is inside it rather than above it.
+
 const TRUNK_HALF_HEIGHT: f32 = 2.0;
-/// How far below the placement point the capsule starts.
+
 const TRUNK_SINK: f32 = 0.5;
 
-/// Which scattered things a player cannot walk through: trees and rocks.
-/// Decided by where the model lives (`models/train/<kind>/`) or the editor's
-/// built-in stand-ins, because the scatter format carries no kind of its own.
 pub(crate) fn scatter_is_solid(mesh: &str) -> bool {
     let m = mesh.replace('\\', "/");
     m.contains("/trees/") || m.contains("/rocks/") || m == "builtin:tree" || m == "builtin:rock"

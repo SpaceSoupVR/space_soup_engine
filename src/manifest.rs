@@ -47,4 +47,3 @@ impl Default for Manifest {
         }
     }
 }
-

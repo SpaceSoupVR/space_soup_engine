@@ -1,4 +1,3 @@
-
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -42,16 +41,6 @@ pub struct ComponentDescriptor {
 pub struct SchemaDescriptor {
     pub components: Vec<ComponentDescriptor>,
 
-    /// Every key a serialized `GameObject` can carry, in the order serde emits
-    /// them.
-    ///
-    /// `components` deliberately omits `id`, `hidden_parts` and the deprecated
-    /// `grip_pose`, so it is not a complete key list and cannot be used to
-    /// order a file. Anything that WRITES scene JSON needs the complete order —
-    /// notably the editor's Python backend, which is the only writer of
-    /// `game/scenes/*.json` in practice and has no way to see serde's field
-    /// order otherwise. Emitting it here keeps one source of truth instead of a
-    /// hand-copied list that silently drifts the first time a field is added.
     pub field_order: Vec<&'static str>,
 }
 
@@ -95,26 +84,15 @@ macro_rules! field {
     };
 }
 
-/// The complete serialized key order of `GameObject`, matching serde's
-/// declaration-order output.
-///
-/// Kept honest by `field_order_matches_serde` below rather than by review: a
-/// field added to `GameObject` and left out of here fails that test, the same
-/// way the exhaustive destructure in `exhaustive` forces it to be classified.
 pub fn game_object_field_order() -> Vec<&'static str> {
     vec![
         "id",
-        // Identity and structure, not authorable components -- see the
-        // exhaustive destructure below. Both are skip_serializing_if, so a
-        // default object carries neither.
+
         "uuid",
         "parent",
         "cuboid",
         "mesh",
-        // Declaration order, which is serde's output order. `brush` is
-        // skip_serializing_if, so it is in `skipped` below too -- a field that
-        // is absent from BOTH lists passes `field_order_matches_serde` without
-        // being ordered anywhere, which is how this one nearly slipped through.
+
         "brush",
         "is_trigger",
         "hidden",
@@ -125,8 +103,7 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "part_animations",
         "hidden_parts",
         "rig_attachment",
-        // `grip_pose_legacy` on the struct; renamed on the wire, and the only
-        // field with skip_serializing_if, so it is absent from a default object.
+
         "grip_pose",
         "grip_pose_left",
         "grip_pose_right",
@@ -136,8 +113,7 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "slider_joint",
         "door",
         "terrain_collider",
-        // Also skip_serializing_if, like `brush`: a default object carries it
-        // nowhere, but a mat that exists serializes here.
+
         "walk_area",
         "lights",
         "sound",
@@ -200,8 +176,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
                 Optional,
                 trigger_volume_fields()
             ),
-            // `Option<bool>`: absent is automatic (a brush is solid unless it is
-            // a trigger), present is an author's override either way.
+
             comp!(solid, "bool", Optional),
         ],
     }
@@ -218,13 +193,10 @@ fn trigger_volume_fields() -> Vec<FieldDescriptor> {
             once,
         } = t;
     }
-    // Only the fields a generic inspector can render. The action lists have
-    // their own editor, the same way part triggers do -- a text box holding
-    // JSON would be worse than no field at all.
+
     vec![
         field!(enabled, Bool),
-        // Optional: a zone that only runs enter/exit actions needs no state,
-        // and an empty string is not the same answer as "no var".
+
         field!(var, Text, opt),
         field!(once, Bool),
     ]
@@ -346,9 +318,6 @@ fn effect_fields() -> Vec<FieldDescriptor> {
     ]
 }
 
-/// A probe's only authorable knob. Its position and the room it corrects
-/// against both come from the object's own cuboid, so there is nothing else to
-/// type -- move and size the object and the probe follows.
 fn reflection_probe_fields() -> Vec<FieldDescriptor> {
     vec![field!(resolution, Number)]
 }
@@ -396,10 +365,7 @@ fn breakable_fields() -> Vec<FieldDescriptor> {
     fn exhaustive_stage(s: crate::scene::DamageStage) {
         let crate::scene::DamageStage { at, hidden_parts, solid, removed } = s;
     }
-    // `stages` is deliberately absent: it is a list of structs, which the
-    // generic Layer 0 field renderer cannot express. The editor gives breakable
-    // a bespoke card, and listing a field here that no generic surface can draw
-    // would make the coverage gate pass while the authoring did not exist.
+
     vec![field!(health, Number)]
 }
 
@@ -440,28 +406,14 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         breakable,
         trigger_volume,
         solid,
-        // Level geometry made of planes -- a third shape kind beside `cuboid`
-        // and `mesh`, not a component you add to an object. Which shape an
-        // object has is authored in the Geometry panel by creating it, the same
-        // way `mesh` is set by choosing a model, so it does not belong in the
-        // inspector's add-component list.
+
         brush,
-        // Identity and structure rather than components. `id` is the human
-        // name and the scripting handle; `uuid` is the stable identity that
-        // `parent` points at, so a rename cannot restructure the scene. None of
-        // the three is something you "add to an object" in the inspector, which
-        // is what `components` describes. Listed here to satisfy the
-        // exhaustiveness check.
+
         uuid,
         parent,
-        // Organisation, not behaviour: nothing in the runtime reads a tag, and
-        // there is no "add a tags component" in the inspector -- it is a label
-        // set on an object that already exists. Same category as uuid/parent.
+
         tags,
-        // Not an authorable component in its own right: it is per-part state on
-        // the model, edited from the Model Editor's part list rather than added
-        // to an object as a component. Listed here only to satisfy the
-        // exhaustiveness check, which is what caught it being added at all.
+
         hidden_parts,
     } = o;
 }
@@ -475,17 +427,11 @@ mod tests {
         assert_eq!(game_object_schema().components.len(), 29);
     }
 
-    /// `field_order` is consumed by a writer in another language, so a drift
-    /// here reorders every scene file on the next save and produces a diff that
-    /// looks like content changed. Assert it against what serde actually emits
-    /// rather than against a second hand-written list.
     #[test]
     fn field_order_matches_serde() {
         let json = serde_json::to_string_pretty(&crate::scene::GameObject::default())
             .expect("GameObject serializes");
 
-        // Top-level keys are exactly the lines at one indent level in
-        // to_string_pretty's 2-space output.
         let emitted: Vec<&str> = json
             .lines()
             .filter_map(|line| line.strip_prefix("  \""))
@@ -493,22 +439,17 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
 
-        // The skip_serializing_if fields, which a default object never
-        // carries -- but a real file does, and the writer needs to know where
-        // they sort. Keep this in step when a field gains that attribute, or
-        // the test fails describing a reorder that did not happen.
         let skipped = [
             "grip_pose", "uuid", "parent", "tags", "breakable", "brush", "trigger_volume",
-            // `reflection_probe` carries skip_serializing_if too: a scene with
-            // no probes should not gain a null field on its next save.
+
             "reflection_probe",
-            // Absent means automatic; see GameObject::solid.
+
             "solid",
-            // A scene without effects gains nothing on its next save.
+
             "effect",
-            // Nor one without doors.
+
             "door",
-            // Nor one without walk mats.
+
             "walk_area",
         ];
         let expected: Vec<&str> = game_object_field_order()
@@ -605,11 +546,7 @@ mod tests {
         let checked_in = std::fs::read_to_string(&path).expect(
             "schema.json missing — run `cargo run --bin emit_schema` in space_soup_engine",
         );
-        // Compare line-ending-insensitively. to_json() emits LF, but a Windows
-        // checkout can easily hold schema.json with CRLF, and .trim() only strips
-        // the outside -- so an identical file failed here as "stale", sending the
-        // developer to regenerate something that was already correct. Same family
-        // as the CRLF that made run.sh unrunnable on macOS.
+
         let normalise = |s: &str| s.replace("\r\n", "\n").trim().to_string();
         assert_eq!(
             normalise(&checked_in),

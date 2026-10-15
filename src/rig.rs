@@ -279,4 +279,3 @@ mod wire_test {
         );
     }
 }
-

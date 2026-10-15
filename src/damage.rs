@@ -1,43 +1,25 @@
-//! Accumulated damage, and the structural changes it causes.
-//!
-//! Damage is RUNTIME state, deliberately not part of the scene document. The
-//! scene says what a wall is made of and how it comes apart; how much of a
-//! beating it has taken this match is not a property of the level, and writing
-//! it back would mean a level file that differs depending on who played it.
-//!
-//! It is also why this resets per match rather than persisting. A persistent
-//! world would change that -- and it is a real possibility here -- so the reset
-//! is an explicit call rather than an assumption baked into the representation:
-//! keeping the ledger and dropping the reset is the whole change.
-
 use std::collections::HashMap;
 
 use crate::scene::{distance_to_oriented_box, BreakableDef, GameObject};
 use glam::Vec3;
 
-/// A structure moving from one damage stage to another.
-///
-/// Reported only on a CHANGE, never per hit. A wall absorbing thirty rounds
-/// crosses two thresholds; the server needs to act twice, not thirty times.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StageChange {
     pub object_id: String,
-    /// Index into the object's stage list, or `None` for undamaged.
+
     pub from: Option<usize>,
     pub to: Option<usize>,
-    /// Whether the object still blocks movement and fire after this change.
+
     pub solid: bool,
 }
 
 impl StageChange {
-    /// Whether this change opened the structure up -- the moment a breach
-    /// happens, which is what gameplay and physics actually care about.
+
     pub fn breached(&self) -> bool {
         !self.solid
     }
 }
 
-/// How much damage every object has taken, this match.
 #[derive(Debug, Default, Clone)]
 pub struct DamageLedger {
     taken: HashMap<String, f32>,
@@ -48,21 +30,10 @@ impl DamageLedger {
         Self::default()
     }
 
-    /// Damage an object has accumulated. Unknown objects have taken none.
     pub fn damage_for(&self, object_id: &str) -> f32 {
         self.taken.get(object_id).copied().unwrap_or(0.0)
     }
 
-    /// Apply damage, returning a stage change only if one actually happened.
-    ///
-    /// Takes the object rather than just its id so the caller cannot apply
-    /// damage against a stale or mismatched `BreakableDef` -- the definition and
-    /// the thing being damaged arrive together or not at all.
-    ///
-    /// Negative amounts are ignored rather than healing. Repair is a real
-    /// feature and a defensible one, but it is not this one, and letting a
-    /// negative slip through would make a mis-signed damage value silently
-    /// rebuild a wall.
     pub fn apply(&mut self, object: &GameObject, amount: f32) -> Option<StageChange> {
         let breakable = object.breakable.as_ref()?;
         if !(amount > 0.0) {
@@ -87,10 +58,6 @@ impl DamageLedger {
         })
     }
 
-    /// The parts an object should be hiding right now.
-    ///
-    /// Returns the object's authored set when it has taken no damage or is not
-    /// breakable, so this is safe to call for every object every frame.
     pub fn hidden_parts_for<'a>(&self, object: &'a GameObject) -> &'a [String] {
         match &object.breakable {
             Some(b) => b.hidden_parts_at(self.damage_for(&object.id), &object.hidden_parts),
@@ -98,10 +65,6 @@ impl DamageLedger {
         }
     }
 
-    /// Whether an object has been destroyed outright and should not be drawn.
-    ///
-    /// Separate from `is_solid` because they are separate authored fields: a
-    /// wall can be shot through and still standing, and a chunk can be gone.
     pub fn is_removed(&self, object: &GameObject) -> bool {
         match &object.breakable {
             Some(b) => b
@@ -111,7 +74,6 @@ impl DamageLedger {
         }
     }
 
-    /// Whether an object still blocks movement and fire.
     pub fn is_solid(&self, object: &GameObject) -> bool {
         match &object.breakable {
             Some(b) => b.is_solid_at(self.damage_for(&object.id)),
@@ -119,17 +81,10 @@ impl DamageLedger {
         }
     }
 
-    /// Forget everything. Called when a match ends or a scene changes.
-    ///
-    /// A scene change resets too: object ids are only unique within a scene, so
-    /// carrying damage across would apply one level's battering to whatever
-    /// happens to share a name in the next.
     pub fn reset(&mut self) {
         self.taken.clear();
     }
 
-    /// Objects that have taken any damage, for a late-joining client to be
-    /// caught up with.
     pub fn damaged_objects(&self) -> impl Iterator<Item = (&str, f32)> {
         self.taken.iter().map(|(id, d)| (id.as_str(), *d))
     }
@@ -139,12 +94,6 @@ impl DamageLedger {
     }
 }
 
-/// Which stage a damage total lands in, as an index rather than a reference.
-///
-/// An index because comparing two stages by value would call two structures
-/// with identical thresholds and parts "the same stage", and they are not --
-/// a wall with two visually identical stages should still fire a change when it
-/// passes between them.
 fn stage_index(breakable: &BreakableDef, damage: f32) -> Option<usize> {
     let target = breakable.stage_for(damage)?;
     breakable
@@ -153,55 +102,20 @@ fn stage_index(breakable: &BreakableDef, damage: f32) -> Option<usize> {
         .position(|s| std::ptr::eq(s, target))
 }
 
-/// One breakable an impact reached, and how hard.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImpactTarget {
-    /// Index into `Scene::objects`.
+
     pub index: usize,
-    /// Distance from the impact point to the object's surface; 0 inside it.
+
     pub distance: f32,
-    /// Share of the impact's damage this object takes, in 0..=1.
+
     pub share: f32,
 }
 
-/// Which breakables an impact at `point` reaches, and how much each one takes.
-///
-/// THE ROUTING STEP. `GameRuntime::apply_damage` is deliberately id-based --
-/// resolving what was hit is the shooter's job -- which is exactly right for a
-/// single authored wall and leaves nothing to call for a FRACTURED one, where
-/// "what was hit" is a question about geometry rather than about aim. A shooter
-/// that had to answer it would be re-implementing this per weapon.
-///
-/// Pure, and separate from the runtime, because everything interesting about it
-/// is geometry and falloff: a test can pose an impact against a wall of chunks
-/// without a physics scene, a renderer or a headset.
-///
-/// # Falloff
-///
-/// Linear from full at the point to nothing at `radius`, measured to each
-/// object's ORIENTED box rather than its centre. Centre distance would mean a
-/// long wall shot at one end takes damage as though it were hit in the middle,
-/// and a rotated chunk would be measured against a box that is not the one on
-/// screen.
-///
-/// `radius <= 0` is the direct-hit case -- a rifle round, not a blast. Only
-/// objects the point is actually inside take anything, and they take it in
-/// full. That is the common case, and it must not divide by zero.
-///
-/// # Damage is not divided between chunks
-///
-/// Each object in range takes `amount * share`, not a slice of one budget.
-/// Dividing would make a wall's toughness depend on how finely it was
-/// fractured: the same grenade against the same wall would do less to each
-/// piece the more pieces there were, so an author improving the look of a
-/// breach would silently be armouring it. Chunk count is a visual decision and
-/// must stay one.
 pub fn impact_targets(objects: &[GameObject], point: Vec3, radius: f32) -> Vec<ImpactTarget> {
     let mut out = Vec::new();
     for (index, object) in objects.iter().enumerate() {
-        // Objects with no `breakable` are skipped rather than reported: there
-        // is nothing to record damage against, and returning them would invite
-        // a caller to think an indestructible wall had absorbed a grenade.
+
         if object.breakable.is_none() {
             continue;
         }
@@ -268,8 +182,6 @@ mod tests {
         assert!(ledger.is_solid(&w));
     }
 
-    /// A change is reported when a THRESHOLD is crossed, not per hit. Thirty
-    /// rounds into a wall is two events for the server to act on, not thirty.
     #[test]
     fn a_change_is_reported_only_when_a_stage_actually_changes() {
         let mut ledger = DamageLedger::new();
@@ -305,8 +217,6 @@ mod tests {
         assert!(!ledger.is_solid(&w));
     }
 
-    /// Damage accumulates rather than replacing, or a rifle would be as
-    /// destructive as whatever hit hardest and no more.
     #[test]
     fn damage_accumulates_across_hits() {
         let mut ledger = DamageLedger::new();
@@ -318,7 +228,6 @@ mod tests {
         assert_eq!(ledger.hidden_parts_for(&w), ["intact"]);
     }
 
-    /// A mis-signed damage value must not silently rebuild a wall.
     #[test]
     fn negative_damage_is_ignored_rather_than_healing() {
         let mut ledger = DamageLedger::new();
@@ -341,8 +250,6 @@ mod tests {
         assert!(ledger.hidden_parts_for(&plain).is_empty());
     }
 
-    /// Object ids are only unique within a scene, so carrying damage across a
-    /// scene change would batter whatever happens to share a name next.
     #[test]
     fn reset_clears_everything() {
         let mut ledger = DamageLedger::new();
@@ -357,7 +264,6 @@ mod tests {
         assert_eq!(ledger.hidden_parts_for(&w), ["scaffold"]);
     }
 
-    /// What a late joiner needs to be caught up with.
     #[test]
     fn damaged_objects_lists_what_has_been_hit() {
         let mut ledger = DamageLedger::new();
@@ -374,8 +280,6 @@ mod tests {
         assert_eq!(listed, vec![("compound_wall".into(), 20.0), ("door".into(), 55.0)]);
     }
 
-    /// Two stages that look identical are still different stages, so passing
-    /// between them fires a change. Comparing by value would swallow it.
     #[test]
     fn visually_identical_stages_are_still_distinct() {
         let mut ledger = DamageLedger::new();
@@ -407,8 +311,6 @@ mod tests {
         assert!(change.breached());
     }
 
-    /// A wall fractured into chunks: a row of 1m boxes along x, each its own
-    /// breakable, which is what the editor's Voronoi fracture produces.
     fn chunk_row(n: usize) -> Vec<GameObject> {
         (0..n)
             .map(|i| GameObject {
@@ -465,9 +367,7 @@ mod tests {
 
     #[test]
     fn falloff_is_measured_to_the_surface_not_the_centre() {
-        // One long wall rather than chunks. Shot at its far end, a centre
-        // measurement would read 4m away and score nothing; the surface is
-        // right there.
+
         let wall = vec![GameObject {
             id: "long_wall".into(),
             cuboid: crate::scene::CuboidDef {
@@ -485,8 +385,7 @@ mod tests {
 
     #[test]
     fn an_oriented_chunk_is_measured_against_the_box_that_is_on_screen() {
-        // A thin panel turned 90 degrees. Measured axis-aligned it would still
-        // seem to reach 2m along x; turned, it reaches 0.1m.
+
         let turned = vec![GameObject {
             id: "panel".into(),
             cuboid: crate::scene::CuboidDef {
@@ -520,8 +419,6 @@ mod tests {
         );
     }
 
-    /// One 6m wall divided into `n` chunks, so a finer number really means
-    /// smaller pieces of the same wall rather than a longer wall.
     fn wall_of(n: usize) -> Vec<GameObject> {
         let width = 6.0 / n as f32;
         (0..n)
@@ -540,10 +437,7 @@ mod tests {
 
     #[test]
     fn finer_fracture_does_not_secretly_armour_a_wall() {
-        // The same blast against the same wall, chunked two ways. Damage is
-        // per-object and NOT divided between them, so the piece that was hit
-        // takes the full amount either way -- otherwise an author making a
-        // breach look better would be quietly making the wall tougher.
+
         let at = Vec3::new(3.0, 0.0, 0.0);
         let coarse = impact_targets(&wall_of(3), at, 1.5);
         let fine = impact_targets(&wall_of(12), at, 1.5);
@@ -576,7 +470,7 @@ mod tests {
 
     #[test]
     fn a_removed_stage_is_not_solid_even_when_authored_solid() {
-        // The two fields disagreeing is an invisible wall, so `removed` wins.
+
         let b = BreakableDef {
             health: 10.0,
             stages: vec![DamageStage { at: 0.5, solid: true, removed: true, ..Default::default() }],

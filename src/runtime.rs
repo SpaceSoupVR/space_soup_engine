@@ -24,8 +24,7 @@ pub struct PlayerFrameInput {
     pub input: InputFrame,
     pub locomotion_input: LocomotionInput,
     pub teleport_target: Option<TeleportTarget>,
-    // Client-authoritative player pose (see WireLocomotionInput in space_soup_protocol):
-    // when present, update() adopts it verbatim instead of simulating locomotion.
+
     pub client_offset: Option<Vec3>,
     pub client_yaw: Option<f32>,
 }
@@ -50,19 +49,12 @@ pub struct RenderMesh {
     pub position: Vec3,
     pub rotation: Quat,
     pub scale: Vec3,
-    /// How hard this mesh's emissive materials are driven -- 0 for anything
-    /// that is not a lit fixture. See `space_soup_engine::scene_light::emissive_drive`.
+
     pub emissive_drive: f32,
     pub manual_part_blends: HashMap<String, f32>,
-    /// Parts of this model that must not be drawn -- see GameObject::hidden_parts.
+
     pub hidden_parts: Vec<String>,
 
-    /// Clips whose `enabled_when` does not currently hold, so the client must
-    /// treat their blend as zero however hard the driving input is pressed.
-    ///
-    /// Evaluated here because the state lives here: vars are authoritative, and a
-    /// headset deciding for itself whether the bolt is locked back is a headset
-    /// that can disagree with every other player.
     pub disabled_clips: Vec<String>,
 }
 
@@ -76,7 +68,7 @@ pub struct RenderLight {
     pub intensity: f32,
     pub range: f32,
     pub cone_angle_deg: f32,
-    /// Full angle of the beam's bright core; 0 means no hotspot.
+
     pub inner_cone_angle_deg: f32,
 }
 
@@ -108,9 +100,6 @@ pub struct RenderParticleBurst {
     pub elapsed: f32,
 }
 
-// Fire-and-forget particle event (muzzle flash, impact spark) -- unlike RenderParticleEmitter
-// this has no authored persistent state; it's spawned by a script call, ages out, and is
-// dropped, so the engine has to track `elapsed` itself instead of deriving it from sim_time.
 pub(crate) struct ParticleBurst {
     pub(crate) id: String,
     pub(crate) position: Vec3,
@@ -133,7 +122,6 @@ pub struct RenderLaser {
     pub color: Color3,
     pub beam_width: f32,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundState {
@@ -158,12 +146,7 @@ pub struct GameRuntime {
     pub(crate) collisions: CollisionTracker,
     pub(crate) teleport_collisions: CollisionTracker,
     pub(crate) teleport_disarmed: HashSet<(PlayerId, String)>,
-    /// Volume shapes resolved once per scene load, and who is inside each.
-    ///
-    /// Cached because a brush volume's shape is the output of a CSG evaluation,
-    /// which is not something to redo sixty times a second for every zone in a
-    /// level. Occupancy is kept per player so a second player entering a zone
-    /// that is already occupied does not re-fire its on_enter.
+
     pub(crate) trigger_volumes: Vec<(String, crate::trigger_volume::VolumeShape)>,
     pub(crate) volume_occupants: HashMap<String, HashSet<PlayerId>>,
     pub(crate) volume_fired: HashSet<String>,
@@ -179,25 +162,12 @@ pub struct GameRuntime {
     pub(crate) sound_stop_requests: HashSet<String>,
     pub(crate) manual_part_blends: HashMap<String, HashMap<String, f32>>,
 
-    /// Damage taken this match, and the structural state it implies.
-    ///
-    /// Server-side and authoritative. Clients learn about it through the parts
-    /// that stop being drawn, which already replicate -- so breaching needed no
-    /// protocol change at all.
     pub(crate) damage: crate::damage::DamageLedger,
 
-    /// Last frame's part blends, so a trigger fires on a CROSSING rather than on
-    /// every frame the blend happens to sit past its threshold.
-    /// Latest posed part transforms reported by the client, for part-anchored
-    /// sockets and for spawning a detached part where the part actually is.
     pub(crate) part_transforms: HashMap<String, HashMap<String, (Vec3, Quat)>>,
 
     pub(crate) prev_part_blends: HashMap<String, HashMap<String, f32>>,
 
-    /// Triggers currently latched, as (object, clip, trigger index). A latched
-    /// trigger will not fire again until the blend retreats past the hysteresis
-    /// band -- a hand held near the threshold jitters across it many times a
-    /// second, and an eject that fires on every jitter is unusable.
     pub(crate) latched_triggers: std::collections::HashSet<(String, String, usize)>,
     pub(crate) particle_bursts: Vec<ParticleBurst>,
     pub(crate) next_particle_burst_id: u64,
@@ -246,10 +216,7 @@ impl GameRuntime {
 
         rt.compile_scripts();
         rt.setup_scene_attachments();
-        // Must match `load_scene` below, which does the same three things plus
-        // resetting per-scene state. Two initialisation paths where one is a
-        // superset of the other is how a feature works on every level EXCEPT
-        // the one the game starts on -- which is the hardest place to notice.
+
         rt.trigger_volumes = Self::resolve_trigger_volumes(&rt.scene);
         rt.rigid_physics.rebuild(&rt.scene, &rt.game_dir);
         info!(
@@ -315,18 +282,14 @@ impl GameRuntime {
         scene.resolve_world_transforms();
 
         self.scene = scene;
-        // Object ids are only unique within a scene, so damage cannot survive a
-        // scene change -- carrying it across would batter whatever happens to
-        // share a name in the next level.
+
         self.damage.reset();
         self.players = HashMap::new();
         self.anim_queues = HashMap::new();
         self.collisions = CollisionTracker::new();
         self.teleport_collisions = CollisionTracker::new();
         self.teleport_disarmed = HashSet::new();
-        // Rebuilt from the new scene, and `volume_fired` cleared with it: a
-        // once-only ambush that has already sprung must spring again on a
-        // reload, or replaying a level is not replaying it.
+
         self.trigger_volumes = Self::resolve_trigger_volumes(&self.scene);
         self.volume_occupants = HashMap::new();
         self.volume_fired = HashSet::new();
@@ -404,25 +367,15 @@ impl GameRuntime {
                 .entry(player)
                 .or_insert_with(|| Self::new_locomotion_at(spawn));
 
-            // Client-authoritative pose: the client already simulated its own movement;
-            // adopt it verbatim so other players see this player where the player sees
-            // themselves. No re-simulation, wall collision, or ground follow -- those
-            // are the client's job now (legacy clients that send no pose still get the
-            // full server-side simulation below).
             if let (Some(off), Some(yaw)) = (frame.client_offset, frame.client_yaw) {
                 locomotion.player_offset = off;
                 locomotion.player_yaw = yaw;
                 continue;
             }
 
-            // No head: this rig was built from the client's offset, not this
-            // one. See `Locomotion::collision_start`.
             let collision_start = locomotion.collision_start(None);
             locomotion.update(dt, &frame.locomotion_input, &rig, frame.teleport_target);
-            // SRV LOCO DIAGNOSTIC: what the SERVER received from the client + the raw
-            // result of locomotion.update (BEFORE wall/ground physics). recv~0 while the
-            // client pushes => wire/deserialize loss; recv nonzero but off/yaw unchanged
-            // => update logic; off moves here but broadcast is 0 => wall/ground reverts it.
+
             let li = &frame.locomotion_input;
             if li.move_stick.0.abs() > 0.1 || li.move_stick.1.abs() > 0.1 || li.turn_stick_x.abs() > 0.1 {
                 log::info!(
@@ -495,14 +448,7 @@ impl GameRuntime {
 }
 
 impl GameRuntime {
-    /// Deal damage to an object by id, returning a stage change if one happened.
-    ///
-    /// The entry point a weapon system calls once one exists. It is deliberately
-    /// id-based rather than taking a hit position: resolving WHAT was hit is the
-    /// shooter's job (a raycast, a projectile, an explosion radius), and
-    /// deciding what that does to a structure is this one. Keeping them apart
-    /// means an explosion damaging six objects is six calls rather than a second
-    /// implementation of hit resolution.
+
     pub fn apply_damage(
         &mut self,
         object_id: &str,
@@ -511,15 +457,6 @@ impl GameRuntime {
         let object = self.scene.objects.iter().find(|o| o.id == object_id)?;
         let change = self.damage.apply(object, amount)?;
 
-        // A breach has to be PASSABLE, not merely visible. Removing the
-        // collider here rather than leaving it to a caller means the physical
-        // and visual halves cannot get out of step -- which is exactly what
-        // happened while `is_solid()` reported the truth and nothing acted on
-        // it.
-        //
-        // Both kinds, because a breakable might be either: a wall is static, a
-        // barricade that can also be shoved is dynamic. Neither call errors on
-        // an object it does not know.
         if change.breached() {
             let removed_static = self.rigid_physics.despawn_static(&change.object_id);
             self.rigid_physics.despawn_actor(&change.object_id);
@@ -534,33 +471,13 @@ impl GameRuntime {
         Some(change)
     }
 
-    /// Deal damage at a POINT in the world, to whatever breakables it reaches.
-    ///
-    /// The entry point for a fractured structure. `apply_damage` is right when
-    /// the shooter already knows what it hit -- a raycast returning one object
-    /// id -- and has nothing to say about a wall that is fifty chunks, where
-    /// which pieces a grenade damaged is a question about geometry rather than
-    /// about aim. Answering it per weapon would mean every weapon growing its
-    /// own copy of this.
-    ///
-    /// Use `radius = 0.0` for a bullet: only the chunk the point is inside
-    /// takes anything, and it takes the full amount. A blast wants a real
-    /// radius, and damage falls off linearly to nothing at its edge.
-    ///
-    /// Returns one `StageChange` per object that actually crossed a threshold,
-    /// in scene order -- so it stays empty for the ordinary case of chipping a
-    /// wall that does not break yet, and a caller can replicate exactly the
-    /// changes that happened.
     pub fn apply_damage_at(
         &mut self,
         point: glam::Vec3,
         radius: f32,
         amount: f32,
     ) -> Vec<crate::damage::StageChange> {
-        // Resolved into ids in a separate pass BEFORE anything is mutated.
-        // Applying inside the walk would borrow the scene immutably while the
-        // ledger and the physics scene need to change, and collecting first
-        // also means a stage change cannot alter what the same impact hits.
+
         let targets: Vec<(String, f32)> =
             crate::damage::impact_targets(&self.scene.objects, point, radius)
                 .into_iter()
@@ -573,15 +490,10 @@ impl GameRuntime {
             .collect()
     }
 
-    /// Damage an object has taken this match.
     pub fn damage_taken(&self, object_id: &str) -> f32 {
         self.damage.damage_for(object_id)
     }
 
-    /// Whether an object still blocks movement and fire.
-    ///
-    /// A breached wall reports false here, which is what a locomotion or
-    /// line-of-sight check should be asking rather than reading the scene.
     pub fn is_solid(&self, object_id: &str) -> bool {
         self.scene
             .objects
@@ -591,11 +503,6 @@ impl GameRuntime {
             .unwrap_or(true)
     }
 
-    /// Forget all damage. Call at the end of a match.
-    ///
-    /// Separate from scene loading because the two are different events: a
-    /// match can restart on the same scene, and a scene can change mid-match.
-    /// Both need the reset; neither implies the other.
     pub fn reset_damage(&mut self) {
         self.damage.reset();
     }
@@ -624,9 +531,6 @@ mod damage_delivery_tests {
         }
     }
 
-    /// The whole delivery path, without a server or a client: damage an object
-    /// and the parts it reports for RENDERING change. That field already
-    /// replicates, so this is the end of the chain rather than the middle.
     #[test]
     fn damage_changes_what_the_renderer_is_told_to_hide() {
         let mut ledger = crate::damage::DamageLedger::new();

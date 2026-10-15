@@ -33,18 +33,7 @@ impl GameRuntime {
         self.scene
             .objects
             .iter()
-            // `hidden` is what the level author decided; `is_removed` is what
-            // this match has done to it. A chunk shot out of a wall has to stop
-            // being drawn, and it has no named parts for `hidden_parts` to
-            // reach -- that field is only consulted for meshes below.
-            //
-            // Brushes are excluded because they are NOT boxes. Sending one here
-            // drew a wall as its bounding cuboid -- a fractured wall came out as
-            // twelve overlapping crates -- so the client meshes brushes itself
-            // from scene data it already has, and this list would only double
-            // -draw them. See `hidden_brushes` for how it is told which to skip.
-            // Walk mats are colliders with an editor-only preview: drawing
-            // their cuboid in the game would float a box over the ground.
+
             .filter(|o| {
                 !o.hidden
                     && !self.damage.is_removed(o)
@@ -70,18 +59,6 @@ impl GameRuntime {
             .collect()
     }
 
-    /// Brush objects the client must NOT draw this frame.
-    ///
-    /// Brush geometry is static scene data that ships with the game, so the
-    /// client builds it once at scene load rather than receiving triangles over
-    /// the wire -- the same trade terrain makes, and for the same reason: at 64
-    /// players the snapshot budget is the binding constraint.
-    ///
-    /// What that cannot know is what has happened SINCE. A chunk shot out of a
-    /// wall, or a brush a script hid, is a runtime fact, and it is the only part
-    /// of a brush that has to cross per snapshot. Sending ids rather than
-    /// geometry keeps it to a few bytes, and to nothing at all in the ordinary
-    /// case where a level is intact.
     pub fn hidden_brushes(&self) -> Vec<String> {
         self.scene
             .objects
@@ -105,24 +82,14 @@ impl GameRuntime {
                     position: o.cuboid.position,
                     rotation: o.cuboid.rotation * mesh_ref.rotation_offset,
                     scale: mesh_ref.scale,
-                    // A FIXTURE drives its own emissive from the lights it
-                    // carries. The brightest one wins rather than the sum: two
-                    // bulbs in one housing do not make the glass twice as bright,
-                    // and summing would let a chandelier's glass saturate purely
-                    // from the count of its lamps.
-                    //
-                    // Zero for every object with no lights, which is almost all
-                    // of them, so nothing else in any scene changes appearance.
+
                     emissive_drive: o
                         .lights
                         .iter()
                         .map(crate::scene_light::emissive_drive)
                         .fold(0.0f32, f32::max),
                     manual_part_blends: self.manual_part_blends.get(&o.id).cloned().unwrap_or_default(),
-                    // The damage ledger decides this, not the authored list.
-                    // Damage therefore reaches the headset through a field that
-                    // already replicates -- breaching needed no new wire
-                    // message, no new client code and no new decoder.
+
                     hidden_parts: self.damage.hidden_parts_for(o).to_vec(),
                     disabled_clips: o
                         .part_animations
@@ -139,16 +106,6 @@ impl GameRuntime {
             .collect()
     }
 
-    /// The lights the GPU shades every frame.
-    ///
-    /// `Baked` lights are excluded: their contribution is already in the
-    /// lightmap, and uploading them as well would add the same light twice --
-    /// once occluded by the walls and once through them. The visible result is
-    /// a room that is too bright AND still leaks, which looks like two
-    /// unrelated bugs.
-    ///
-    /// Their index is still taken from the object's full light list, so a
-    /// light's id does not change when a sibling is switched to baked.
     pub(crate) fn collect_render_lights(&self) -> Vec<RenderLight> {
         self.scene
             .objects
@@ -159,21 +116,7 @@ impl GameRuntime {
                     .enumerate()
                     .filter(|(_, light)| light.mode.is_live())
                     .map(move |(i, light)| {
-                    // THROUGH THE SOCKET, exactly as the baker does.
-                    //
-                    // This used to take the object's own position and rotation
-                    // and ignore `light.socket` entirely, so a fixture baked its
-                    // shadows and bounce from the bulb while RENDERING its beam
-                    // from the housing's origin. For the hanging lamp that is
-                    // 1.18m too high -- level with the ceiling it hangs from --
-                    // and, worse, the socket's own rotation is what aims the
-                    // beam DOWN: without it a pendant lamp fires horizontally
-                    // along -Z at ceiling height.
-                    //
-                    // Both rooms in `test_room` were dark for this reason. It
-                    // hid behind a coincidence: every lamp that looked correct
-                    // was a bare wall spot with no socket, which is exactly the
-                    // case this code path got right.
+
                     let pose = crate::scene_light::resolve_light_pose(
                         light,
                         o.cuboid.position,
@@ -287,11 +230,6 @@ mod fixture_tests {
     use crate::runtime_test_support::PHYSX_TEST_LOCK;
     use crate::GameRuntime;
 
-    /// A lamp: ONE object carrying both a mesh and a light.
-    ///
-    /// The same-entity model, and the reason there is no `LightFixtureDef`:
-    /// `GameObject` already holds both a `mesh` and a `lights` list, so a
-    /// fixture is a scene that uses what is there rather than a new component.
     fn drive_of(lights_json: &str) -> f32 {
         let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!(
@@ -339,8 +277,7 @@ mod fixture_tests {
 
     #[test]
     fn switching_a_lamp_off_darkens_its_bulb() {
-        // The whole point of the same-entity model: nothing has to keep the
-        // beam and the glass in step, so they cannot disagree.
+
         assert_eq!(
             drive_of(r#"[{"intensity": 4.0, "enabled": false}]"#),
             0.0,
@@ -350,15 +287,13 @@ mod fixture_tests {
 
     #[test]
     fn an_object_with_no_lights_never_glows() {
-        // Almost everything in a level. Adding fixtures must not relight it.
+
         assert_eq!(drive_of("[]"), 0.0);
     }
 
     #[test]
     fn two_bulbs_in_one_housing_take_the_brightest_not_the_sum() {
-        // Summing would let a chandelier's glass saturate purely from the COUNT
-        // of its lamps -- brightness decided by how the fixture was modelled
-        // rather than by how bright it actually is.
+
         let one = drive_of(r#"[{"intensity": 4.0}]"#);
         let three = drive_of(
             r#"[{"intensity": 4.0}, {"intensity": 4.0}, {"intensity": 4.0}]"#,
@@ -377,20 +312,11 @@ mod fixture_tests {
 
 #[cfg(test)]
 mod socket_light_tests {
-    //! Where a fixture's beam actually comes from.
-    //!
-    //! The baker resolves a light through its socket and always has; the
-    //! renderer did not, so a lamp's shadows and bounce were computed at the
-    //! bulb while its beam was emitted from the housing's origin. Nothing
-    //! errored, and it looked like a lighting bug rather than two subsystems
-    //! disagreeing about a position.
 
     use crate::scene::{Color3, GameObject, LightDef, LightKind, LightMode};
     use crate::scene_rig::SocketDef;
     use glam::{Quat, Vec3};
 
-    /// The hanging lamp as `test_room` authors it: socket 1.18m below the
-    /// housing, rotated a quarter turn so the beam points at the floor.
     fn pendant_lamp() -> GameObject {
         let mut o = GameObject::default();
         o.id = "lamp".to_string();
@@ -418,9 +344,6 @@ mod socket_light_tests {
         o
     }
 
-    /// Through a real `GameRuntime`, because that is the path the headset
-    /// takes -- testing `resolve_light_pose` directly would pass whether or not
-    /// `collect_render_lights` ever called it, which is precisely the bug.
     fn rendered(o: GameObject) -> (Vec3, Vec3) {
         let _guard = crate::runtime_test_support::PHYSX_TEST_LOCK
             .lock()
@@ -445,11 +368,6 @@ mod socket_light_tests {
         (lights[0].position, lights[0].direction)
     }
 
-    /// THE regression: a pendant lamp points DOWN.
-    ///
-    /// Without the socket's rotation the beam is `object_rot * -Z`, which for
-    /// an unrotated lamp is horizontal -- so both rooms in `test_room` had
-    /// their lamps firing sideways along the ceiling and the floors were black.
     #[test]
     fn a_pendant_lamp_aims_at_the_floor() {
         let (_, dir) = rendered(pendant_lamp());
@@ -460,7 +378,6 @@ mod socket_light_tests {
         );
     }
 
-    /// And it emits from the BULB, not from the housing's origin 1.18m above.
     #[test]
     fn a_pendant_lamp_emits_from_its_bulb() {
         let (pos, _) = rendered(pendant_lamp());
@@ -470,8 +387,6 @@ mod socket_light_tests {
         );
     }
 
-    /// The renderer and the baker must agree, because they are the two halves
-    /// of one lamp: the beam you see and the shadow it casts.
     #[test]
     fn the_renderer_and_the_baker_place_a_light_identically() {
         let o = pendant_lamp();
@@ -494,8 +409,6 @@ mod socket_light_tests {
         );
     }
 
-    /// A bare spot with no socket is untouched -- which is every lamp that
-    /// looked correct while this was broken, and why it stayed hidden.
     #[test]
     fn a_socketless_spot_is_unchanged() {
         let mut o = pendant_lamp();

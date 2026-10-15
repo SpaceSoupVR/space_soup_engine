@@ -12,8 +12,6 @@ use crate::rig::PlayerRig;
 use crate::rigid_physics::{from_px_transform, to_px_transform, PhysicsWorld};
 use crate::scene::Scene;
 
-/// How far a hand anchor may move in one tick before the move counts as a
-/// teleport: a hand swung at 15 m/s moves 25 cm a tick at 60 Hz.
 const HAND_TELEPORT: f32 = 0.5;
 
 impl PhysicsWorld {
@@ -56,9 +54,6 @@ impl PhysicsWorld {
         Some((Vec3::new(p.x, p.y, p.z), Vec3::new(n.x, n.y, n.z)))
     }
 
-    // Sets linear velocity directly rather than adding a PhysX force impulse -- spawned
-    // projectiles/ejected casings always start at rest, so "apply an impulse" and "set the exit
-    // velocity" are equivalent for this use case and avoid pulling in mass-scaling semantics.
     pub fn apply_impulse(&mut self, id: &str, velocity: Vec3) {
         let Some(state) = self.dynamic.get(id) else {
             log::warn!("apply_impulse: unknown or non-dynamic object '{id}'");
@@ -68,17 +63,6 @@ impl PhysicsWorld {
         unsafe { (*state.ptr).set_linear_velocity(&v, true) };
     }
 
-    // Pulls a dynamic actor out of simulation without touching the scene object -- used when a
-    // rigid-body object gets kinematically socketed (magazine into a mag well) so PhysX's own
-    // gravity/step doesn't fight the socket's per-frame transform override.
-    /// Remove an object's STATIC collider, if it has one.
-    ///
-    /// Separate from `despawn_actor`, which consults only the `dynamic` map --
-    /// calling that for a wall returns immediately and does nothing, which is
-    /// how a breached structure ended up visibly broken and still solid.
-    ///
-    /// Returns whether anything was removed, so a caller can tell "no collider
-    /// to remove" from "collider removed" rather than assuming.
     pub fn despawn_static(&mut self, id: &str) -> bool {
         let Some(ptr) = self.statics.remove(id) else {
             return false;
@@ -93,16 +77,10 @@ impl PhysicsWorld {
         true
     }
 
-    /// Whether an object has a collider of EITHER kind in the scene.
-    ///
-    /// The two maps are separate and each despawn consults only its own, which
-    /// has already caused a breached wall to stay solid. Anything asking "is
-    /// this thing collidable right now" wants both.
     pub fn has_collider(&self, id: &str) -> bool {
         self.statics.contains_key(id) || self.dynamic.contains_key(id)
     }
 
-    /// Whether an object currently has a static collider in the scene.
     pub fn has_static(&self, id: &str) -> bool {
         self.statics.contains_key(id)
     }
@@ -140,11 +118,6 @@ impl PhysicsWorld {
             let grip = rig.hand_grip(hand);
             let target = to_px_transform(grip.position, grip.rotation);
 
-            // A JUMP IS A TELEPORT, NOT A SWING. A kinematic moved by its
-            // target sweeps the whole way at the speed of the jump, and the
-            // CCD of anything it crosses takes that speed: a hand anchor's
-            // first tick (from the origin) or a player's teleport carried a
-            // hand through a door and flung the leaf round at 20 rad/s.
             let (now, _) = from_px_transform(&unsafe { (*ptr).get_global_pose() });
             if (now - grip.position).length() > HAND_TELEPORT {
                 unsafe { (*ptr).set_global_pose(&target, true) };
@@ -179,7 +152,6 @@ impl PhysicsWorld {
             }
         }
 
-        // Bodies push doors before the step, which integrates the push.
         self.push_doors(rigs);
 
         if let Err(e) = self.scene.step(

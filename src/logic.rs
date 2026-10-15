@@ -1,17 +1,8 @@
-//! Game rules authored in SSStudio's Logic tab: where the player starts,
-//! what a menu button does, and how much punishment an NPC takes from each
-//! weapon. One `game/logic/<scene>.logic.json` per scene.
-//!
-//! Data and decisions only: the host (headset game, editor) feeds it events
-//! -- "this action was pressed", "this bullet hit that NPC's head" -- and
-//! gets back what to do. Nothing here touches physics or rendering.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Where on an NPC a hit landed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Zone {
@@ -19,31 +10,25 @@ pub enum Zone {
     Head,
 }
 
-/// One thing the game does in response to a rule.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum Action {
-    /// Put the player at a spawn point (an object id in the scene).
+
     TeleportPlayer { spawn: String },
     ShowMenu { menu: String },
     HideMenu { menu: String },
-    /// Remove an object (an NPC that died, a door that opened...).
+
     HideObject { object: String },
-    /// Move the player to the other team (next one in `LogicDef::teams`)
-    /// and to one of its spawns.
+
     SwitchTeam,
 }
 
-/// One side in a team game: its name and the spawn points it starts from.
-/// A player joining is put on the team with fewer players and sent to one
-/// of its spawns, round robin.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TeamDef {
     pub name: String,
     pub spawns: Vec<String>,
 }
 
-/// What a player's leaderboard row carries; the host fills it in.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ScoreRow {
     pub player: String,
@@ -54,13 +39,12 @@ pub struct ScoreRow {
 }
 
 impl ScoreRow {
-    /// Kills per death; a player who has not died yet shows their kills.
+
     pub fn kd(&self) -> f32 {
         if self.deaths == 0 { self.kills as f32 } else { self.kills as f32 / self.deaths as f32 }
     }
 }
 
-/// "When this menu's button with this action name is pressed, do these."
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MenuRule {
     pub menu: String,
@@ -69,10 +53,9 @@ pub struct MenuRule {
     pub then: Vec<Action>,
 }
 
-/// How many hits of one weapon kill an NPC, per zone.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WeaponHits {
-    /// The weapon's prop name (`pistol`, `m4a1`).
+
     pub weapon: String,
     pub body_shots: u32,
     pub head_shots: u32,
@@ -80,13 +63,13 @@ pub struct WeaponHits {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NpcRule {
-    /// The scene object that is this NPC.
+
     pub object: String,
     #[serde(default = "default_health")]
     pub health: f32,
     #[serde(default)]
     pub hits: Vec<WeaponHits>,
-    /// What happens when its health runs out.
+
     #[serde(default)]
     pub on_death: Vec<Action>,
 }
@@ -100,9 +83,7 @@ fn default_true() -> bool {
 }
 
 impl NpcRule {
-    /// Damage one hit from `weapon` to `zone` deals, or `None` for a weapon
-    /// the rule doesn't list (it can't hurt this NPC). A zone that needs 0
-    /// shots is treated as "can't hurt".
+
     pub fn damage(&self, weapon: &str, zone: Zone) -> Option<f32> {
         let w = self.hits.iter().find(|h| h.weapon == weapon)?;
         let shots = match zone {
@@ -113,23 +94,21 @@ impl NpcRule {
     }
 }
 
-/// A crowd of one entity (`.entity.json`) roaming the scene and hunting the
-/// player. Once every one is dead the round restarts at `player_start`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Swarm {
-    /// The entity file, relative to the game folder.
+
     pub entity: String,
     #[serde(default = "default_swarm_count")]
     pub count: u32,
-    /// How far from the player's terrain spawn they are scattered, metres.
+
     #[serde(default = "default_swarm_spread")]
     pub spread_m: f32,
     #[serde(default = "default_health")]
     pub health: f32,
-    /// What each weapon does to one of them (same meaning as `NpcRule::hits`).
+
     #[serde(default)]
     pub hits: Vec<WeaponHits>,
-    /// What one landed attack takes off the player, and how much they have.
+
     #[serde(default = "default_attack_damage")]
     pub attack_damage: f32,
     #[serde(default = "default_player_health")]
@@ -153,32 +132,30 @@ fn default_swarm_spread() -> f32 {
 }
 
 impl Swarm {
-    /// Damage one hit from `weapon` to `zone` deals (see `NpcRule::damage`).
+
     pub fn damage(&self, weapon: &str, zone: Zone) -> Option<f32> {
         NpcRule { object: String::new(), health: self.health, hits: self.hits.clone(), on_death: Vec::new() }.damage(weapon, zone)
     }
 }
 
-/// The whole file.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LogicDef {
     pub scene: String,
-    /// Spawn point object the player starts at when the scene loads.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_start: Option<String>,
-    /// Menus on screen when the scene loads.
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_menus: Vec<String>,
     #[serde(default)]
     pub menu_rules: Vec<MenuRule>,
-    /// The sides of a team game, or empty for free play. See `TeamDef`.
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub teams: Vec<TeamDef>,
-    /// The menu the controller's menu button (left hand) opens and closes.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu_button: Option<String>,
-    /// Whether the built-in hand-settings panel (height, hands, gloves) is
-    /// offered. Off for a game that shows those elsewhere.
+
     #[serde(default = "default_true")]
     pub hand_menu: bool,
     #[serde(default)]
@@ -201,8 +178,6 @@ impl LogicDef {
         serde_json::from_str(&text).map_err(|e| e.to_string())
     }
 
-    /// The team after `current` in the list, wrapping; the first team when
-    /// `current` is unknown. `None` without teams.
     pub fn next_team(&self, current: &str) -> Option<&TeamDef> {
         if self.teams.is_empty() {
             return None;
@@ -211,8 +186,6 @@ impl LogicDef {
         self.teams.get(i)
     }
 
-    /// Which team a joining player goes on: the one with the fewest
-    /// players (`counts` by team name), the first on a tie.
     pub fn team_for_new_player<'a>(&'a self, counts: &HashMap<String, usize>) -> Option<&'a TeamDef> {
         self.teams.iter().min_by_key(|t| counts.get(&t.name).copied().unwrap_or(0))
     }
@@ -227,7 +200,6 @@ impl LogicDef {
         Ok(path)
     }
 
-    /// What a pressed menu button does.
     pub fn on_menu_action(&self, menu: &str, action: &str) -> Vec<Action> {
         self.menu_rules
             .iter()
@@ -241,26 +213,24 @@ impl LogicDef {
     }
 }
 
-/// What a hit did.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HitOutcome {
-    /// This weapon can't hurt this NPC (or the NPC has no rule).
+
     Ignored,
     Hurt { health_left: f32 },
-    /// Health ran out on this hit; carry out `on_death`.
+
     Killed { then: Vec<Action> },
-    /// Already dead: nothing more happens.
+
     AlreadyDead,
 }
 
-/// Live health of every NPC in the running scene.
 #[derive(Debug, Default)]
 pub struct NpcHealth {
     left: HashMap<String, f32>,
 }
 
 impl NpcHealth {
-    /// Apply one hit to `object` using the scene's rules.
+
     pub fn hit(&mut self, logic: &LogicDef, object: &str, weapon: &str, zone: Zone) -> HitOutcome {
         let Some(rule) = logic.npc(object) else { return HitOutcome::Ignored };
         let Some(dmg) = rule.damage(weapon, zone) else { return HitOutcome::Ignored };
@@ -268,7 +238,7 @@ impl NpcHealth {
         if *left <= 0.0 {
             return HitOutcome::AlreadyDead;
         }
-        // Rounded to a thousandth so five 20-point hits land on exactly zero.
+
         *left = ((*left - dmg) * 1000.0).round() / 1000.0;
         if *left <= 0.0 {
             *left = 0.0;
@@ -362,7 +332,7 @@ mod tests {
     fn mixed_weapons_add_up() {
         let l = soldier();
         let mut hp = NpcHealth::default();
-        // Rifle body = 50, pistol body = 20 each: 50 + 20 + 20 + 20 = 110.
+
         hp.hit(&l, "soldier", "m4a1", Zone::Body);
         hp.hit(&l, "soldier", "pistol", Zone::Body);
         hp.hit(&l, "soldier", "pistol", Zone::Body);

@@ -1,91 +1,28 @@
-//! Baked lighting, on disk, so a level can ship without the editor behind it.
-//!
-//! WHY THIS EXISTS
-//!
-//! Baking was built as a live-preview feature: `tools/bake` printed its results
-//! to stdout, the editor server held them in memory, and both the browser and
-//! the headset picked them up over a WebSocket. Nothing was ever written to
-//! disk. That works beautifully while the editor is running and produces a game
-//! with no baked lighting at all, because a shipped Quest build has no server to
-//! connect to -- it falls back to the white 1x1 texture and every light shines
-//! through every wall.
-//!
-//! Nobody would notice from the code: the fallback is graceful, the renderer is
-//! correct, and in the editor it looks right. It is only wrong where there is no
-//! editor, which is the one place it has to be right.
-//!
-//! So a bake now writes a directory beside the scene, and the runtime reads it
-//! at load. The WebSocket stays exactly as it was and overrides what was loaded,
-//! which is what makes lighting edits still appear live while authoring.
-//!
-//! THE FORMAT
-//!
-//! ```text
-//! <scene>.lightmaps/
-//!     index.json      what is in here, and which file is whose
-//!     000.png         one per object, numbered
-//! ```
-//!
-//! Files are NUMBERED rather than named after their object. Object ids are
-//! human names -- "work_light_stand/lamp (left)" is a legal id -- and every
-//! scheme for turning those into filenames is a source of collisions, escaping
-//! bugs and platform differences. The index carries the real mapping, so the
-//! names on disk only have to be unique.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Bumped when the meaning of a baked image changes, so a stale bake is ignored
-/// rather than silently shading a level the way an older baker thought it should.
-///
-/// 2: every lightmap that holds LIGHT is stored as half floats -- see
-/// `LightmapEncoding::F16`. A version-1 reader would misread the file.
 pub const LIGHTMAP_FORMAT_VERSION: u32 = 2;
 
-/// How a baked image's texels are stored.
-///
-/// WHY LIGHT IS HALF FLOAT. As 8-bit sRGB, a byte step at the light level of
-/// a dim room (0.003) is 10% of the value, and eye adaptation lifts such rooms
-/// by up to 16x -- enough to show those steps as contour bands. And 8 bits
-/// clipped at 1.0, which bounce beside a lamp exceeds and a Baked lamp's own
-/// light exceeds a hundredfold (132 on a wall 30 cm from a bright bulb). No
-/// fixed-range integer encoding serves both ends; a half float does, at 0.1%
-/// from 6e-5 to 65504. The reflection probes were already stored this way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LightmapEncoding {
-    /// RGBA8, RGB sRGB-encoded. For DATA whose 0..1 range 256 steps already
-    /// resolve -- directions, masks, visibility -- and for older bakes.
+
     #[default]
     Srgb8,
-    /// A 16-bit RGBA PNG whose values are the raw bits of IEEE half floats:
-    /// RGB linear light in the engine's units, A a 0..1 fraction. Lossless;
-    /// a browser cannot display it, which is why the editor is sent a
-    /// separate 8-bit preview over the wire.
+
     F16,
 }
 
-/// Which surfaces a baked image is for.
-///
-/// Separate because they are unwrapped differently and sampled by different
-/// pipelines: a mesh carries its own second UV set, while a brush's is
-/// generated from its faces. Mixing them up produces lighting that is subtly
-/// wrong rather than obviously missing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LightmapTarget {
-    /// Cuboids and imported meshes: the per-object atlas the original baker made.
+
     Object,
-    /// Level brushes: rooms, walls, floors.
+
     Brush,
-    /// The terrain's sky-visibility map, over the whole footprint.
-    ///
-    /// Not lighting at all, unlike the other two: a single greyscale value per
-    /// point saying how much of the sky reaches it. Terrain has no second UV
-    /// set and no chart layout to hold a lightmap, so it is sampled by the same
-    /// normalised footprint coordinate the splat map uses.
+
     Terrain,
 }
 
@@ -113,77 +50,30 @@ pub struct LightmapIndex {
     pub entries: Vec<LightmapEntry>,
 }
 
-/// The directory a scene's baked lighting lives in.
-///
-/// Takes the GAME directory and joins `scenes/` itself, which is the same
-/// contract as `terrain::load_splat` and the brush and terrain loaders in
-/// quest_app. Getting this wrong is invisible: the loader finds nothing, returns
-/// an empty set exactly as it does for an unbaked level, and the game runs with
-/// no baked lighting and no error. It is worth one function that cannot be
-/// called with the wrong half of the path.
 pub fn lightmap_dir(game_dir: &Path, scene_name: &str) -> PathBuf {
     game_dir.join("scenes").join(format!("{scene_name}.lightmaps"))
 }
 
-/// One object's baked image, as loaded.
-/// Reserved id for the brush bounce DIRECTION atlas.
-///
-/// Lives here rather than in the baker because both ends need to agree on it:
-/// the baker writes it, and the client has to recognise it to avoid feeding a
-/// map of unit vectors into the slot meant for a map of light. It carries
-/// `LightmapTarget::Brush` like the atlas it accompanies -- they share the
-/// same charts, the same texels and the same uv2 -- so the ID is the only
-/// thing that tells them apart.
 pub const SCENE_BRUSH_DIRECTION_ID: &str = "__brushes_dir__";
 
-/// Reserved id for the brush SUN-VISIBILITY mask.
-///
-/// The sky's sun is shaded live on brushes, multiplied by how much of the sun
-/// each point can see -- which is this. Red is that visibility (0..255, the
-/// fraction of rays across the texel and the sun's disc that reach the sky);
-/// green is 255 wherever the baker wrote it, so a runtime can tell a baked
-/// shadow from the neutral texel an older bake leaves in its place. At
-/// `brush_lightmap::SUN_MASK_SCALE` times the lightmap's density, on the same
-/// charts, so it is sampled with the same uv2.
 pub const SCENE_BRUSH_SUN_MASK_ID: &str = "__brushes_sun__";
 
-/// The STATIONARY lamps' shadow masks, one image per two lamps under
-/// `__brushes_stationary_<layer>__`: per lamp a signed distance and a penumbra
-/// (red and green, then blue and alpha), at
-/// `brush_lightmap::STATIONARY_MASK_SCALE` times the lightmap's density on its
-/// charts. Which lamp owns which channel is not stored -- see `stationary`.
 pub fn scene_brush_stationary_id(layer: usize) -> String {
     format!("__brushes_stationary_{layer}__")
 }
 
-/// Reserved id for the GROUND's own map: sky visibility in red, the sky sun's
-/// shadow as a signed distance and penumbra in green and blue. One image over
-/// the terrain's footprint, `LightmapTarget::Terrain`.
 pub const SCENE_TERRAIN_SKY_ID: &str = "__terrain_sky__";
 
-/// The STATIONARY lamps' shadows on the GROUND, one image per two lamps under
-/// `__terrain_stationary_<layer>__`: the brush masks' format and channels
-/// (`scene_brush_stationary_id`), on the same footprint and grid as
-/// `SCENE_TERRAIN_SKY_ID`. Also `LightmapTarget::Terrain`, so the id is what
-/// tells a mask from the ground map.
 pub fn scene_terrain_stationary_id(layer: usize) -> String {
     format!("__terrain_stationary_{layer}__")
 }
 
-/// A MESH's stationary lamps' shadow masks, layer `layer`: the brush masks'
-/// format and channels exactly, on the mesh's own atlas (`mesh_lightmap`) at
-/// its density. Without them a fixture is lit by its own bulb straight through
-/// its shade -- live lamps on a mesh had no baked visibility at all (headset,
-/// 2026-09-29). `LightmapTarget::Object`, so a runtime that does not know them
-/// must pick them out by id; see [`mesh_stationary_of`].
 pub fn mesh_stationary_id(object_id: &str, layer: usize) -> String {
     format!("{object_id}{MESH_STATIONARY_SEPARATOR}{layer}")
 }
 
 const MESH_STATIONARY_SEPARATOR: &str = "#stationary_";
 
-/// The object and layer a [`mesh_stationary_id`] names, or `None` for any
-/// other map.
 pub fn mesh_stationary_of(id: &str) -> Option<(&str, usize)> {
     let (object, layer) = id.rsplit_once(MESH_STATIONARY_SEPARATOR)?;
     Some((object, layer.parse().ok()?))
@@ -208,23 +98,13 @@ pub struct LoadedLightmap {
     pub object_id: String,
     pub width: u32,
     pub height: u32,
-    /// Tightly packed RGBA8. For a half-float map, its light sRGB-encoded and
-    /// clipped at 1 -- a preview for anything that only reads 8 bits.
+
     pub rgba: Vec<u8>,
     pub target: LightmapTarget,
-    /// A half-float map at full precision: RGBA f32, RGB linear light in the
-    /// engine's units, A a 0..1 fraction. `None` for an 8-bit map.
+
     pub linear: Option<Vec<f32>>,
 }
 
-/// Everything baked for a scene, or an empty set when there is nothing there.
-///
-/// Deliberately NOT an error when the directory is missing. A level that has
-/// never been baked is a normal state -- it is what every level is before the
-/// first bake -- and the renderer already draws it correctly with the white
-/// default. Returning `Err` here would make "unbaked" indistinguishable from
-/// "corrupt" at every call site, and the tempting fix for that is to ignore the
-/// error, which also ignores the corrupt case.
 pub fn load_scene_lightmaps(game_dir: &Path, scene_name: &str) -> Vec<LoadedLightmap> {
     let dir = lightmap_dir(game_dir, scene_name);
     let Ok(raw) = std::fs::read_to_string(dir.join("index.json")) else {
@@ -267,10 +147,6 @@ pub fn load_scene_lightmaps(game_dir: &Path, scene_name: &str) -> Vec<LoadedLigh
     out
 }
 
-/// Write a set of baked images, replacing whatever was there.
-///
-/// The directory is rebuilt rather than merged: an object deleted from the scene
-/// must not keep shading the level from a file nobody looks at any more.
 pub fn write_scene_lightmaps(
     game_dir: &Path,
     scene_name: &str,
@@ -304,23 +180,10 @@ pub fn write_scene_lightmaps(
     Ok(dir)
 }
 
-/// Index the loaded set by object id, which is how the renderer asks for one.
 pub fn by_object(maps: Vec<LoadedLightmap>) -> HashMap<String, LoadedLightmap> {
     maps.into_iter().map(|m| (m.object_id.clone(), m)).collect()
 }
 
-/// Say so when the scene has been edited since it was baked.
-///
-/// The bake and the scene it came from have to ship together, and nothing
-/// enforces that: a level saved without a rebake, or committed without its
-/// lightmaps, loads perfectly and is lit by the wrong thing. On a headset there
-/// is no editor to notice with, so the only chance of catching it is the log at
-/// load -- which is where anybody debugging "the lighting looks wrong on device"
-/// is already looking.
-///
-/// A warning rather than a refusal. A slightly stale bake still looks far better
-/// than none, and a level that would not load because its lighting was out of
-/// date would be a much worse failure than the one this is about.
 fn warn_if_stale(game_dir: &Path, scene_name: &str, lightmap_dir: &Path) {
     let scene = game_dir.join("scenes").join(format!("{scene_name}.json"));
     let (Ok(scene_meta), Ok(index_meta)) = (
@@ -342,18 +205,15 @@ fn warn_if_stale(game_dir: &Path, scene_name: &str, lightmap_dir: &Path) {
     }
 }
 
-/// sRGB-decode a normalised value.
 pub fn srgb_to_linear(s: f32) -> f32 {
     if s <= 0.040_45 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
 }
 
-/// sRGB-encode a linear value in 0..1.
 pub fn linear_to_srgb(l: f32) -> f32 {
     let l = l.clamp(0.0, 1.0);
     if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 }
 }
 
-/// IEEE half-float bits to f32.
 pub fn f16_bits_to_f32(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
     let exp = ((h >> 10) & 0x1f) as i32;
@@ -365,7 +225,6 @@ pub fn f16_bits_to_f32(h: u16) -> f32 {
     }
 }
 
-/// f32 to IEEE half-float bits, rounding to nearest; past 65504 saturates.
 pub fn f32_to_f16_bits(v: f32) -> u16 {
     if v.is_nan() {
         return 0x7e00;
@@ -388,8 +247,6 @@ pub fn f32_to_f16_bits(v: f32) -> u16 {
     sign | (((e + 15) as u16) << 10) | m as u16
 }
 
-/// A PNG as RGBA8, plus -- for a half-float one -- its full-precision light.
-/// Public for the live path, which receives the same files over the wire.
 pub fn decode_png_rgba(bytes: &[u8], encoding: LightmapEncoding) -> Option<(Vec<u8>, Option<Vec<f32>>, u32, u32)> {
     let dynamic = image::load_from_memory(bytes).ok()?;
     let (w, h) = (dynamic.width(), dynamic.height());
@@ -411,8 +268,7 @@ pub fn decode_png_rgba(bytes: &[u8], encoding: LightmapEncoding) -> Option<(Vec<
 }
 
 fn log_warn(msg: &str) {
-    // A bake that cannot be read is worth saying out loud exactly once. Silence
-    // here is how the WebSocket-only era went unnoticed for as long as it did.
+
     log::warn!("{msg}");
 }
 
@@ -429,11 +285,6 @@ mod tests {
         out
     }
 
-    /// A directory of this test's own.
-    ///
-    /// Named after the caller rather than a timestamp: these run in parallel and
-    /// a nanosecond clock is not unique enough, which showed up as one test
-    /// deleting another's directory mid-write.
     fn tmp(label: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("ss_lm_{label}"));
         let _ = std::fs::remove_dir_all(&p);
@@ -443,25 +294,18 @@ mod tests {
 
     #[test]
     fn the_directory_sits_beside_the_scene_json() {
-        // quest_app's brush and terrain loaders both resolve
-        // `game_dir/scenes/<name>.json`, and this has to land next to it or the
-        // runtime looks somewhere nothing was ever written -- which reads as an
-        // unbaked level rather than as a mistake, and so is never reported.
+
         let dir = lightmap_dir(Path::new("/game"), "lobby");
         assert_eq!(dir, Path::new("/game/scenes/lobby.lightmaps"));
     }
 
     #[test]
     fn an_unbaked_scene_is_empty_rather_than_an_error() {
-        // Every level is unbaked before its first bake. If this were an error,
-        // every call site would have to ignore it -- and would then also be
-        // ignoring the corrupt case.
+
         let dir = tmp("an_unbaked_scene_is_empty_rather_than_an_error");
         assert!(load_scene_lightmaps(&dir, "nothing_here").is_empty());
     }
 
-    /// HALF-FLOAT LIGHT: a dim value keeps its precision, a value far past
-    /// 1.0 is not clipped, and alpha survives -- through the file and back.
     #[test]
     fn half_float_light_reads_back_exactly_across_its_range() {
         let dir = tmp("half_float_light_reads_back_exactly_across_its_range");
@@ -513,8 +357,7 @@ mod tests {
 
     #[test]
     fn an_id_that_is_not_a_filename_survives_the_round_trip() {
-        // The reason files are numbered. This id is legal in a scene and is not
-        // a legal filename on every platform.
+
         let dir = tmp("an_id_that_is_not_a_filename_survives_the_round_trip");
         let id = "work_light_stand/lamp (left) #2".to_string();
         write_scene_lightmaps(
@@ -528,7 +371,7 @@ mod tests {
 
     #[test]
     fn rewriting_drops_objects_that_are_gone() {
-        // A deleted object must not keep shading the level from a leftover file.
+
         let dir = tmp("rewriting_drops_objects_that_are_gone");
         write_scene_lightmaps(&dir, "level", &[
             ("old".to_string(), LightmapTarget::Object, 1, 1, png(1, 1, 9), LightmapEncoding::Srgb8),
@@ -544,8 +387,7 @@ mod tests {
 
     #[test]
     fn a_bake_from_a_different_format_version_is_ignored() {
-        // Being lit by the dynamic lights alone is a known, correct-looking
-        // state. Being lit by a bake that meant something else is not.
+
         let dir = tmp("a_bake_from_a_different_format_version_is_ignored");
         write_scene_lightmaps(&dir, "level", &[
             ("wall".to_string(), LightmapTarget::Brush, 1, 1, png(1, 1, 200), LightmapEncoding::Srgb8),
@@ -571,7 +413,7 @@ mod tests {
 
     #[test]
     fn a_missing_image_skips_only_that_object() {
-        // One unreadable file must not cost the whole level its lighting.
+
         let dir = tmp("a_missing_image_skips_only_that_object");
         write_scene_lightmaps(&dir, "level", &[
             ("a".to_string(), LightmapTarget::Object, 1, 1, png(1, 1, 10), LightmapEncoding::Srgb8),
@@ -591,9 +433,7 @@ mod staleness_tests {
 
     #[test]
     fn a_scene_edited_after_its_bake_still_loads() {
-        // A warning, never a refusal: a slightly stale bake looks far better
-        // than none, and a level that would not load because its lighting was
-        // out of date is a worse failure than the one being guarded against.
+
         let dir = std::env::temp_dir().join("ss_lm_stale");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
@@ -607,7 +447,6 @@ mod staleness_tests {
             ("wall".to_string(), LightmapTarget::Brush, 1, 1, png, LightmapEncoding::Srgb8),
         ]).unwrap();
 
-        // Touched after the bake, which is exactly the drift being warned about.
         std::thread::sleep(std::time::Duration::from_millis(1100));
         std::fs::write(dir.join("scenes/level.json"), "{}").unwrap();
 
@@ -618,19 +457,12 @@ mod staleness_tests {
 
     #[test]
     fn baked_sky_visibility_survives_the_png_round_trip() {
-        // A brush atlas carries sky visibility in ALPHA, and every step between
-        // the baker and the shader is a place it can be quietly dropped: a PNG
-        // written as RGB, a decode that discards the channel, an upload that
-        // takes three bytes per texel. Any of those loses it in silence -- the
-        // level still loads and still lights, just with every interior as bright
-        // as open ground, which reads as a shading bug rather than a lost byte.
+
         let dir = std::env::temp_dir().join("ss_lm_sky_alpha");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
         std::fs::write(dir.join("scenes/level.json"), "{}").unwrap();
 
-        // Deliberately NOT 255: the neutral would pass even if the decoder
-        // filled a missing channel with opaque.
         let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([9, 9, 9, 40]));
         let mut png = Vec::new();
         image::DynamicImage::ImageRgba8(img)

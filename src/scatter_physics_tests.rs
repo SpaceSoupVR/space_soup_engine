@@ -1,10 +1,3 @@
-//! Can a player walk through a scattered tree?
-//!
-//! Scatter is parameters, not objects, so nothing in `objects` gives a tree a
-//! collider; the trunks come from `PhysicsWorld::spawn_scatter_trunks`. This
-//! walks a player at a resolved tree and asserts the trunk stops them, and
-//! walks one at a bush and asserts it does not.
-
 use std::path::Path;
 
 use glam::Vec3;
@@ -33,7 +26,6 @@ fn first_placement(scene: &Scene) -> ScatterInstance {
         .expect("the stroke places at least one thing")
 }
 
-/// Walk a player's rig origin in 5 cm steps through the headset's collision.
 fn walk(physics: &PhysicsWorld, from: Vec3, to: Vec3) -> Vec3 {
     let mut loco = Locomotion::new(LocomotionMode::Smooth);
     loco.player_offset = from;

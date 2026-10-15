@@ -19,11 +19,7 @@ pub struct SoundEngine {
     manager: Option<AudioManager>,
     listener: Option<ListenerHandle>,
     clips: HashMap<String, StaticSoundData>,
-    // Keyed by "voice id", not object id: looping/autoplay sounds get one persistent voice
-    // keyed by the object's own id, but each one-shot play_sound() trigger gets its own
-    // "{id}#voice{n}" voice so rapid retriggers (e.g. a rifle firing fast) layer instead of
-    // cutting each other off. voice_owner maps a voice back to the object that supplies its
-    // clip/volume/pitch/position.
+
     playing: HashMap<String, ActiveSound>,
     autostarted: HashSet<String>,
     active: HashSet<String>,
@@ -196,8 +192,7 @@ impl SoundEngine {
             let requested = requested_play.contains(&obj.id);
 
             if requested && !sound.looping {
-                // One-shot: always a fresh voice, so rapid retriggers layer instead of
-                // cutting off whatever's still playing from the previous trigger.
+
                 let voice_id = format!("{}#voice{}", obj.id, self.next_voice_id);
                 self.next_voice_id += 1;
                 self.active.insert(voice_id.clone());
@@ -356,4 +351,3 @@ mod falloff_test {
         assert!(loud.0 > quiet.0, "louder linear volume should be more decibels");
     }
 }
-

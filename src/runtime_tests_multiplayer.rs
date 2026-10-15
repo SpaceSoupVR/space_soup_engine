@@ -287,4 +287,3 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
             "expected box_c to follow the new player C's hand down to y\u{2248}2.4, got {box_c_y}"
         );
     }
-

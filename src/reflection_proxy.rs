@@ -1,31 +1,3 @@
-//! WHAT STANDS INSIDE A ROOM, as the reflection trace sees it.
-//!
-//! A reflected ray is traced exactly through the rooms' boxes and the doorways
-//! between them (`probe_trace` in the renderer's lights block): a room's probe
-//! box IS its interior, so its walls, floor and ceiling are the box's faces,
-//! and a doorway is the carve its portal records. What the boxes cannot say is
-//! what stands INSIDE a room -- a pillar, a hanging lamp -- and that is this:
-//! one oriented box per thing, tagged with the room it stands in.
-//!
-//! WHY NOT THE PROBES' OWN DEPTH
-//!
-//! It was tried, and walked well where the photographs saw everything. They do
-//! not: both of a hall's photographs are taken on its long axis, so a pillar on
-//! that axis shows each of them only its front or its back. Its SIDES were seen
-//! by nothing, space nobody saw past is indistinguishable from solid, and rays
-//! aimed at those sides walked straight through the pillar to the lamp beyond
-//! it (headset, 2026-09-26). The geometry has to come from the geometry.
-//!
-//! Brushes contribute each convex piece's bounds, which for the axis-aligned
-//! pieces a level is built from is the piece itself. Meshes contribute their
-//! model's bounds, read from the glTF's own accessor min/max under its node
-//! transforms, placed with exactly the pose the renderer draws them with. A
-//! room's own shell -- its walls, floor and ceiling -- lies outside its box and
-//! is never included, so nothing here duplicates what the box already is.
-//!
-//! Plain data: `space_soup` (the renderer) cannot depend on this crate, so the
-//! app converts these into its `ProbeProxy`.
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -33,65 +5,34 @@ use glam::{Mat4, Quat, Vec3};
 
 use crate::scene::GameObject;
 
-/// How far into a room's box something must reach to stand in that room.
-///
-/// A room's walls touch its box exactly, and float rounding would otherwise put
-/// every wall piece "inside" the room it bounds.
 pub const ROOM_INSET: f32 = 0.02;
 
-/// One box standing in one room, in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReflectionProxy {
     pub centre: Vec3,
     pub half_size: Vec3,
     pub rotation: Quat,
-    /// Index into the `rooms` the proxies were built against.
+
     pub room: usize,
-    /// A brush piece IS its box. A model's box is only its bounds -- a hanging
-    /// lamp's is mostly air around a cord -- so the trace asks the room's
-    /// photographs where inside it the object actually is, or, better, its
-    /// [`ProxyField`].
+
     pub solid: bool,
-    /// Index into the `objects` the proxies were built from: which object this
-    /// is, so a model's [`ProxyField`] can be built from its mesh.
+
     pub object: usize,
 }
 
-/// A STANDING MODEL'S SHAPE for the reflection trace: the distance from each
-/// point of its proxy's box to the nearest of its triangles.
-///
-/// A model's proxy box is only its bounds, and the trace used to ask the
-/// room's photographs where inside it the model was -- four samples against
-/// 256-pixel depth. A hanging lamp came out as a ragged block: the dark "L" in
-/// the ceiling's reflection of the front door (offline, 2026-09-28). With this
-/// the trace walks the model's own surface to within a sample, the way mesh
-/// distance fields are traced in Unreal's Lumen and distance-field shadows.
-///
-/// UNSIGNED: a lamp's shade is an open cone and its cage is wire, so there is
-/// no inside to sign. The trace stops half a sample short of the surface, a
-/// shell a few millimetres thick.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProxyField {
-    /// Samples along x, y, z of the proxy's box (its own frame), x fastest.
-    /// Sample (i, j, k) stands at the centre of its cell of the box.
+
     pub dims: [u32; 3],
-    /// Metres a byte of 255 stands for. Nearer than this the field is exact;
-    /// past it, it says only "at least this far".
+
     pub max_distance: f32,
     pub distances: Vec<u8>,
 }
 
-/// Samples along a field's longest side: 48 puts a hanging lamp's 1.4 m at
-/// 3 cm and a wall sconce's 34 cm at 7 mm.
 pub const FIELD_SAMPLES: u32 = 48;
 
-/// How many samples out from the surface a field is exact. The trace steps
-/// by the distance it reads, so this caps its stride.
 const FIELD_REACH_SAMPLES: f32 = 4.0;
 
-/// The field of the model at `path`, placed as an object places it: scaled by
-/// `scale`, over the box [`reflection_proxies`] gives it -- the model's bounds,
-/// centred on the box. `None` when the model cannot be read.
 pub fn model_field(path: &Path, scale: Vec3, samples: u32) -> Option<ProxyField> {
     let (mlo, mhi) = model_bounds(path)?;
     let parts = crate::mesh_lightmap::load_mesh_parts(path)?;
@@ -107,7 +48,7 @@ pub fn model_field(path: &Path, scale: Vec3, samples: u32) -> Option<ProxyField>
     let max_distance = FIELD_REACH_SAMPLES * 2.0 * longest / samples.max(1) as f32;
     let n = (dims[0] * dims[1] * dims[2]) as usize;
     let mut dist = vec![max_distance; n];
-    // Each triangle updates only the samples within reach of it.
+
     for part in &parts {
         let local = |i: u32| scale * (Vec3::from(part.positions[i as usize]) - mid);
         for tri in part.indices.chunks_exact(3) {
@@ -142,8 +83,6 @@ pub fn model_field(path: &Path, scale: Vec3, samples: u32) -> Option<ProxyField>
     Some(ProxyField { dims, max_distance, distances })
 }
 
-/// Distance from `p` to the triangle `t` (Ericson, *Real-Time Collision
-/// Detection* 5.1.5: the closest point by Voronoi region).
 fn point_triangle_distance(p: Vec3, t: &[Vec3; 3]) -> f32 {
     let (a, b, c) = (t[0], t[1], t[2]);
     let (ab, ac, ap) = (b - a, c - a, p - a);
@@ -182,25 +121,17 @@ fn point_triangle_distance(p: Vec3, t: &[Vec3; 3]) -> f32 {
     p.distance(a + ab * v + ac * w)
 }
 
-/// Whether an object is drawn geometry a reflection could show.
-///
-/// The same rule the baker's `occlusion::occludes_light` applies: markers --
-/// probes, spawn points, triggers -- have cuboids that are editor handles, and
-/// hidden objects are not drawn at all.
 fn is_drawn_geometry(o: &GameObject) -> bool {
     !o.hidden
         && !o.is_trigger
         && o.reflection_probe.is_none()
         && o.spawn_point.is_none()
         && o.trigger_volume.is_none()
-        // A door moves: it is drawn live, never as a baked proxy.
+
         && o.door.is_none()
         && (o.brush.is_some() || o.mesh.is_some())
 }
 
-/// The model-space bounds of a glTF's default scene, from each primitive's
-/// POSITION accessor min/max (which the format requires) under its node's
-/// world transform. No vertex buffer is read.
 pub fn model_bounds(path: &Path) -> Option<(Vec3, Vec3)> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let doc = &gltf.document;
@@ -236,17 +167,12 @@ pub fn model_bounds(path: &Path) -> Option<(Vec3, Vec3)> {
     acc
 }
 
-/// The world-space bounds of an oriented box.
 fn obb_bounds(centre: Vec3, half: Vec3, rotation: Quat) -> (Vec3, Vec3) {
     let m = glam::Mat3::from_quat(rotation);
     let extent = m.x_axis.abs() * half.x + m.y_axis.abs() * half.y + m.z_axis.abs() * half.z;
     (centre - extent, centre + extent)
 }
 
-/// The room `lo..hi` stands in, as an index into `rooms`: the TIGHTEST box it
-/// reaches into. Rooms nest -- a hall inside the outdoor volume, an alcove
-/// inside a hall -- and a pillar in the hall stands in the hall, not in the
-/// sky. An empty box (min above max) is a room nothing stands in.
 fn room_reached(lo: Vec3, hi: Vec3, rooms: &[(Vec3, Vec3)]) -> Option<usize> {
     rooms
         .iter()
@@ -264,20 +190,8 @@ fn room_reached(lo: Vec3, hi: Vec3, rooms: &[(Vec3, Vec3)]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// How far outside a room's box a door's leaf may hang and still be traced in
-/// that room, metres: past half the thickness of the wall it hangs in.
 pub const DOOR_ROOM_REACH: f32 = 0.4;
 
-/// THE DOORS' LEAVES, for the reflection trace: each leaf at REST (its
-/// object's own pose, closed), once for every room whose box comes within
-/// [`DOOR_ROOM_REACH`] of it -- both rooms of the doorway it hangs in. Not
-/// models of [`reflection_proxies`]: a shut leaf stands in the wall between
-/// two boxes, which no room's proxies reach, so it would never be one. The
-/// trace meets a room's proxies from where the ray LEFT the room before, so a
-/// ray crossing the doorway meets the leaf from either side; the renderer
-/// turns each copy with its leaf every frame (`space_soup::renderer::doors`).
-/// A model, so traced by its own shape (a field) and coloured as a model: the
-/// photographs, taken without the doors, never show it.
 pub fn door_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec3)]) -> Vec<ReflectionProxy> {
     let mut out = Vec::new();
     for (index, o) in objects.iter().enumerate() {
@@ -302,9 +216,6 @@ pub fn door_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec
     out
 }
 
-/// What stands in each of `rooms` (their probe boxes, in the caller's room
-/// order), for the reflection trace. Mesh paths resolve against `game_dir`; a
-/// model that cannot be read contributes nothing and is logged.
 pub fn reflection_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec3)]) -> Vec<ReflectionProxy> {
     let mut out = Vec::new();
     let mut bounds_cache: HashMap<String, Option<(Vec3, Vec3)>> = HashMap::new();
@@ -334,8 +245,7 @@ pub fn reflection_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec
                 b
             });
             let Some((mlo, mhi)) = bounds else { continue };
-            // The pose the renderer draws the model with: see
-            // `quest_app::scene_meshes` (position, rotation * offset, scale).
+
             let rotation = o.cuboid.rotation * mesh.rotation_offset;
             let centre = o.cuboid.position + rotation * (mesh.scale * (mlo + mhi) * 0.5);
             let half_size = (mesh.scale * (mhi - mlo) * 0.5).abs();
@@ -348,22 +258,8 @@ pub fn reflection_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec
     out
 }
 
-/// How many distinct models -- one model file at one scale -- a level's
-/// reflections follow by their own shape. The renderer holds one distance field
-/// for each (`space_soup::renderer::proxy_field::MAX_PROXY_FIELDS`, pinned equal
-/// to this by a test in quest_app, which sees both crates).
 pub const MAX_SHAPED_MODELS: usize = 8;
 
-/// WHICH PROXIES THE TRACE FOLLOWS BY THEIR OWN SHAPE: per proxy, its model's
-/// number among the level's shaped models -- one per model file and scale,
-/// numbered in order of first appearance -- or `None` for a brush piece, or for
-/// a model past [`MAX_SHAPED_MODELS`], which is traced by its bounds and the
-/// photographs.
-///
-/// ONE RULE FOR THE BAKER AND THE APP. A shaped model is left out of the room
-/// photographs and coloured from its own cards (`reflection_cards`), and the app
-/// gives it a distance field. A model the baker left out and the app then traced
-/// by its bounds would be missing from every reflection, so both ask this.
 pub fn shaped_models(proxies: &[ReflectionProxy], objects: &[GameObject]) -> Vec<Option<u32>> {
     let mut keys: Vec<(String, [u32; 3])> = Vec::new();
     proxies
@@ -386,14 +282,6 @@ pub fn shaped_models(proxies: &[ReflectionProxy], objects: &[GameObject]) -> Vec
         .collect()
 }
 
-/// HOW DEEP A DOORWAY'S JAMBS ARE along its axis: the extent of the wall the
-/// opening is cut through, from the brush pieces around its rim.
-///
-/// A portal records its CARVE, which reaches past the wall on both sides (a
-/// front door's carve runs 3.69..4.4 through a wall 3.7..4.0). Between two
-/// rooms the next room's box bounds the jambs anyway; out of the rooms there
-/// is no next box, and treating the whole carve as jambs would report hits on
-/// sides that end 40 cm earlier. `None` when no piece touches the rim.
 pub fn portal_wall_extent(objects: &[GameObject], min: Vec3, max: Vec3, axis: usize) -> Option<(f32, f32)> {
     const RIM: f32 = 0.05;
     let mut out: Option<(f32, f32)> = None;
@@ -402,7 +290,7 @@ pub fn portal_wall_extent(objects: &[GameObject], min: Vec3, max: Vec3, axis: us
             let Some((lo, hi)) = crate::brush::solid_bounds(&solid) else { continue };
             let lo = Vec3::new(lo[0] as f32, lo[1] as f32, lo[2] as f32);
             let hi = Vec3::new(hi[0] as f32, hi[1] as f32, hi[2] as f32);
-            // Touching the opening's rim across the axis, overlapping it along.
+
             let touches = (0..3).all(|i| {
                 if i == axis {
                     lo[i] < max[i] && hi[i] > min[i]
@@ -433,18 +321,15 @@ mod tests {
     #[test]
     fn a_points_distance_to_a_triangle_is_to_its_nearest_feature() {
         let t = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
-        // Over the face.
+
         assert!((point_triangle_distance(Vec3::new(0.2, 0.2, 0.5), &t) - 0.5).abs() < 1e-6);
-        // Off a corner, an edge, and in the plane.
+
         assert!((point_triangle_distance(Vec3::new(-1.0, -1.0, 0.0), &t) - 2f32.sqrt()).abs() < 1e-6);
         assert!((point_triangle_distance(Vec3::new(0.5, -2.0, 0.0), &t) - 2.0).abs() < 1e-6);
         assert!((point_triangle_distance(Vec3::new(1.0, 1.0, 0.0), &t) - 0.5f32.sqrt()).abs() < 1e-6);
         assert!(point_triangle_distance(Vec3::new(0.25, 0.25, 0.0), &t) < 1e-6);
     }
 
-    /// A REAL FIXTURE: the wall sconce test_room hangs in its hallway. The field
-    /// spans the model's box at the object's scale, reaches zero on its
-    /// surface and is largest in the empty corners of its bounds.
     #[test]
     fn a_fixtures_field_finds_its_surface() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -473,9 +358,6 @@ mod tests {
         serde_json::from_str(json).expect("the test object parses")
     }
 
-    /// ONE MODEL, ONE FIELD, HOWEVER MANY PLACE IT: two sconces share a number,
-    /// a pillar has none, and a ninth distinct model is past the budget -- so the
-    /// baker leaves out of the photographs exactly what the app will trace.
     #[test]
     fn shaped_models_are_numbered_per_model_and_scale_within_the_budget() {
         let mut objects = vec![object(r#"{"id":"pillar"}"#)];
@@ -516,13 +398,8 @@ mod tests {
         assert_eq!(shaped.last().copied().flatten(), None, "past the budget: traced by its bounds");
     }
 
-
     const HALL: (Vec3, Vec3) = (Vec3::new(-2.7, 0.0, -15.7), Vec3::new(2.7, 3.1, 3.7));
 
-    /// A room's shell lies outside its box and must never be handed to the
-    /// trace as something standing in the room -- it would stop every ray at
-    /// the first wall piece's bounds, which for a wall with a doorway cut in
-    /// it spans the doorway.
     #[test]
     fn a_rooms_own_walls_are_not_proxies_but_a_pillar_is() {
         let shell = object(
@@ -548,7 +425,6 @@ mod tests {
         assert_eq!(p[0].room, 0);
     }
 
-    /// Markers are editor handles, and hidden objects are not drawn.
     #[test]
     fn markers_and_hidden_objects_are_not_proxies() {
         let hidden = object(
@@ -561,8 +437,6 @@ mod tests {
         assert!(reflection_proxies(Path::new("."), &[hidden, probe], &[HALL]).is_empty());
     }
 
-    /// Rooms nest. A pillar inside the hall is inside the outdoor volume too,
-    /// and stands in the hall.
     #[test]
     fn a_proxy_stands_in_the_tightest_room() {
         let pillar = object(
@@ -577,8 +451,6 @@ mod tests {
         assert_eq!(p[0].room, 1, "the pillar was filed under the enclosing volume");
     }
 
-    /// The front door's carve runs 3.69..4.4 through a wall 3.7..4.0: the
-    /// jambs are the wall's depth, not the carve's.
     #[test]
     fn a_doorways_jambs_are_as_deep_as_its_wall() {
         let shell = object(

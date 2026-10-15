@@ -4,10 +4,6 @@ use std::collections::HashMap;
 
 use crate::events::Hand;
 
-/// The single global maximum every pre-2026-08 finger curl was authored against
-/// (`RigConfig::finger_curl_max_deg`). Migration multiplies by this rather than
-/// by each joint's own anatomical limit, so existing poses keep their exact
-/// angles instead of being silently re-posed.
 pub const LEGACY_CURL_MAX_DEG: f32 = 80.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,9 +34,7 @@ pub struct GripPoseDef {
 }
 
 impl GripPoseDef {
-    /// The fallback hand pose. Only ever authored as a legacy curl, so this is
-    /// the migration and nothing else -- present so callers have one accessor
-    /// rather than two shapes to reason about.
+
     pub fn hand_pose(&self) -> avatar_ik::HandPose {
         avatar_ik::HandPose::from_curl(
             avatar_ik::HandCurl::from_finger_curl(&self.finger_curl, 0.0),
@@ -94,62 +88,23 @@ pub struct GripPointDef {
     #[serde(default)]
     pub grab_range: Option<f32>,
 
-    // The hand's grip transform, authored independently of the reach anchor (local_pos/
-    // local_rot). When absent, the hand sits on the anchor. Lets the designer place the
-    // reach zone on one spot (e.g. the trigger) while the hand grips a few cm away.
     #[serde(default)]
     pub hand_offset_pos: Option<[f32; 3]>,
     #[serde(default)]
     pub hand_offset_rot: Option<[f32; 4]>,
 
-    /// The hand pose, in degrees, with a spread and twist axis per finger.
-    ///
-    /// Supersedes `finger_curl`, which held 15 normalised scalars that could only
-    /// bend each bone on one axis -- fingers could not be spread apart and the
-    /// thumb could not oppose, because nothing downstream had a second axis to
-    /// carry it.
-    ///
-    /// When absent the pose is migrated from `finger_curl` at the old global
-    /// maximum, so every grip authored before this keeps the angles it had.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finger_pose: Option<avatar_ik::HandPose>,
 
-    /// Anchor this grip to a model part, so the hand rides that part's animated
-    /// pose instead of the object's origin. Mirrors `SocketDef::part`.
-    ///
-    /// A charging handle grip has to be on the handle -- once the bolt is 3 cm
-    /// back, a grip measured from the receiver origin leaves the hand floating
-    /// inside the gun while the part it is supposedly pulling has moved away.
-    ///
-    /// Resolved on the headset, which is the only place a posed part exists, and
-    /// falls back to the object origin when that part has not been reported --
-    /// better a hand at the pivot than a hand at the world origin.
-    ///
-    /// Intended for grips that pose a hand onto a moving part (a pull grip), not
-    /// for the grip that carries the object: carrying from a part would feed the
-    /// object's own pose back into the part that derives from it.
     #[serde(default)]
     pub part: Option<String>,
 
-    /// A support grip: grabbable only while the same player already holds this
-    /// object by some other grip. The offhand on a rifle's handguard is the case
-    /// this exists for -- you cannot pick a carbine up by the barrel, but once
-    /// the firing hand has it you can bring the support hand on.
-    ///
-    /// Without this every authored grip was independently grabbable, so the
-    /// weapon could be carried by the handguard alone with no hand on the pistol
-    /// grip. It does NOT make the grip drive the object's pose -- the primary
-    /// attachment still does that (see `AttachmentTable::is_primary`); a support
-    /// grip only poses its own hand.
     #[serde(default)]
     pub support: bool,
 }
 
 impl GripPointDef {
-    /// This grip's hand pose, whichever way it was authored.
-    ///
-    /// One accessor so no caller has to know that two representations exist, and
-    /// so the legacy migration happens in exactly one place.
+
     pub fn hand_pose(&self) -> avatar_ik::HandPose {
         match &self.finger_pose {
             Some(p) => p.clamped(),
@@ -160,12 +115,6 @@ impl GripPointDef {
         }
     }
 
-    /// Where this grip's local offsets are measured from.
-    ///
-    /// `part` is the posed world transform of `self.part`, which only the client
-    /// can supply -- it is the only place a skinned pose exists. Passing None for
-    /// a part-scoped grip falls back to the object, so a mesh that has never been
-    /// posed puts the grip at the pivot rather than at the world origin.
     pub fn base(
         &self,
         obj_pos: Vec3,
@@ -178,7 +127,6 @@ impl GripPointDef {
         }
     }
 
-    /// World transform of the reach anchor -- what a hand has to get near to grab.
     pub fn anchor_world(
         &self,
         obj_pos: Vec3,
@@ -189,10 +137,6 @@ impl GripPointDef {
         (bp + br * Vec3::from(self.local_pos), br * Quat::from_array(self.local_rot))
     }
 
-    /// World transform the hand itself is drawn at.
-    ///
-    /// Honours `hand_offset_*` when authored, so the reach zone and the hand can
-    /// sit apart -- reach at the trigger, hand a few cm down the grip.
     pub fn hand_world(
         &self,
         obj_pos: Vec3,
@@ -241,9 +185,6 @@ pub struct TerrainColliderDef {
     pub node_filter: Option<String>,
 }
 
-// An object-to-object attach point (magazine well, battery bay, etc.) -- distinct from
-// GripPointDef, which is always hand-to-object. A child snapped into a socket is kinematically
-// carried by the parent's transform each frame rather than by a player rig joint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketDef {
     pub name: String,
@@ -252,15 +193,6 @@ pub struct SocketDef {
     #[serde(default = "identity_quat_arr")]
     pub local_rot: [f32; 4],
 
-    /// Anchor this socket to a model part, so it rides that part's animated pose
-    /// instead of the object's origin.
-    ///
-    /// An ejection port has to be where the port actually is with the bolt back;
-    /// a muzzle has to follow the barrel. Without this, anything spawned at a
-    /// socket appears at the object pivot and stays there while the mechanism
-    /// moves around it.
-    ///
-    /// `local_pos`/`local_rot` are then relative to that part, not the object.
     #[serde(default)]
     pub part: Option<String>,
 }

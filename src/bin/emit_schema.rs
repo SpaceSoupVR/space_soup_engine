@@ -1,4 +1,3 @@
-
 use space_soup_engine::schema::game_object_schema;
 
 fn main() {

@@ -1,41 +1,5 @@
-//! WEATHER: rain and snow over authored areas, and what they leave behind --
-//! wet ground, puddles in its hollows, snow on what faces the sky.
-//!
-//! WHAT AN AREA IS
-//!
-//! A box on the map (`bounds`, as a body of water's) where it rains or snows,
-//! with the most it may leave there: how wet the ground gets, how deep its
-//! puddles may stand, how deep its snow may lie. Its edges blend over `edge`
-//! metres, so walking out of the rain is a gradual thing and the ground's
-//! wetness does not stop on a line.
-//!
-//! WHAT IS SIMULATED, AND WHERE
-//!
-//! Only a few numbers move with time, one set an area ([`WeatherState`]): how
-//! wet its open ground is, how deep the water stands in the bottom of its
-//! hollows, and how deep its snow lies on open, level ground. They follow the
-//! rain and snow actually falling (`intensity`, through `cycle`), the
-//! authored rates, and drying and melting -- physics in millimetres an hour,
-//! see the constants below.
-//!
-//! Everything that varies across the area is FIXED at load ([`WeatherGround`]):
-//! what covers each point from the sky (the cover height, found by casting
-//! straight down from above, so a roof covers the floor under it and the cave
-//! the ground inside it), where water collects (each hollow's spill level, by
-//! a priority flood over the ground plus a few centimetres of micro-relief,
-//! which is what puddles really sit in on ground a heightfield calls flat),
-//! and how well each slope holds snow. A map is then a cheap function of the
-//! two: [`surface`], texel by texel, run a few times a second.
-//!
-//! The renderer reads the map (`space_soup::renderer::weather`): wetness
-//! darkens porous ground and smooths its highlight, a puddle is a flat mirror
-//! taking rain ripples, snow is white, rough and sparkling over what faces up,
-//! and the ground rises by its depth. Every one of them is lit by the same
-//! lights, shadows, masks and reflections as the dry surface.
-
 use serde::{Deserialize, Serialize};
 
-/// What falls from the sky.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrecipitationKind {
@@ -44,17 +8,15 @@ pub enum PrecipitationKind {
     Snow,
 }
 
-/// Where an area starts, before any time has passed: so a level can open on
-/// ground already soaked or already white. Shares of the area's maxima.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct WeatherStart {
-    /// How wet the open ground is, 0..1.
+
     #[serde(default)]
     pub wetness: f32,
-    /// How full its hollows are, as a share of `max_puddle_depth`.
+
     #[serde(default)]
     pub puddles: f32,
-    /// How deep the snow lies, as a share of `max_snow_depth`.
+
     #[serde(default)]
     pub snow: f32,
 }
@@ -65,75 +27,50 @@ impl WeatherStart {
     }
 }
 
-/// One area of weather. See the module comment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WeatherDef {
-    /// The author's name for it, for the editor's lists; nothing reads it.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
     #[serde(default)]
     pub kind: PrecipitationKind,
 
-    /// Footprint as `[min_x, min_z, max_x, max_z]`, as a body of water's.
     pub bounds: [f32; 4],
 
-    /// Metres inside `bounds` over which everything fades in: the falling
-    /// rain or snow and what it leaves.
     #[serde(default = "default_edge")]
     pub edge: f32,
 
-    /// How hard it falls: 1 is heavy rain (8 mm an hour) or a heavy snowfall
-    /// (2.5 cm of snow an hour); 0 stops it.
     #[serde(default = "default_intensity")]
     pub intensity: f32,
 
-    /// The wind, m/s, along x and z: what slants the rain and drifts the snow.
     #[serde(default, skip_serializing_if = "is_zero2")]
     pub wind: [f32; 2],
 
-    /// The wettest the open ground gets, 0..1: 1 soaked dark, less for ground
-    /// that drains or a drizzle that never soaks it.
     #[serde(default = "default_one")]
     pub max_wetness: f32,
 
-    /// Metres: the deepest water stands in the area's hollows. 0 makes no
-    /// puddles at all.
     #[serde(default = "default_puddle_depth")]
     pub max_puddle_depth: f32,
 
-    /// Metres of micro-relief the ground has -- ruts, divots, tufts -- that a
-    /// heightfield sampled every metre calls flat, and that puddles stand in.
-    /// About 0.04 for a lawn, 0.08 for a rutted track, 0.01 for paving.
     #[serde(default = "default_relief")]
     pub ground_relief: f32,
 
-    /// Metres: the deepest snow lies on open, level ground. 0 makes none.
     #[serde(default = "default_snow_depth")]
     pub max_snow_depth: f32,
 
-    /// Multiplies how fast what falls accumulates: 1 is the real rate (a
-    /// heavy rain fills puddles over the best part of an hour); a demo area
-    /// takes 10-30 to show it in a few minutes.
     #[serde(default = "default_one")]
     pub accumulation_rate: f32,
 
-    /// Multiplies how fast the ground dries and the snow melts once it stops.
     #[serde(default = "default_one")]
     pub dry_rate: f32,
 
-    /// Air temperature, degrees C: above 0 snow melts. Defaults to 8 for rain
-    /// and -2 for snow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
 
-    /// Seconds of falling then seconds of clear, repeating, to show the
-    /// ground drying and the snow melting between showers. `[0, 0]` falls
-    /// all the time.
     #[serde(default, skip_serializing_if = "is_zero2")]
     pub cycle: [f32; 2],
 
-    /// What has already fallen when the level opens.
     #[serde(default, skip_serializing_if = "WeatherStart::is_dry")]
     pub start: WeatherStart,
 }
@@ -146,36 +83,31 @@ fn default_relief() -> f32 { 0.04 }
 fn default_snow_depth() -> f32 { 0.15 }
 fn is_zero2(v: &[f32; 2]) -> bool { v[0] == 0.0 && v[1] == 0.0 }
 
-/// Heavy rain, mm an hour, at intensity 1.
 pub const RAIN_MM_PER_HOUR: f32 = 8.0;
-/// Water a surface holds before it is soaked and water runs off it, mm. A
-/// film this deep darkens porous ground fully (Lagarde, "Water drop 2").
+
 pub const WET_SATURATION_MM: f32 = 0.4;
-/// Evaporation from wet ground under an overcast sky, mm an hour.
+
 pub const EVAPORATION_MM_PER_HOUR: f32 = 0.25;
-/// What soaks away into the ground under a puddle, mm an hour.
+
 pub const INFILTRATION_MM_PER_HOUR: f32 = 0.5;
-/// How many times the rain falling on a puddle reaches it: runoff from the
-/// ground round a hollow drains into it.
+
 pub const CATCHMENT: f32 = 6.0;
-/// Snow on level ground at intensity 1, m an hour.
+
 pub const SNOW_M_PER_HOUR: f32 = 0.025;
-/// Snow depth melted per degree above zero, m an hour (a degree-day factor of
-/// about 4 mm of water a degree a day, in fresh snow of density 0.1).
+
 pub const MELT_M_PER_HOUR_PER_DEGREE: f32 = 0.0015;
-/// Slope, degrees, past which snow starts to slide off, and the slope it no
-/// longer lies on at all.
+
 pub const SNOW_HOLD_DEG: (f32, f32) = (32.0, 50.0);
-/// The finest a map's texel is, metres, and the most texels along a side.
+
 pub const MAP_CELL: f32 = 0.25;
 pub const MAP_MAX_CELLS: usize = 256;
-/// The most areas a scene's weather draws. See `space_soup::renderer::weather`.
+
 pub const MAX_AREAS: usize = 4;
-/// Where nothing at all lies under a point, its cover height: open sky.
+
 pub const NO_COVER: f32 = -1.0e4;
 
 impl WeatherDef {
-    /// Footprint `(min_x, min_z, max_x, max_z)`, normalised so min <= max.
+
     pub fn extent(&self) -> (f32, f32, f32, f32) {
         let [a, b, c, d] = self.bounds;
         (a.min(c), b.min(d), a.max(c), b.max(d))
@@ -186,7 +118,6 @@ impl WeatherDef {
         x >= x0 && x <= x1 && z >= z0 && z <= z1
     }
 
-    /// 1 well inside the area, 0 at and past its edge, smooth between.
     pub fn edge_fade(&self, x: f32, z: f32) -> f32 {
         let (x0, z0, x1, z1) = self.extent();
         let e = self.edge.max(1e-3);
@@ -204,8 +135,6 @@ impl WeatherDef {
         })
     }
 
-    /// How hard it is falling `t` seconds after the level opened, through
-    /// `cycle`: each shower comes in and goes over 15 seconds.
     pub fn intensity_at(&self, t: f64) -> f32 {
         let i = self.intensity.max(0.0);
         let [on, off] = self.cycle;
@@ -221,23 +150,20 @@ impl WeatherDef {
     }
 }
 
-/// What has accumulated over an area at one moment: the few numbers that move
-/// with time. See the module comment.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct WeatherState {
-    /// How wet its open ground is, 0..1, before `max_wetness`.
+
     pub wet: f32,
-    /// Metres of water standing at the bottom of its hollows, up to
-    /// `max_puddle_depth`.
+
     pub fill: f32,
-    /// Metres of snow on open, level ground, up to `max_snow_depth`.
+
     pub snow: f32,
-    /// How hard it is falling now, 0..`intensity`.
+
     pub falling: f32,
 }
 
 impl WeatherState {
-    /// Where `def` starts.
+
     pub fn start(def: &WeatherDef) -> Self {
         let s = def.start;
         Self {
@@ -248,10 +174,6 @@ impl WeatherState {
         }
     }
 
-    /// `dt` seconds on from `t`. Rain wets the ground until it is soaked, and
-    /// then what keeps falling runs off into the hollows; snow piles up while
-    /// it is cold enough; with nothing falling the ground dries, the puddles
-    /// sink away and snow above freezing melts.
     pub fn step(&mut self, def: &WeatherDef, t: f64, dt: f32) {
         let falling = def.intensity_at(t);
         self.falling = falling;
@@ -269,19 +191,16 @@ impl WeatherState {
         let melt_m_s = d * MELT_M_PER_HOUR_PER_DEGREE * temp.max(0.0) / 3600.0;
         let evap_mm_s = d * EVAPORATION_MM_PER_HOUR / 3600.0;
 
-        // Wetness: soaked by rain, dried by the air; melting snow keeps what
-        // is under it soaked.
         if rain_mm_s > 0.0 {
             self.wet += a * rain_mm_s * dt / WET_SATURATION_MM;
         } else {
             self.wet -= evap_mm_s * dt / WET_SATURATION_MM;
         }
-        // Puddles: the runoff once the ground is soaked, less what soaks in and
-        // evaporates.
+
         let runoff = if self.wet >= 1.0 { a * rain_mm_s * CATCHMENT } else { 0.0 };
         let loss = d * (EVAPORATION_MM_PER_HOUR + INFILTRATION_MM_PER_HOUR) / 3600.0;
         self.fill += (runoff - loss) * dt / 1000.0;
-        // Snow.
+
         let melting = self.snow > 0.0 && melt_m_s > 0.0;
         self.snow += (a * snow_m_s - melt_m_s) * dt;
         if melting {
@@ -292,9 +211,6 @@ impl WeatherState {
         self.snow = self.snow.clamp(0.0, def.max_snow_depth.max(0.0));
     }
 
-    /// Where `def` stands `t` seconds after the level opened: stepped a
-    /// second at a time from its start, so the same `t` is always the same
-    /// state -- what an offline render at a weather time needs.
     pub fn at(def: &WeatherDef, t: f64) -> Self {
         let mut s = Self::start(def);
         let dt = if t > 6.0 * 3600.0 { 10.0 } else { 1.0 };
@@ -309,27 +225,24 @@ impl WeatherState {
     }
 }
 
-/// An area's ground, as weather sees it: everything about each point that
-/// does not change with time. Built once, at load. See the module comment.
 #[derive(Debug, Clone)]
 pub struct WeatherGround {
-    /// The world x/z of texel (0, 0)'s corner, and the texel's size.
+
     pub min: [f32; 2],
     pub cell: f32,
     pub nx: usize,
     pub nz: usize,
-    /// World y of the first thing straight down from the sky at each texel's
-    /// centre: the ground, a roof, a cave's ridge.
+
     pub cover: Vec<f32>,
-    /// The cover with its micro-relief: what water stands in.
+
     relief: Vec<f32>,
-    /// The level water rises to in each texel's hollow before it spills.
+
     spill: Vec<f32>,
-    /// The bottom of each texel's hollow; +inf where it is in none.
+
     floor: Vec<f32>,
-    /// How well the slope here holds snow, 0..1, with its drift.
+
     snow_hold: Vec<f32>,
-    /// `WeatherDef::edge_fade` at each texel.
+
     fade: Vec<f32>,
 }
 
@@ -341,7 +254,6 @@ fn hash2(x: i32, z: i32, seed: u32) -> f32 {
     (h & 0x00ff_ffff) as f32 / 16_777_216.0
 }
 
-/// Smooth value noise, -1..1, of wavelength `w` metres.
 fn value_noise(x: f32, z: f32, w: f32, seed: u32) -> f32 {
     let (u, v) = (x / w, z / w);
     let (i, j) = (u.floor(), v.floor());
@@ -368,14 +280,11 @@ impl PartialOrd for Low {
 impl Eq for Low {}
 impl Ord for Low {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Reversed, so the heap pops the LOWEST first.
+
         other.0.partial_cmp(&self.0).unwrap_or(std::cmp::Ordering::Equal).then(other.1.cmp(&self.1))
     }
 }
 
-/// THE LEVEL EACH HOLLOW FILLS TO before it spills, by a priority flood from
-/// the grid's edge (Barnes, Lehman & Mulla 2014): water leaves the area over
-/// its edge, so every hollow inside it holds water up to its lowest rim.
 pub fn spill_levels(h: &[f32], nx: usize, nz: usize) -> Vec<f32> {
     let mut spill = h.to_vec();
     let mut seen = vec![false; h.len()];
@@ -414,8 +323,6 @@ pub fn spill_levels(h: &[f32], nx: usize, nz: usize) -> Vec<f32> {
     spill
 }
 
-/// The bottom of the hollow each texel lies in (+inf for none): the lowest
-/// ground of each connected run of texels under water at their spill level.
 pub fn hollow_floors(h: &[f32], spill: &[f32], nx: usize, nz: usize) -> Vec<f32> {
     let wet = |i: usize| spill[i] - h[i] > 1e-5;
     let mut floor = vec![f32::INFINITY; h.len()];
@@ -460,9 +367,7 @@ pub fn hollow_floors(h: &[f32], spill: &[f32], nx: usize, nz: usize) -> Vec<f32>
 }
 
 impl WeatherGround {
-    /// `def`'s ground, from `cover`: the height of the first thing a ray
-    /// straight down from the sky meets at a world x/z, or `None` where it
-    /// meets nothing (past the terrain's edge, through a hole).
+
     pub fn build(def: &WeatherDef, cover: impl Fn(f32, f32) -> Option<f32>) -> Self {
         let (x0, z0, x1, z1) = def.extent();
         let span = (x1 - x0).max(z1 - z0).max(MAP_CELL);
@@ -479,7 +384,7 @@ impl WeatherGround {
                 found.push(cover(wx, wz));
             }
         }
-        // Where nothing is under a point it drains: below everything found.
+
         let lowest = found.iter().flatten().copied().fold(f32::INFINITY, f32::min);
         let drain = if lowest.is_finite() { lowest - 1.0 } else { 0.0 };
         let cover: Vec<f32> = found.iter().map(|c| c.unwrap_or(drain)).collect();
@@ -498,7 +403,7 @@ impl WeatherGround {
         }
         let spill = spill_levels(&relief, nx, nz);
         let floor = hollow_floors(&relief, &spill, nx, nz);
-        // Snow by slope, from the cover's own gradient; drifted a little.
+
         let at = |x: usize, z: usize| cover[z.min(nz - 1) * nx + x.min(nx - 1)];
         let mut snow_hold = Vec::with_capacity(cover.len());
         for z in 0..nz {
@@ -517,7 +422,6 @@ impl WeatherGround {
         Self { min: [x0, z0], cell: cx.max(cz), nx, nz, cover, relief, spill, floor, snow_hold, fade }
     }
 
-    /// The texel holding world x/z, if inside.
     fn texel(&self, x: f32, z: f32) -> Option<usize> {
         let cx = self.extent_x() / self.nx as f32;
         let cz = self.extent_z() / self.nz as f32;
@@ -539,14 +443,10 @@ impl WeatherGround {
         self.cell
     }
 
-    /// The cover height at world x/z, if inside.
     pub fn cover_at(&self, x: f32, z: f32) -> Option<f32> {
         self.texel(x, z).map(|i| self.cover[i])
     }
 
-    /// How far down the sky reaches a point: 1 where nothing above it stands
-    /// higher than `slack` metres over it, 0 under a roof, as the shaders
-    /// decide it.
     pub fn exposure(&self, p: [f32; 3]) -> f32 {
         match self.cover_at(p[0], p[2]) {
             Some(c) => ((p[1] - c + 0.5) / 0.4).clamp(0.0, 1.0),
@@ -554,8 +454,6 @@ impl WeatherGround {
         }
     }
 
-    /// Metres of water standing at each texel with `fill` at the hollows'
-    /// floors, as [`surface`] has it.
     pub fn puddle_depth(&self, i: usize, fill: f32, max_depth: f32) -> f32 {
         let floor = self.floor[i];
         if !floor.is_finite() {
@@ -566,10 +464,6 @@ impl WeatherGround {
     }
 }
 
-/// AN AREA'S MAP, texel by texel, rows along z: wetness (0..1), standing
-/// water (m), snow (m) and the cover height (world y) -- what the renderer
-/// uploads (`space_soup::renderer::weather::WeatherMaps`). Clamped to the
-/// authored maxima and faded at the area's edge.
 pub fn surface(def: &WeatherDef, ground: &WeatherGround, state: &WeatherState) -> Vec<[f32; 4]> {
     let max_wet = def.max_wetness.clamp(0.0, 1.0);
     let max_puddle = def.max_puddle_depth.max(0.0);
@@ -578,7 +472,7 @@ pub fn surface(def: &WeatherDef, ground: &WeatherGround, state: &WeatherState) -
         .map(|i| {
             let f = ground.fade[i];
             let puddle = ground.puddle_depth(i, state.fill, max_puddle) * f;
-            // A puddle's rim is soaked however dry the open ground has got.
+
             let wet = (state.wet.min(max_wet) * f).max((puddle / 0.002).min(1.0) * f);
             let snow = (state.snow * ground.snow_hold[i]).clamp(0.0, max_snow) * f;
             [wet, puddle, snow, ground.cover[i]]
@@ -586,16 +480,13 @@ pub fn surface(def: &WeatherDef, ground: &WeatherGround, state: &WeatherState) -
         .collect()
 }
 
-/// Every area of a scene's weather, and where each stands. What the client
-/// keeps and steps each frame.
 #[derive(Debug, Clone, Default)]
 pub struct WeatherField {
     pub areas: Vec<(WeatherDef, WeatherGround, WeatherState)>,
 }
 
 impl WeatherField {
-    /// The scene's areas (the first [`MAX_AREAS`]), their ground from
-    /// `cover`, at their start.
+
     pub fn new(defs: &[WeatherDef], cover: impl Fn(f32, f32) -> Option<f32>) -> Self {
         Self {
             areas: defs
@@ -610,22 +501,18 @@ impl WeatherField {
         self.areas.is_empty()
     }
 
-    /// Every area as it stands `t` seconds after the level opened.
     pub fn set_time(&mut self, t: f64) {
         for (def, _, state) in &mut self.areas {
             *state = WeatherState::at(def, t);
         }
     }
 
-    /// Every area `dt` seconds on from `t`.
     pub fn step(&mut self, t: f64, dt: f32) {
         for (def, _, state) in &mut self.areas {
             state.step(def, t, dt);
         }
     }
 
-    /// What is falling on a point now: (rain, snow), each its area's
-    /// intensity where the point is open to the sky, faded at the edges.
     pub fn falling_on(&self, p: [f32; 3]) -> (f32, f32) {
         let (mut rain, mut snow) = (0.0f32, 0.0f32);
         for (def, ground, state) in &self.areas {
@@ -642,9 +529,6 @@ impl WeatherField {
     }
 }
 
-/// A body's wetness (hair, clothes, hands), `dt` seconds on: soaked in about a
-/// minute of heavy rain, a little by snow melting on it, dried over ten
-/// minutes out of it.
 pub fn body_wetness_step(wet: f32, rain: f32, snow: f32, dt: f32) -> f32 {
     let gain = (rain + 0.15 * snow) / 60.0;
     let next = if gain > 0.0 { wet + gain * dt } else { wet - dt / 600.0 };
@@ -690,7 +574,7 @@ mod tests {
         let s = WeatherState::at(&d, 3.0 * 3600.0);
         assert_eq!(s.wet, 1.0);
         assert_eq!(s.fill, 0.02, "clamped to the authored maximum: {s:?}");
-        // Faster with the demo's rate, and never past the maximum.
+
         d.accumulation_rate = 20.0;
         let fast = WeatherState::at(&d, 300.0);
         assert!(fast.fill > 0.0 && fast.fill <= 0.02, "{fast:?}");
@@ -716,14 +600,14 @@ mod tests {
         let an_hour = WeatherState::at(&d, 3600.0);
         assert!((an_hour.snow - SNOW_M_PER_HOUR).abs() < 1e-3, "{an_hour:?}");
         assert_eq!(WeatherState::at(&d, 8.0 * 3600.0).snow, 0.1, "clamped to the authored maximum");
-        // It stops, and the air warms.
+
         d.intensity = 0.0;
         d.temperature = Some(5.0);
         d.start.snow = 1.0;
         let melting = WeatherState::at(&d, 3600.0);
         assert!(melting.snow < 0.1 && melting.snow > 0.0, "{melting:?}");
         assert_eq!(melting.wet, 1.0, "melting snow leaves the ground under it soaked");
-        // And at -2 it lies.
+
         d.temperature = Some(-2.0);
         assert_eq!(WeatherState::at(&d, 3600.0).snow, 0.1);
     }
@@ -740,7 +624,7 @@ mod tests {
 
     #[test]
     fn water_stands_only_in_hollows_and_to_their_rim() {
-        // A bowl 10 cm deep in the middle of flat ground.
+
         let bowl = |x: f32, z: f32| {
             let r = ((x - 8.0).powi(2) + (z - 8.0).powi(2)).sqrt();
             Some(if r < 2.0 { -0.1 * (1.0 - r / 2.0) } else { 0.0 })
@@ -754,7 +638,7 @@ mod tests {
         let middle = at(8.0, 8.0)[1];
         assert!(middle > 0.07 && middle < 0.13, "the bowl fills to its rim: {middle}");
         assert!(at(8.0, 3.0)[1] < 0.06, "flat ground holds only its micro-relief's puddles");
-        // A little rain wets the bowl's bottom first.
+
         let little = WeatherState { fill: 0.01, ..full };
         let map = surface(&d, &g, &little);
         assert!(map[g.texel(8.0, 8.0).unwrap()][1] > 0.0);
@@ -763,7 +647,7 @@ mod tests {
 
     #[test]
     fn a_slope_sheds_its_water_and_its_snow() {
-        // A 1-in-2 slope (27 degrees) and a cliff (63 degrees).
+
         let gentle = |x: f32, _: f32| Some(0.5 * x);
         let cliff = |x: f32, _: f32| Some(2.0 * x);
         let d = rain();
@@ -785,7 +669,7 @@ mod tests {
 
     #[test]
     fn nothing_accumulates_under_cover_and_the_cover_is_what_the_sky_sees() {
-        // A roof 3 m up over x 6..10.
+
         let roofed = |x: f32, _: f32| Some(if (6.0..10.0).contains(&x) { 3.0 } else { 0.0 });
         let d = rain();
         let g = WeatherGround::build(&d, roofed);
@@ -840,8 +724,6 @@ mod tests {
         assert!(w > 0.4 && w < 0.6, "half dry after five minutes: {w}");
     }
 
-    /// MEASUREMENT: what building an area's ground and working out its map
-    /// cost on this machine, for an area the size of test_room's snow demo.
     #[test]
     #[ignore]
     fn time_an_areas_map() {
@@ -860,7 +742,7 @@ mod tests {
 
     #[test]
     fn the_flood_fills_a_closed_hollow_and_leaves_an_open_one() {
-        // 5x5: a pit in the middle, walled; a notch to the edge on the right.
+
         #[rustfmt::skip]
         let h = vec![
             1.0, 1.0, 1.0, 1.0, 1.0,
