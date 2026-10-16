@@ -103,6 +103,8 @@ pub struct Swarm {
 
     #[serde(default = "default_swarm_spread")]
     pub spread_m: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn: Option<String>,
     #[serde(default = "default_health")]
     pub health: f32,
 
