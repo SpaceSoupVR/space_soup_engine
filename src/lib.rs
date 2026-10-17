@@ -33,6 +33,8 @@ mod rigid_physics_brush_tests;
 #[cfg(test)]
 mod rigid_physics_water_tests;
 #[cfg(test)]
+mod rigid_physics_mesh_collider_tests;
+#[cfg(test)]
 mod rigid_physics_hold_tests;
 #[cfg(test)]
 mod rigid_physics_level_tests;
@@ -105,6 +107,7 @@ pub use locomotion::{
 };
 pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
+pub use rigid_physics_query::{SurfaceContact, SweepHit};
 pub use rig_profile::{
     BoneAssignment, DeviceOffsetDef, HeightCalibrationDef, JointConstraintDef, RigProfileDef,
 };

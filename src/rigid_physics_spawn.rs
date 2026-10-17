@@ -1040,8 +1040,13 @@ impl PhysicsWorld {
                 .fold(f32::INFINITY, f32::min);
             self.note_floor(lowest);
 
+            // The scale is along the mesh's own axes, so the mesh-scale rotation stays identity
+            // and `rotation` is applied once, by the actor pose. PxMeshScale scales along
+            // `rotation`'s axes (rotation^-1 * S * rotation); passing the pose's rotation there
+            // too put the scale on the WORLD's axes, so a Z-up model (a -90 degree X node) that
+            // was stretched or squashed collided in the wrong shape.
             let scale_px = PxVec3::new(scale.x, scale.y, scale.z);
-            let rot_px = PxQuat::new(rotation.x, rotation.y, rotation.z, rotation.w);
+            let rot_px = PxQuat::new(0.0, 0.0, 0.0, 1.0);
             let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };
 
             let geo = PxTriangleMeshGeometry::new(
