@@ -87,7 +87,7 @@ fn box_glb(min: Vec3, max: Vec3, node_rotation: Quat) -> Vec<u8> {
 
 /// A folder holding `wall.glb`: a wall 3.9 m ahead along +Z once its node's -90 degree X
 /// rotation is applied (Z-up: the mesh's Y is the room's depth, its Z is height).
-fn wall_model_dir() -> PathBuf {
+pub(crate) fn wall_model_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("space_soup_mesh_collider_test_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let z_up_to_y_up = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);

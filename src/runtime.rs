@@ -168,6 +168,8 @@ pub struct GameRuntime {
     pub(crate) volume_occupants: HashMap<String, HashSet<PlayerId>>,
     pub(crate) volume_fired: HashSet<String>,
     pub(crate) rigid_physics: PhysicsWorld,
+    /// The scene's navmesh, if one was baked for it (`navigation`).
+    pub(crate) nav: Option<crate::navigation::SceneNav>,
     pub(crate) sound_engine: SoundEngine,
 
     pub rigs: HashMap<PlayerId, PlayerRig>,
@@ -230,6 +232,7 @@ impl GameRuntime {
             volume_occupants: HashMap::new(),
             volume_fired: HashSet::new(),
             rigid_physics: PhysicsWorld::new(),
+            nav: None,
             sound_engine: SoundEngine::new(),
             rigs: HashMap::new(),
             attachments: AttachmentTable::new(),
@@ -258,6 +261,8 @@ impl GameRuntime {
         // the one the game starts on -- which is the hardest place to notice.
         rt.trigger_volumes = Self::resolve_trigger_volumes(&rt.scene);
         rt.rigid_physics.rebuild(&rt.scene, &rt.game_dir);
+        let entry = rt.manifest.entry_scene.clone();
+        rt.nav = rt.load_nav(&entry);
         info!(
             "GameRuntime: loaded scene '{}' with {} objects",
             rt.scene.name,
@@ -265,6 +270,30 @@ impl GameRuntime {
         );
 
         Ok(rt)
+    }
+
+    /// Scene `scene`'s navmesh, if one was baked: logged either way, and never baked here (a large
+    /// level takes seconds; `examples/bake_navmesh.rs` bakes one).
+    fn load_nav(&self, scene: &str) -> Option<crate::navigation::SceneNav> {
+        match crate::navigation::SceneNav::load(&self.game_dir, scene, Some(&self.rigid_physics)) {
+            Ok(Some(nav)) => {
+                if nav.stale {
+                    log::warn!("navigation: {scene}'s colliders have changed since its navmesh was baked; bake it again");
+                }
+                info!("navigation: {scene}: {} polygons at {} m cells", nav.info.polygons, nav.info.cell_size);
+                Some(nav)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                log::warn!("navigation: {scene}: {e}");
+                None
+            }
+        }
+    }
+
+    /// The scene's navmesh, if it has one.
+    pub fn nav(&self) -> Option<&crate::navigation::SceneNav> {
+        self.nav.as_ref()
     }
 
     pub fn render_lists(&self) -> (Vec<RenderCuboid>, Vec<RenderMesh>, Vec<RenderLight>) {
@@ -347,6 +376,7 @@ impl GameRuntime {
         self.compile_scripts();
         self.setup_scene_attachments();
         self.rigid_physics.rebuild(&self.scene, &self.game_dir);
+        self.nav = self.load_nav(scene_name);
 
         if let Some((position, yaw)) = self.find_spawn_point() {
             for locomotion in self.locomotions.values_mut() {
