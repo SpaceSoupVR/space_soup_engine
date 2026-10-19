@@ -442,8 +442,6 @@ impl WeatherGround {
                 let gx = (at(x + 1, z) - at(x.saturating_sub(1), z)) / (cx * (1 + (x > 0) as usize) as f32);
                 let gz = (at(x, z + 1) - at(x, z.saturating_sub(1))) / (cz * (1 + (z > 0) as usize) as f32);
                 let slope = (gx * gx + gz * gz).sqrt().atan().to_degrees();
-                // How far this texel stands over the ground a step round it
-                // (the mean of a 5 x 5 block), and whether water stands on it.
                 let i = z * nx + x;
                 let mut round = 0.0;
                 for dz in -2..=2isize {
@@ -545,11 +543,8 @@ pub fn surface(def: &WeatherDef, ground: &WeatherGround, state: &WeatherState) -
         .map(|i| {
             let f = ground.fade[i];
             let puddle = ground.puddle_depth(i, state.fill, max_puddle) * f;
-            // Ridges and slopes show less of it, and none until the area is
-            // wetter than they are thirsty (`thirst`); soaked is soaked.
             let thirst = ground.thirst[i];
             let open = ((state.wet.min(max_wet) - thirst) / (1.0 - thirst)).clamp(0.0, 1.0);
-            // A puddle's rim is soaked however dry the open ground has got.
             let wet = (open * f).max((puddle / 0.002).min(1.0) * f);
             let snow = (state.snow * ground.snow_hold[i]).clamp(0.0, max_snow) * f;
             [wet, puddle, snow, ground.cover[i]]
@@ -796,8 +791,6 @@ mod tests {
         assert!((thirst(25.0, 0.0, 0.02, false) - THIRST_MOST).abs() < 1e-6);
         assert!((thirst(0.0, 0.02, 0.02, false) - THIRST_MOST).abs() < 1e-6);
         assert!(thirst(15.0, 0.0, 0.02, false) > 0.0 && thirst(15.0, 0.0, 0.02, false) < THIRST_MOST);
-        // An area on a hillside with a level foot: the slope is drier than
-        // the foot while the area is half wet, and no drier once it is soaked.
         let def = WeatherDef { ground_relief: 0.0, edge: 0.01, ..rain() };
         let hill = |x: f32, _z: f32| Some(if x > 10.0 { (x - 10.0) * 0.5 } else { 0.0 });
         let ground = WeatherGround::build(&def, hill);
@@ -821,12 +814,10 @@ mod tests {
     #[test]
     fn only_ground_with_a_hollow_can_pool() {
         let def = WeatherDef { ground_relief: 0.0, edge: 0.01, ..rain() };
-        // Level but for a bowl a metre across at (6, 6), 5 cm deep.
         let bowl = |x: f32, z: f32| Some(if (x - 6.0).hypot(z - 6.0) < 0.6 { -0.05 } else { 0.0 });
         let ground = WeatherGround::build(&def, bowl);
         assert!(ground.can_pool(&def, [4.0, 4.0], [8.0, 8.0]));
         assert!(!ground.can_pool(&def, [12.0, 12.0], [18.0, 18.0]));
-        // A texel beyond the rectangle counts: the map is filtered.
         assert!(ground.can_pool(&def, [6.7, 5.5], [9.0, 6.5]));
         assert!(!ground.can_pool(&WeatherDef { max_puddle_depth: 0.0, ..def.clone() }, [4.0, 4.0], [8.0, 8.0]));
     }
@@ -905,21 +896,17 @@ mod tests {
         };
         let (field, dropped) = WeatherField::nearest(&defs, cover, [30.0 * 30.0 + 8.0, 8.0], MAX_AREAS);
         let kept: Vec<f32> = field.areas.iter().map(|(d, ..)| d.extent().0).collect();
-        // (The 29th and the 33rd are as far: the earlier in the file is kept.)
         assert_eq!(kept, vec![28.0 * 30.0, 29.0 * 30.0, 30.0 * 30.0, 31.0 * 30.0]);
         assert_eq!(dropped.len(), 36);
         assert!(!dropped.contains(&30) && dropped.contains(&0));
         let for_four = asked.get();
-        // The old way: the first four in the file, none of them near.
         let first = WeatherField::new(&defs, flat);
         assert_eq!(first.areas[3].0.extent().0, 90.0);
-        // Room for two (a shore took the others): the two nearest, and half the rays.
         asked.set(0);
         let (two, dropped) = WeatherField::nearest(&defs, cover, [30.0 * 30.0 + 8.0, 8.0], 2);
         assert_eq!((two.areas.len(), dropped.len()), (2, 38));
         assert_eq!(two.areas[0].0.extent().0, 29.0 * 30.0, "a tie goes to the earlier area");
         assert_eq!(asked.get() * 2, for_four);
-        // A level inside the table loses nothing.
         let (all, none) = WeatherField::nearest(&defs[..3], flat, [0.0, 0.0], MAX_AREAS);
         assert_eq!((all.areas.len(), none.len()), (3, 0));
     }

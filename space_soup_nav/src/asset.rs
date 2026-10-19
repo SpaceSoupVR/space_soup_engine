@@ -433,7 +433,6 @@ impl NavPieceAsset {
     /// Every structural rule a baked piece must satisfy. Checked on load, so a bad bake is caught
     /// there and not as an agent walking through a wall.
     pub fn validate(&self) -> Result<(), String> {
-        // Coordinates small enough that placing, turning and offsetting a piece cannot overflow.
         let far = |v: &IVec3| v.to_array().iter().any(|c| c.unsigned_abs() > MAX_COORD_MM as u32);
         if self.vertices.iter().chain(&self.detail.vertices).any(far)
             || self.sockets.iter().any(|s| far(&s.a) || far(&s.b))
@@ -469,9 +468,6 @@ impl NavPieceAsset {
                     _ => {}
                 }
             }
-            // Convex and counter-clockwise from above: no corner turns the wrong way, and the whole
-            // polygon has area. A straight-through corner is allowed: Recast keeps vertices along
-            // an edge that a neighbouring polygon shares, so the mesh has no T-junction cracks.
             let mut twice_area = 0i64;
             for k in 0..n {
                 let a = self.vertices[p.verts[k] as usize];
@@ -486,7 +482,6 @@ impl NavPieceAsset {
                 return Err(format!("polygon {pi} has no area"));
             }
         }
-        // Every internal link is answered by the other polygon.
         for (pi, p) in self.polys.iter().enumerate() {
             for e in &p.edges {
                 if let EdgeLink::Internal(o) = *e {
@@ -510,7 +505,6 @@ impl NavPieceAsset {
             if leaves != np {
                 return Err(format!("lookup tree has {leaves} leaves for {np} polygons"));
             }
-            // Each polygon once, and every escape lands inside the tree (or just past its end).
             let mut seen = vec![false; np];
             for (i, n) in self.bvh.iter().enumerate() {
                 if n.index >= 0 {
@@ -523,8 +517,6 @@ impl NavPieceAsset {
                 }
             }
         }
-        // Height detail: one range per polygon (or none at all), each inside the detail arrays,
-        // and every triangle naming a vertex the polygon or its range has.
         let d = &self.detail;
         if !d.ranges.is_empty() && d.ranges.len() != np {
             return Err(format!("{} detail ranges for {np} polygons", d.ranges.len()));
@@ -695,7 +687,6 @@ impl Reader<'_> {
     }
     fn len(&mut self) -> Result<usize, AssetError> {
         let n = self.u32()? as usize;
-        // A length can never exceed the bytes left; guards against huge allocations on bad data.
         if n > self.data.len() - self.at {
             return Err(AssetError::Truncated);
         }
@@ -718,7 +709,6 @@ mod tests {
     pub(crate) fn sample() -> NavPieceAsset {
         let v = |x: i32, z: i32| IVec3::new(x, 0, z);
         let vertices = vec![v(-2000, -2000), v(0, -2000), v(2000, -2000), v(2000, 2000), v(0, 2000), v(-2000, 2000)];
-        // Counter-clockwise from above: -X..0 then 0..+X, walking -Z edge first towards +X.
         let polys = vec![
             NavPoly { verts: vec![0, 5, 4, 1], edges: vec![EdgeLink::Border, EdgeLink::Socket(0), EdgeLink::Internal(1), EdgeLink::Border], area: 0, flags: 1 },
             NavPoly { verts: vec![1, 4, 3, 2], edges: vec![EdgeLink::Internal(0), EdgeLink::Socket(0), EdgeLink::Border, EdgeLink::Border], area: 0, flags: 1 },
@@ -754,13 +744,11 @@ mod tests {
 
     #[test]
     fn counter_clockwise_from_above_means_what_it_says() {
-        // From above +X is right and -Z is up the view: east then north is a left turn.
         let o = IVec3::ZERO;
         let east = IVec3::new(1000, 0, 0);
         let north_east = IVec3::new(1000, 0, -1000);
         assert!(ccw_from_above(o, east, north_east) > 0);
         assert!(ccw_from_above(o, north_east, east) < 0);
-        // And it is the y of the 3D cross product, as glam computes it.
         let g = (east - o).as_vec3().cross((north_east - o).as_vec3()).y as i64;
         assert_eq!(g, ccw_from_above(o, east, north_east));
     }
@@ -791,7 +779,6 @@ mod tests {
 
     #[test]
     fn the_hash_is_pinned() {
-        // The published FNV-1a 64 test vectors: the hash is the standard one, not a variant.
         assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_eq!(fnv1a64(b"foobar"), 0x8594_4171_f739_67e8);
@@ -812,7 +799,6 @@ mod tests {
 
     #[test]
     fn a_straight_through_vertex_is_allowed_but_a_flat_polygon_is_not() {
-        // A vertex half way up polygon 0's -X edge, as Recast leaves where a neighbour shares it.
         let mut mid = sample();
         mid.vertices.push(IVec3::new(-2000, 0, 0));
         mid.polys[0].verts = vec![0, 6, 5, 4, 1];

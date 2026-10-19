@@ -332,8 +332,6 @@ impl GameRuntime {
         self.manual_part_blends = HashMap::new();
         self.particle_bursts = Vec::new();
         self.socket_attachments = HashMap::new();
-        // Another level's water. The numbers go on from where they were, so
-        // none is ever given twice.
         self.water_entries.clear();
         self.script_host = ScriptHost::new();
         self.compile_scripts();
@@ -490,8 +488,6 @@ impl GameRuntime {
             self.water_entries.push(crate::water::RecentWaterEntry { serial: self.next_water_entry, age: 0.0, entry });
             self.next_water_entry += 1;
         }
-        // NO MORE THAN `MAX_ENTRIES_TOLD` AT ONCE: every snapshot carries the
-        // whole list to every client. The least energetic go first.
         while self.water_entries.len() > crate::water::MAX_ENTRIES_TOLD {
             let least = self
                 .water_entries

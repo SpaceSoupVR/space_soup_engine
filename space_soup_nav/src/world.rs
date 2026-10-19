@@ -318,9 +318,6 @@ impl NavWorld {
         if gap_mm.abs() > JOIN_TOLERANCE_MM {
             return Err(JoinError::TooFar { gap_mm, tolerance_mm: JOIN_TOLERANCE_MM });
         }
-        // Facing each other on one plane is not meeting: the doorways must overlap side to side
-        // too. Their ends are the baked walkable spans, which erosion can leave off-centre, so it
-        // is the spans that are compared, not their middles.
         let left = left_of(sa.outward);
         let span = |s: &WorldSocket| (s.a.dot(left).min(s.b.dot(left)), s.a.dot(left).max(s.b.dot(left)));
         let ((a0, a1), (b0, b1)) = (span(&sa), span(&sb));
@@ -339,7 +336,6 @@ impl NavWorld {
             self.gates.push(Gate { name: name.to_string(), open: true, links: Vec::new() });
             (self.gates.len() - 1) as GateId
         });
-        // Every pair of socket edges that overlap along the doorway becomes a portal each way.
         let edges_a = self.socket_edges(a);
         let edges_b = self.socket_edges(b);
         let mut links = Vec::new();
@@ -352,13 +348,11 @@ impl NavWorld {
                 if hi - lo < 1 {
                     continue;
                 }
-                // [left, right] walking out of A: left is the larger `left` coordinate.
                 let on = |p: IVec3, l: i32| p - left * p.dot(left) + left * l;
                 let seg_a = [on(a0, hi), on(a0, lo)];
                 let seg_b = [on(b0, hi), on(b0, lo)];
                 let (from, to) = (PolyRef { island: a.island, poly: pa }, PolyRef { island: b.island, poly: pb });
                 let ab = self.push_link(Link { kind: LinkKind::Portal, from, to, from_segment: seg_a, to_segment: seg_b, cost_mm: 0, enabled: true, gate, connection: Some(id), from_edge: Some(ea) });
-                // Walking out of B the sides swap.
                 let ba = self.push_link(Link {
                     kind: LinkKind::Portal,
                     from: to,
@@ -478,7 +472,6 @@ impl NavWorld {
         let union = |parent: &mut Vec<u32>, a: usize, b: usize| {
             let (ra, rb) = (find(parent, a as u32), find(parent, b as u32));
             if ra != rb {
-                // The smaller root wins, so labels do not depend on the order of unions.
                 let (lo, hi) = if ra < rb { (ra, rb) } else { (rb, ra) };
                 parent[hi as usize] = lo;
             }
@@ -549,7 +542,6 @@ impl NavWorld {
                 doorways[c.b.island as usize].push(ci as ConnectionId);
             }
         }
-        // One table per piece, shared by every copy: turning a piece does not change its distances.
         let mut tables: BTreeMap<usize, Arc<CrossingTable>> = BTreeMap::new();
         let crossing = self
             .islands
@@ -596,7 +588,6 @@ pub fn surface_height(v: &[IVec3], p: IVec3) -> i64 {
         if det == 0 {
             continue;
         }
-        // Barycentric weights of b and c, as fractions of det (integer, so exact).
         let wb = ccw_from_above(a, p, c);
         let wc = ccw_from_above(a, b, p);
         if wb >= 0 && wc >= 0 && wb + wc <= det {

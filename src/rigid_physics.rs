@@ -295,20 +295,6 @@ pub struct PhysicsWorld {
     /// How the next `rebuild` gives the ground to PhysX.
     pub(crate) terrain_collider: TerrainCollider,
 
-    // ORDER MATTERS, and it is load-bearing rather than stylistic. Rust drops
-    // fields in declaration order, and a cooked TriangleMesh is owned by the
-    // physics object inside the foundation: releasing one after the foundation
-    // has gone is a use-after-free, and it segfaults at teardown rather than
-    // where the mistake is.
-    //
-    // So the sequence has to be: `scene` first (it releases the actors that
-    // reference the meshes), then `terrain_meshes` and `terrain_height_fields`
-    // (a height field is owned by the physics object exactly as a mesh is),
-    // then `foundation` last.
-    //
-    // This was already wrong -- terrain_meshes sat after foundation -- and it
-    // had never been caught because nothing exercised a cooked terrain collider
-    // in a test. The glTF terrain_collider path had the same fault.
     pub(crate) terrain_meshes: Vec<Owner<TriangleMesh>>,
     pub(crate) terrain_height_fields: Vec<Owner<HeightField>>,
     /// Cooked convex hulls (`ColliderShape::Hull`): owned by the physics
@@ -359,11 +345,6 @@ pub(crate) fn create_hand_anchor(
         return None;
     };
     let geo = PxSphereGeometry::new(0.035);
-    // MADE FAR FROM EVERYTHING, so that its first move to the hand is always
-    // a jump and never a sweep (`HAND_TELEPORT` in `step`). Made at the
-    // origin, an anchor whose hand was within half a metre of it swept there
-    // in one tick at 20 m/s, through whatever stood at the origin: a 60 kg
-    // block was thrown 20 m into the air.
     let Some(mut actor) = foundation.create_rigid_dynamic(
         PxTransform::from_translation(&PxVec3::new(0.0, HAND_ANCHOR_START_Y, 0.0)),
         &geo,
@@ -480,10 +461,8 @@ impl PhysicsWorld {
             return None;
         }
         let solid = self.raycast(origin, dir, max_distance).map_or(max_distance, |(hit, _)| origin.distance(hit));
-        // Each body's own plane: the nearest crossing that lies on its water.
         let mut heights: Vec<f32> = Vec::new();
         for w in &self.water {
-            // A footprint's surface is one height wherever it stands.
             let Some(h) = w.surface_height() else { continue };
             if !heights.contains(&h) {
                 heights.push(h);
@@ -563,14 +542,6 @@ impl PhysicsWorld {
     pub fn rebuild(&mut self, scene: &Scene, game_dir: &Path) {
         self.dynamic.clear();
         self.kinematic.clear();
-        // With the others, and for more than tidiness: the spawners skip an id
-        // that is still in this map, so an entry left from the last scene
-        // stopped a wall of the same id being built in this one at all (a
-        // reloaded level came back with none of its static colliders), and
-        // `despawn_static` then released an actor that had gone with the old
-        // PxScene. Clearing is the whole release: like `kinematic`, the map
-        // borrows, and replacing `self.scene` below releases every actor the
-        // old scene owned, once.
         self.statics.clear();
         self.materials.clear();
         self.terrain_meshes.clear();
@@ -586,13 +557,9 @@ impl PhysicsWorld {
         self.parting.clear();
         self.hand_anchors.clear();
         self.scene = new_px_scene(&mut self.foundation);
-        // After the scene that held the bodies made of them (see the field
-        // order above).
         self.hulls.clear();
         self.hull_meshes.clear();
 
-        // This level's floor, found again from nothing: each spawner below
-        // lowers it as it builds (`note_floor`), so the cost is the load's own.
         self.level_floor = f32::INFINITY;
         self.kill_y = KILL_Y_HIGHEST;
 
@@ -638,9 +605,6 @@ impl PhysicsWorld {
         });
         if let Some(source) = &terrain {
             self.spawn_scene_terrain(source.as_ref());
-            // Its lowest ground, whether or not the collider cooked: a floor
-            // set too low costs a fallen prop a moment, one set too high
-            // costs the level its props.
             self.note_floor(source.lowest_height());
         }
 
@@ -661,9 +625,6 @@ impl PhysicsWorld {
                 crate::water::WaterFootprint::new(def, |x, z| terrain.as_ref().and_then(|t| t.height_at(x, z)))
             })
             .collect();
-        // Still water is part of the level a body can fall into: under its
-        // surface before it is taken back, so it is seen going in (the splash
-        // is raised from the crossing, `take_water_entries`).
         for height in self.water.iter().filter_map(|w| w.surface_height()).collect::<Vec<_>>() {
             self.note_floor(height);
         }

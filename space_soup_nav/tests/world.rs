@@ -20,7 +20,6 @@ fn kit_names() -> Vec<String> {
 fn two_hallways_join_end_to_end_through_a_portal_the_width_of_the_doorway() {
     let kit = common::bake_kit("human_cs10_monotone");
     let h = kit[hallway_index(&kit_names())].clone();
-    // Hallway sockets: 0 faces +Z at z = 10.24 m, 1 faces -Z at z = -10.24 m.
     let mut w = NavWorld::new();
     let a = w.add_island(h.clone(), Turn(0), IVec3::ZERO);
     let b = w.add_island(h.clone(), Turn(0), IVec3::new(0, 0, 20_480));
@@ -28,18 +27,15 @@ fn two_hallways_join_end_to_end_through_a_portal_the_width_of_the_doorway() {
     let conn = &w.connections[c as usize];
     assert_eq!(conn.gap_mm, 0);
     assert!(!conn.links.is_empty() && conn.links.len().is_multiple_of(2), "portals come in pairs, one each way");
-    // The portal spans exactly the narrower of the two doorways' walkable spans.
     let width: i32 = conn.links.iter().step_by(2).map(|&l| {
         let s = &w.links[l as usize].from_segment;
         (s[0] - s[1]).abs().max_element()
     }).sum();
     let span = |isl: u32, s: u16| { let k = w.socket(SocketRef { island: isl, socket: s }).unwrap(); (k.b - k.a).abs().max_element() };
     assert_eq!(width, span(a, 0).min(span(b, 1)));
-    // Seen walking from A (+Z), left is +X: the first point is the larger x.
     let s = &w.links[conn.links[0] as usize].from_segment;
     assert!(s[0].x > s[1].x);
 
-    // A join the geometry contradicts is refused.
     let mut w2 = NavWorld::new();
     let a2 = w2.add_island(h.clone(), Turn(0), IVec3::ZERO);
     let b2 = w2.add_island(h.clone(), Turn(0), IVec3::new(0, 0, 21_000));
@@ -64,7 +60,6 @@ fn a_closed_door_is_impassable_not_expensive_and_says_so() {
     assert_eq!(w.set_gate(gate, false), None, "no event when nothing changed");
     assert!(!w.same_component(pa, pb));
     assert!(w.room_graph().route(&w, a, b).is_none());
-    // No way out of A crosses the closed door.
     for p in 0..h.polys.len() as u16 {
         assert!(w.neighbours(PolyRef { island: a, poly: p }).all(|(n, _)| n.island == a));
     }
@@ -78,7 +73,6 @@ fn a_closed_door_is_impassable_not_expensive_and_says_so() {
 fn typed_links_attach_to_the_polygons_at_their_ends_and_follow_the_piece() {
     let kit = common::bake_kit("human_cs10_monotone");
     let mut h = (*kit[hallway_index(&kit_names())]).clone();
-    // A vent from one end of the hallway to the other, one way.
     h.links = vec![NavLink {
         kind: TypedKind::Vent,
         start: [IVec3::new(-300, 0, -8000), IVec3::new(300, 0, -8000)],
@@ -125,13 +119,11 @@ fn every_generated_level_assembles_with_every_doorway_joined_and_one_connected_f
         assert!(impassable.is_empty(), "seed {}: joins a human cannot pass: {impassable:?}", layout.seed);
         assert_eq!(unjoined, layout.unsealed, "seed {}", layout.seed);
 
-        // Every portal is in one connected floor with the start room.
         let start = w.connections.iter().flat_map(|c| c.links.first()).map(|&l| w.links[l as usize].from).next().unwrap();
         let portal_polys: Vec<PolyRef> = w.links.iter().map(|l| l.from).collect();
         let cut_off = portal_polys.iter().filter(|&&p| !w.same_component(start, p)).count();
         assert_eq!(cut_off, 0, "seed {}: {cut_off} doorway polygons are cut off from the rest", layout.seed);
 
-        // 1 mm is each piece's position rounded separately; more is a loop the generator welded.
         let gaps = w.connections.iter().filter(|c| c.gap_mm.abs() > 1).count();
         let max_gap = w.connections.iter().map(|c| c.gap_mm.abs()).max().unwrap();
         println!(
@@ -153,7 +145,6 @@ fn turning_the_whole_level_changes_nothing_but_coordinates() {
             let w = common::assemble(&kit, layout, turn);
             assert_eq!(w.links.len(), base.links.len(), "seed {} turn {turn}", layout.seed);
             assert_eq!(widths(&w), widths(&base), "seed {} turn {turn}: portal widths changed", layout.seed);
-            // Every vertex is exactly the turned original: integer turns lose nothing.
             for (a, b) in base.islands.iter().zip(&w.islands) {
                 assert!(a.vertices.iter().zip(&b.vertices).all(|(&p, &q)| Turn(turn).apply(p) == q));
             }
@@ -181,7 +172,6 @@ fn closing_doors_agrees_between_the_floor_and_the_room_graph() {
         w.set_gate(conn.gate.unwrap(), true);
         assert!(w.same_component(pa, pb));
     }
-    // A tree-like level must have doors that cut it in two, and loops mean not all of them do.
     assert!(splits > 0 && splits < total, "{splits} of {total} doors split the level");
     println!("{splits} of {total} doors split seed {}'s level when closed", layout.seed);
 }
@@ -196,11 +186,8 @@ fn the_large_class_is_told_which_doorways_it_cannot_pass() {
     assert!(blocked > 0);
 }
 
-
 #[test]
 fn agents_walk_across_every_welded_doorway_in_small_steps() {
-    // A welded join leaves the doorways up to the join tolerance apart. A path crosses it as a
-    // link, but walking does it a step at a time, and a step that ends in the gap is on no floor.
     let kit = common::bake_kit("human_cs10_monotone");
     let (mut crossed, mut gaps) = (0, 0);
     for layout in common::layouts().iter().take(4) {
@@ -220,8 +207,6 @@ fn agents_walk_across_every_welded_doorway_in_small_steps() {
                 let ext = DVec3::new(100.0, 500.0, 100.0);
                 let Some(n) = w.nearest_poly_in(from.island, start, ext) else { continue };
                 let (mut pos, mut poly) = (n.point, n.poly);
-                // 20 mm a step: slower than any walk, so a gap of a few centimetres is never
-                // jumped in one go.
                 for _ in 0..200 {
                     let d = DVec3::new(goal.x - pos.x, 0.0, goal.z - pos.z);
                     if d.length() < 5.0 {

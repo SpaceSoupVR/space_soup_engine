@@ -317,10 +317,6 @@ impl DoorGeom {
     }
 
     pub fn clear_spheres(&self, angle: f32, spheres: &[(Vec3, f32)]) -> f32 {
-        // The leaf's middle plane as a ray from a point: along the leaf from
-        // the pin's foot on that plane. A pin off the plane (butt hinges)
-        // carries that foot round with the leaf, a thickness at most; it is
-        // taken where the leaf stands now, and the second pass takes it again.
         let along = Vec3::new(-self.hinge_local.x, 0.0, 0.0);
         let width = self.half.x + along.x.abs();
         let base = along.normalize_or_zero();
@@ -612,10 +608,6 @@ mod tests {
     #[test]
     fn a_butt_hinged_leaf_swings_clear_of_its_jamb() {
         let half = Vec3::new(0.38, 1.08, 0.022);
-        // Hinged on its -x edge, opening toward +z (negative angles), the pin
-        // on the +z face. The jamb and the wall it stands in are everything
-        // beyond x = -0.383 (3 mm from the leaf's edge) that is not out in
-        // front of the +z face: how far into that the leaf's corners go.
         let jamb = -0.383f32;
         let into_the_jamb = |def: &DoorDef| {
             let g = DoorGeom::new(Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY, half, def);
@@ -629,17 +621,13 @@ mod tests {
         let middle = DoorDef { open_min_deg: -105.0, open_max_deg: 0.0, ..Default::default() };
         assert!(into_the_jamb(&butt) <= -0.0029, "a butt-hinged leaf turned {} m into its jamb", into_the_jamb(&butt));
         assert!(into_the_jamb(&middle) > 0.015, "and one pinned at the middle of its edge does: {}", into_the_jamb(&middle));
-        // A centre pivot, half a thickness in: the edge turns in place, and
-        // its corners sweep 9 mm beyond where the edge hung, either way.
         let pivot = DoorDef { open_min_deg: -105.0, open_max_deg: 105.0, pin_inset: 0.022, ..Default::default() };
         let g = DoorGeom::new(Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY, half, &pivot);
-        // (Its hinged edge's four corners: the even ones, at -x.)
         let swept = (-105..=105)
             .flat_map(|deg| g.corners_at((deg as f32).to_radians()).into_iter().step_by(2))
             .map(|c| c.x)
             .fold(f32::MAX, f32::min);
         assert!(swept > -0.38 - 0.0095 && swept < -0.38, "{swept}");
-        // The hinge does not move, wherever the pin is.
         let g = DoorGeom::new(Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY, half, &butt);
         let (c, r) = g.pose_at(-1.3);
         assert!((c + r * g.hinge_local - g.hinge()).length() < 1e-5);
@@ -670,27 +658,20 @@ mod tests {
         let latch = DoorLatch::of(&def).unwrap();
         let pose = (Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY);
         let at = Vec3::new(0.31, 1.0, 0.0);
-        // On either face, out to where a hand holds it, and a palm's reach on.
         for z in [-0.2, -0.07, 0.0, 0.07, 0.2] {
             assert!(latch.worked(pose, 0.02, [at + Vec3::Z * z]), "a hand {z} m off the leaf at the handle");
         }
         assert!(!latch.worked(pose, 0.02, [at + Vec3::Z * 0.25]), "a hand a quarter metre off the leaf");
         assert!(!latch.worked(pose, 0.02, [at + Vec3::X * 0.2]), "a hand 20 cm along the leaf from the handle");
         assert!(!latch.worked(pose, 0.02, [Vec3::new(-0.31, 1.0, 0.05)]), "a hand at the hinge");
-        // The hold point is on the hand's side of the leaf.
         assert_eq!(latch.hold_point(pose, 0.02, at - Vec3::Z * 0.3).z, -(0.02 + HANDLE_STANDOFF));
         assert_eq!(latch.hold_point(pose, 0.02, at + Vec3::Z * 0.3).z, 0.02 + HANDLE_STANDOFF);
-        // Shut and still with no hand: home. Open, or swinging fast, or with a
-        // hand there: not. Once home it stays until a hand comes.
         assert!(latch.bolt(false, 0.01, 0.0, false));
         assert!(!latch.bolt(false, 0.2, 0.0, false) && !latch.bolt(false, 0.0, 6.0, false) && !latch.bolt(false, 0.0, 0.0, true));
         assert!(latch.bolt(true, 0.004, 0.5, false) && !latch.bolt(true, 0.0, 0.0, true));
-        // A handle with no bolt never bolts; a door with no handle has no latch.
         let pull = DoorLatch::of(&DoorDef { handle: Some([0.3, 0.0, 0.0]), ..Default::default() }).unwrap();
         assert!(!pull.bolt(false, 0.0, 0.0, false));
         assert!(DoorLatch::of(&DoorDef { latch: true, ..Default::default() }).is_none());
-        // Fields written before the latch existed still load, and a plain
-        // door writes none of the new ones.
         let old: DoorDef = serde_json::from_str(r#"{"hinge":"Right","mass":22,"open_min_deg":-90,"open_max_deg":90}"#).unwrap();
         assert!(!old.latch && old.handle.is_none() && old.lever.is_none() && old.pin_inset == 0.0 && old.pin_offset == 0.0);
         let text = serde_json::to_string(&old).unwrap();
@@ -706,12 +687,10 @@ mod tests {
         assert_eq!(soft_stop(hi - 0.001, -5.0, lo, hi), -5.0, "leaving the stop");
         assert!(soft_stop(hi - 0.02, 5.0, lo, hi) < 1.0, "two hundredths of a radian from it at 5 rad/s");
         assert!((soft_stop(hi, 5.0, lo, hi) - STOP_CREEP).abs() < 1e-6 && (soft_stop(lo, -5.0, lo, hi) + STOP_CREEP).abs() < 1e-6);
-        // At sixty steps a second it cannot overrun: half of what is left a step.
         let mut a = 0.5f32;
         for _ in 0..200 {
             let step = soft_stop(a, 20.0, lo, hi) / 60.0;
             assert!(a + step <= hi + STOP_CREEP / 60.0 + 1e-6, "{}", a + step);
-            // (The hinge holds it at the stop: `step_hinge`, the joint's limit.)
             a = (a + step).min(hi);
         }
         assert!((a - hi).abs() < 1e-6, "it never arrived: {a}");

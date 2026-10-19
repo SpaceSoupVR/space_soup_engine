@@ -54,9 +54,7 @@ fn a_body_resting_on_ground_forty_metres_down_is_not_respawned() {
         (resting - -39.75).abs() < 0.05,
         "the crate should lie on the floor at y = -39.75, and is at {resting}"
     );
-    // The slab's underside is the lowest thing in the level.
     assert_eq!(physics.kill_height(), -41.0 - KILL_MARGIN);
-    // And it stays: a body the world keeps taking back never comes to rest.
     for _ in 0..60 {
         physics.step(1.0 / 60.0, &mut scene, &rigs);
     }
@@ -87,7 +85,6 @@ fn a_body_that_falls_out_under_a_deep_levels_floor_is_still_respawned() {
     }
     assert!(fell_past_the_floor, "nothing was under it: it should have fallen past the floor (lowest {lowest})");
     assert!(came_back, "it fell out of the level and was never put back (lowest {lowest})");
-    // One tick's fall past the line at most, at the speed eight metres gives.
     assert!(lowest > kill - 0.5, "it fell to {lowest}, well under the kill height {kill}");
 }
 
@@ -103,8 +100,6 @@ fn a_level_whose_floor_is_at_the_origin_keeps_the_old_kill_height() {
     assert_eq!(physics.kill_height(), KILL_Y_HIGHEST);
     assert_eq!(KILL_Y_HIGHEST, -15.0);
 
-    // And the floor is this level's, not the last one's: a deep level, then
-    // this one again.
     physics.rebuild(&self::scene(DEEP_LEVEL), Path::new("."));
     assert!(physics.kill_height() < -40.0);
     physics.rebuild(&scene, Path::new("."));
@@ -120,8 +115,6 @@ fn the_kill_height_follows_the_lowest_ground_of_a_heightfield() {
     let dir = std::env::temp_dir().join("ss_level_floor_terrain");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("terrain")).unwrap();
-    // 9 x 9 samples over 16 m; the range runs from -100 to +100 but every
-    // sample stands at -40 (raw 19660.5 of 65535) or a little over it.
     let n = 9usize;
     let mut bytes = Vec::new();
     for i in 0..n * n {
@@ -180,18 +173,15 @@ fn a_static_whose_id_the_next_scene_reuses_is_built_where_the_next_scene_puts_it
     assert_eq!(ray_down_at(&physics, 0.0, 0.0), Some(1.0));
     assert_eq!(ray_down_at(&physics, 10.0, 0.0), None);
 
-    // The next scene: the same id, ten metres along and twice as tall.
     physics.rebuild(&wall_at(10.0, 2.0), Path::new("."));
     assert_eq!(ray_down_at(&physics, 0.0, 0.0), None, "the last scene's wall is still standing");
     assert_eq!(ray_down_at(&physics, 10.0, 0.0), Some(2.0), "the new scene's wall was not built");
     assert!(physics.has_static("wall"));
 
-    // And the entry is the new actor: it can be taken away, once.
     assert!(physics.despawn_static("wall"));
     assert_eq!(ray_down_at(&physics, 10.0, 0.0), None);
     assert!(!physics.despawn_static("wall"));
 
-    // The same scene again, as a level restart: the wall is back.
     physics.rebuild(&wall_at(10.0, 2.0), Path::new("."));
     assert_eq!(ray_down_at(&physics, 10.0, 0.0), Some(2.0), "a reloaded scene lost its wall");
 }

@@ -45,7 +45,6 @@ fn crossings(s: &Settings) -> Vec<(f32, f32)> {
 }
 
 fn passable_gaps(s: &Settings) -> Vec<f32> {
-    // Gap centres and widths as `tests/test_data.rs` builds them.
     let gaps = [(2.0, 0.8), (5.0, 0.9), (8.0, 1.0), (11.5, 1.7)];
     let c = crossings(s);
     gaps.iter().filter(|(x, _)| c.iter().any(|(lo, hi)| lo <= x && x <= hi)).map(|g| g.1).collect()
@@ -53,7 +52,6 @@ fn passable_gaps(s: &Settings) -> Vec<f32> {
 
 #[test]
 fn a_gap_wider_than_the_agent_by_a_cell_is_passable() {
-    // 1.7 m against a human's 0.8 m is never lost.
     assert!(passable_gaps(&settings(0.2, 0.4, 1.8)).contains(&1.7));
     assert!(passable_gaps(&settings(0.1, 0.4, 1.8)).contains(&1.7));
 }
@@ -91,7 +89,6 @@ fn every_gap_with_the_promised_clearance_is_passable_and_none_too_narrow_is() {
 
 #[test]
 fn recast_itself_still_loses_those_gaps() {
-    // The parity mode is untouched: same settings, fixes off, Recast's answer.
     let mut s = settings(0.2, 0.4, 1.8);
     s.fixes = space_soup_nav::bake::Fixes::recast();
     assert_eq!(passable_gaps(&s), vec![1.7]);
@@ -145,7 +142,6 @@ fn island_at(b: &bake::Build, labels: &[usize], x: f32, z: f32, y: f32) -> Optio
             let u = ((x - v[0][0]) * (v[2][2] - v[0][2]) - (v[2][0] - v[0][0]) * (z - v[0][2])) / det;
             let w = ((v[1][0] - v[0][0]) * (z - v[0][2]) - (x - v[0][0]) * (v[1][2] - v[0][2])) / det;
             let inside = u >= -1e-4 && w >= -1e-4 && u + w <= 1.0 + 1e-4;
-            // Recast's detail sits a cell height above the floor.
             let h = v[0][1] + (v[1][1] - v[0][1]) * u + (v[2][1] - v[0][1]) * w - b.config.ch;
             inside && (h - y).abs() < 0.25
         })
@@ -161,7 +157,6 @@ fn nothing_too_high_or_too_steep_becomes_climbable() {
             let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
             bake::build(&verts, &mesh.triangles, &s)
         };
-        // stairs: the 0.4 m risers (z 5..7) must not lead up to their landing.
         let b = load("stairs");
         let l = islands(&b);
         let floor = island_at(&b, &l, 1.0, 6.0, 0.0).expect("floor");
@@ -170,16 +165,13 @@ fn nothing_too_high_or_too_steep_becomes_climbable() {
         if let Some(top) = steep_top {
             assert_ne!(top, floor, "cs {cs}: 0.4 m risers became climbable");
         }
-        // The 0.2 m flight (z 1..3) does reach its landing.
         let a_top = island_at(&b, &l, 6.0, 2.0, 1.2).expect("landing A");
         assert_eq!(a_top, floor, "cs {cs}: 0.2 m risers do not reach the landing");
-        // ledge: the 1 m block is not climbable.
         let b = load("ledge");
         let l = islands(&b);
         let floor = island_at(&b, &l, 1.0, 1.0, 0.0).expect("floor");
         let top = island_at(&b, &l, 5.0, 5.0, 1.0).expect("the block's top is a floor of its own");
         assert_ne!(top, floor, "cs {cs}: a 1 m ledge became climbable");
-        // ramps: the 50 degree platform stays cut off, the 30 degree one is reached.
         let b = load("ramps");
         let l = islands(&b);
         let floor = island_at(&b, &l, 10.0, 5.0, 0.0).expect("floor");

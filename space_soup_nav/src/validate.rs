@@ -74,12 +74,10 @@ pub fn check_piece(asset: &Arc<NavPieceAsset>) -> Vec<Issue> {
         out.push(issue(Severity::Error, name, format!("{:?} link {li}: its {which} is not on any floor", l.kind), Some(at)));
     }
 
-    // Floor that no doorway leads to. Typed links count as ways in.
     if !asset.sockets.is_empty() {
         let doorway_polys: Vec<PolyRef> =
             asset.sockets.iter().flat_map(|s| s.edges.iter().map(|&(p, _)| PolyRef { island: 0, poly: p })).collect();
         let reached: Vec<u32> = doorway_polys.iter().map(|&p| w.component(p)).collect();
-        // Group the unreached polygons by area so each cut-off part is reported once.
         let mut parts: Vec<(u32, f64, DVec3, f64)> = Vec::new();
         for pi in 0..asset.polys.len() {
             let p = PolyRef { island: 0, poly: pi as u16 };
@@ -137,7 +135,6 @@ pub fn check_kit(assets: &[Arc<NavPieceAsset>]) -> Vec<Issue> {
     classes.sort_unstable();
     classes.dedup();
     for class in classes {
-        // Walkable width of each passable doorway of this class.
         let mut widths: Vec<(f64, String)> = assets
             .iter()
             .flat_map(|a| a.sockets.iter().filter(|s| s.size_class == class && !s.edges.is_empty()).map(move |s| ((s.b - s.a).as_dvec3().length() / 1000.0, format!("{}.{}", a.name, s.name))))
@@ -222,7 +219,6 @@ pub fn check_level(world: &mut NavWorld, start: PolyRef) -> LevelReport {
             r.widest_weld_mm = r.widest_weld_mm.max(c.gap_mm.abs());
         }
     }
-    // Which doors cut the level: close each in turn and see if its two sides part.
     r.doors = world.gates.len();
     for g in 0..world.gates.len() as u32 {
         let Some(&l) = world.gates[g as usize].links.first() else { continue };
@@ -236,7 +232,6 @@ pub fn check_level(world: &mut NavWorld, start: PolyRef) -> LevelReport {
         }
         world.set_gate(g, true);
     }
-    // Opening and closing doors to test them is not a change anyone needs to hear about.
     world.drain_events();
     r
 }

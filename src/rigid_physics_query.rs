@@ -169,8 +169,6 @@ impl PhysicsWorld {
                 std::ptr::null_mut(),
             )
         };
-        // -1 means the buffer overflowed. The nearest surface may be among the ones that did
-        // not fit, so it is reported rather than silently trusted.
         if count < 0 {
             log::warn!("sphere_contacts: more than {MAX_HITS} shapes within {radius} m of {center}; some were not examined");
         }
@@ -215,9 +213,6 @@ impl PhysicsWorld {
         out
     }
 
-    // Sets linear velocity directly rather than adding a PhysX force impulse -- spawned
-    // projectiles/ejected casings always start at rest, so "apply an impulse" and "set the exit
-    // velocity" are equivalent for this use case and avoid pulling in mass-scaling semantics.
     pub fn apply_impulse(&mut self, id: &str, velocity: Vec3) {
         let Some(state) = self.dynamic.get(id) else {
             log::warn!("apply_impulse: unknown or non-dynamic object '{id}'");
@@ -250,8 +245,6 @@ impl PhysicsWorld {
     }
 
     pub fn despawn_actor(&mut self, id: &str) {
-        // Before the actor: a joint outliving one of its bodies is a dangling
-        // pointer the next step follows.
         self.release_all(id);
         let Some(state) = self.dynamic.remove(id) else {
             return;
@@ -292,15 +285,9 @@ impl PhysicsWorld {
             unsafe { (*ptr).set_kinematic_target(&target) };
         }
 
-        // The props that are lost come back, a few a step in turn: under THIS
-        // level's floor (`PhysicsWorld::kill_y`, found at load), sunk and
-        // settled, or asked for. See `respawn_round`.
         self.clock += dt as f64;
         self.respawn_round();
 
-        // Bodies push doors before the step, which integrates the push; the
-        // water bears up and slows what is in it; a hand that has gone too
-        // far from what it held has let go.
         self.push_doors(rigs);
         self.float_bodies(dt);
         self.drop_far_grabs();

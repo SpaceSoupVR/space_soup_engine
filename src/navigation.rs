@@ -68,7 +68,6 @@ pub fn cell_size_for(geometry: &CollisionTriangles) -> f32 {
     if lo.x > hi.x {
         return 0.1;
     }
-    // A margin for the grid's border and rounding.
     let area = ((hi.x - lo.x + 2.0) * (hi.z - lo.z + 2.0)) as f64;
     let fits = (area / (MAX_BAKE_COLUMNS * 0.9)).sqrt();
     ((fits * 1000.0).ceil() / 1000.0).max(0.1) as f32
@@ -124,7 +123,6 @@ pub fn files(game_dir: &Path, scene: &str) -> (PathBuf, PathBuf) {
 
 fn world_of(asset: &Arc<NavPieceAsset>) -> NavWorld {
     let mut w = NavWorld::new();
-    // Baked in world space: placed where it was baked.
     w.add_island(asset.clone(), Turn(0), IVec3::ZERO);
     w
 }

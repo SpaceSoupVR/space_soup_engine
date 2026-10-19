@@ -5,8 +5,6 @@
 //! against C++ Recast's output on the same inputs (`tests/parity.rs`, data in
 //! `tests/data/golden`). Watershed partitioning is deliberately absent (see the design report).
 
-// The ports keep Recast's index loops and if-chain clamps so each function can be read against
-// its C++ original line by line; that review is worth more here than the idiom.
 #[allow(clippy::needless_range_loop)]
 pub mod clearance;
 #[allow(clippy::needless_range_loop, clippy::manual_clamp)]
@@ -184,9 +182,7 @@ pub fn build(verts: &[[f32; 3]], tris: &[[u32; 3]], settings: &Settings) -> Buil
     counts.heightfield_spans = hf.span_count();
     heightfield::filter_low_hanging_obstacles(&mut hf, cfg.walkable_climb);
     let max_spread = if settings.fixes.slope_aware_ledges {
-        // How far a walkable slope rises over two cells, in cell heights.
         let rise = 2.0 * cfg.cs as f64 * libm::tan((cfg.walkable_slope_angle as f64).to_radians()) / cfg.ch as f64;
-        // A hair of slack so 45 degrees (tan 0.99999...) over two 0.2 m cells is 4 heights, not 3.
         cfg.walkable_climb.max((rise + 1e-4).floor() as i32)
     } else {
         cfg.walkable_climb

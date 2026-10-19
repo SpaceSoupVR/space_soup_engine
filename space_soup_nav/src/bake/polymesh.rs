@@ -318,9 +318,6 @@ fn merge_poly_verts(polys: &mut [u16], a: usize, b: usize, ea: usize, eb: usize,
 /// The greedy merge loop shared by the build and by vertex removal. `polys` holds `npolys`
 /// polygons of `nvp` entries; `on_merge(pa, pb)` runs before `pb` is overwritten by the last.
 fn merge_polys(polys: &mut [u16], npolys: &mut usize, verts: &[[u16; 3]], nvp: usize, mut on_merge: impl FnMut(usize, usize, usize)) {
-    // Recast scores every pair of polygons on every pass, O(n^3) on a big region (90 s for one
-    // 1,500-polygon terrain). Only polygons sharing an edge can score above zero, so only pairs
-    // sharing a vertex are scored, still in (j, k) order: the same pair wins every pass.
     let mut vert_polys: Vec<Vec<usize>> = vec![Vec::new(); verts.len()];
     let mut candidates: Vec<usize> = Vec::new();
     loop {
@@ -387,7 +384,6 @@ fn can_remove_vertex(mesh: &PolyMesh, rem: u16) -> bool {
     if remaining_edges <= 2 {
         return false;
     }
-    // [a, b, count]; matched on `b` alone, as Recast does.
     let mut edges: Vec<[i32; 3]> = Vec::with_capacity(touched * 2);
     for i in 0..mesh.npolys() {
         let p = &mesh.polys[i * nvp * 2..i * nvp * 2 + nvp];
@@ -422,7 +418,6 @@ fn push_front(v: i32, arr: &mut Vec<i32>) {
 
 fn remove_vertex(mesh: &mut PolyMesh, rem: u16, max_tris: usize) {
     let nvp = mesh.nvp;
-    // [from, to, region, area] for each kept edge of the removed polygons.
     let mut edges: Vec<[i32; 4]> = Vec::new();
     let mut i = 0usize;
     while i < mesh.npolys() {
@@ -449,7 +444,6 @@ fn remove_vertex(mesh: &mut PolyMesh, rem: u16, max_tris: usize) {
             mesh.regs.pop();
             mesh.areas.pop();
             mesh.polys.truncate(last * nvp * 2);
-            // C++ leaves the stale last polygon in memory; nothing reads it.
             continue;
         }
         i += 1;
@@ -688,7 +682,6 @@ pub fn build_poly_mesh(cset: &ContourSet, nvp: usize) -> PolyMesh {
         }
     }
 
-    // Remove the extra vertices Recast put along tile borders where it can.
     vflags.resize(mesh.verts.len() + 1, 0);
     let mut i = 0usize;
     while i < mesh.verts.len() {

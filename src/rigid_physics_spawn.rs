@@ -144,7 +144,6 @@ pub(crate) fn ground_patch_batches(extra: &crate::terrain::GroundPatch, region: 
     const BATCH: usize = 8192;
 
     let triangles: Vec<&[u32]> = extra.triangles_in(region).collect();
-    // Which piece a vertex is in: the least vertex joined to it by triangles.
     let mut piece: Vec<u32> = (0..extra.positions.len() as u32).collect();
     fn root(piece: &mut [u32], mut v: u32) -> u32 {
         while piece[v as usize] != v {
@@ -155,14 +154,11 @@ pub(crate) fn ground_patch_batches(extra: &crate::terrain::GroundPatch, region: 
     }
     for tri in &triangles {
         for &v in &tri[1..] {
-            // Asked again each time: the first corner's piece may just have
-            // been joined under a lower one.
             let (a, b) = (root(&mut piece, tri[0]), root(&mut piece, v));
             piece[a.max(b) as usize] = a.min(b);
         }
     }
 
-    // The batch each piece goes to, by the order the pieces first appear.
     const NONE: u32 = u32::MAX;
     let mut batch_of_piece = vec![NONE; extra.positions.len()];
     let mut piece_size = vec![0u32; extra.positions.len()];
@@ -183,8 +179,6 @@ pub(crate) fn ground_patch_batches(extra: &crate::terrain::GroundPatch, region: 
 
     let mut batches: Vec<(Vec<PxVec3>, Vec<u32>)> =
         batch_triangles.iter().map(|n| (Vec::new(), Vec::with_capacity(n * 3))).collect();
-    // A vertex's index in its batch's own list; a vertex is in one piece, so
-    // in one batch.
     let mut slot = vec![NONE; extra.positions.len()];
     for tri in &triangles {
         let (points, indices) = &mut batches[batch_of_piece[root(&mut piece, tri[0]) as usize] as usize];
@@ -229,11 +223,6 @@ impl PhysicsWorld {
             return;
         };
 
-        // How far down this collider reaches, for the level's floor
-        // (`PhysicsWorld::level_floor`): a body resting on it, or starting as
-        // it, is in the world.
-        // A hull is cooked from the object's own model; where it cannot be --
-        // a static body, no model, a model that will not cook -- it is its box.
         let hull = match (def.shape, def.mode) {
             (ColliderShape::Hull, BodyMode::Kinematic | BodyMode::Dynamic) => self.hull_for(obj),
             _ => None,
@@ -301,8 +290,6 @@ impl PhysicsWorld {
                 }
             }
             BodyMode::Kinematic | BodyMode::Dynamic => {
-                // The box round the collider in the body's frame, and the
-                // water it pushes aside: what bears it up (`float_bodies`).
                 let (bounds_half, volume) = match (def.shape, hull) {
                     (ColliderShape::Hull, Some((_, _, half, volume))) => (half, volume),
                     (ColliderShape::Box | ColliderShape::Hull, _) => (collider_half.abs(), 8.0 * collider_half.abs().element_product()),
@@ -369,11 +356,6 @@ impl PhysicsWorld {
                 };
                 match created {
                     Some(mut actor) => {
-                        // ITS MASS AND THE INERTIA THAT GOES WITH IT. The
-                        // actor is made at a density of one, and `set_mass`
-                        // alone left it turning as if it still weighed what
-                        // that makes it -- a 2.5 kg box with the inertia of
-                        // twelve grams, spun by any touch off its centre.
                         actor.set_mass(mass);
                         unsafe {
                             physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(
@@ -392,13 +374,6 @@ impl PhysicsWorld {
                             actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
 
                             actor.set_solver_iteration_counts(8, 2);
-                            // PUSHED OUT OF WHAT IT IS IN AT A WALKING PACE.
-                            // A hand is a kinematic sphere and goes where
-                            // the player puts it: pressed into a rock lying
-                            // on the ground it made a contact nothing could
-                            // satisfy, and at the default (unbounded) speed
-                            // the rock left for the sky -- a 60 kg block
-                            // reached 20 m.
                             unsafe {
                                 physx_sys::PxRigidBody_setMaxDepenetrationVelocity_mut(
                                     &mut *actor as *mut PxRigidDynamic as *mut physx_sys::PxRigidBody,
@@ -440,7 +415,6 @@ impl PhysicsWorld {
             return Some(*found);
         }
         let path = self.game_dir.join(&mesh.path);
-        // Positions only: the document and its buffers, never its images.
         let read = gltf::Gltf::open(&path).ok().and_then(|g| {
             let buffers = gltf::import_buffers(&g.document, path.parent(), g.blob.clone()).ok()?;
             Some((g.document, buffers))
@@ -479,7 +453,6 @@ impl PhysicsWorld {
             lo = lo.min(p);
             hi = hi.max(p);
         }
-        // At a density of one its mass is its volume.
         let mut volume = 0.0f32;
         unsafe {
             let mut inertia: physx_sys::PxMat33 = std::mem::zeroed();
@@ -694,8 +667,6 @@ impl PhysicsWorld {
     /// nothing, took 6.5 microseconds here against 0.2 -- and one above the
     /// highest ground, or stopped by the first hill, is as cheap as it was.
     fn spawn_scene_height_field(&mut self, field: &crate::terrain::Heightfield) -> bool {
-        // PhysX's own floors for a height field's scales
-        // (PX_MIN_HEIGHTFIELD_Y_SCALE, PX_MIN_HEIGHTFIELD_XZ_SCALE).
         const MIN_HEIGHT_SCALE: f32 = 0.0001 / 65535.0;
         const MIN_CELL: f32 = 1e-8;
 
@@ -704,13 +675,9 @@ impl PhysicsWorld {
         let [lo, hi] = field.height_range();
         let origin = field.origin();
         let step = (hi - lo) / u16::MAX as f32;
-        // A range written upside down, or a cell of no size, is not a height
-        // field PhysX can hold; the triangle mesh takes anything.
         if !(step >= 0.0 && step.is_finite() && dx >= MIN_CELL && dz >= MIN_CELL && dx.is_finite() && dz.is_finite() && origin.is_finite()) {
             return false;
         }
-        // A range of no height at all: every sample stands at `lo`, and is
-        // written as zero under the smallest scale PhysX allows.
         let level = step < MIN_HEIGHT_SCALE;
         let height_scale = step.max(MIN_HEIGHT_SCALE);
         let base = if level { origin.y + lo } else { origin.y + lo + 32768.0 * height_scale };
@@ -724,8 +691,6 @@ impl PhysicsWorld {
         for ix in 0..nx {
             for iz in 0..nz {
                 let height = if level { 0 } else { (raw[(iz * nx + ix) as usize] as i32 - 32768) as i16 };
-                // A sample carries the cell it is the lowest corner of; the
-                // last row and column carry none.
                 let is_cell = ix + 1 < nx && iz + 1 < nz;
                 let open = is_cell && (ix >= meshed_x || iz >= meshed_z || (holed && field.cell_is_open(ix, iz)));
                 let material = if open { HeightFieldMaterial::HOLE } else { solid };
@@ -758,17 +723,11 @@ impl PhysicsWorld {
         if !geo.is_valid() {
             return false;
         }
-        // Sample (0, 0) at the field's corner; the samples' own zero is the
-        // middle of the height range.
         let pose = to_px_transform(Vec3::new(origin.x, base, origin.z), Quat::IDENTITY);
         let Some(ground) = self.foundation.create_rigid_static(pose, &geo, material.as_mut(), PxTransform::default(), ()) else {
             return false;
         };
 
-        // The ground the caves put back, as the mesher takes it for the whole
-        // field: cooked a batch at a time (`ground_patch_batches`), each an
-        // actor of its own, in world space already as the triangle mesh of
-        // the whole ground was.
         let mut patch_meshes = Vec::new();
         let mut patch_actors = Vec::new();
         let mut patch_triangles = 0usize;
@@ -796,7 +755,6 @@ impl PhysicsWorld {
             }
         }
 
-        // Nothing can fail from here: the ground joins the scene whole.
         self.scene.add_static_actor(ground);
         let patch_count = patch_meshes.len();
         for actor in patch_actors {
@@ -895,7 +853,6 @@ impl PhysicsWorld {
             log::warn!("rigid_physics: failed to cook brush '{}'", obj.id);
             return;
         };
-        // The brush's lowest corner, for the level's floor.
         self.note_floor(positions.iter().fold(f32::INFINITY, |low, p| low.min(p[1])));
         self.terrain_meshes.push(owned);
         let mesh_idx = self.terrain_meshes.len() - 1;
@@ -1043,9 +1000,6 @@ impl PhysicsWorld {
             obj.cuboid.position,
         );
 
-        // Each unique mesh's pool index and its own bounds: the bounds are what
-        // an instance lowers the level's floor by (eight corners an instance,
-        // rather than every vertex again).
         let mut cooked: HashMap<usize, (usize, Vec3, Vec3)> = HashMap::new();
         let mut spawned = 0u32;
 
@@ -1088,8 +1042,6 @@ impl PhysicsWorld {
             let world = object_mat * node_mat;
             let (scale, rotation, translation) = world.to_scale_rotation_translation();
 
-            // The lowest corner of this instance's bounds, for the level's
-            // floor: at or under its lowest vertex, which is the safe side.
             let lowest = (0..8)
                 .map(|k| {
                     let pick = |bit: u32, lo: f32, hi: f32| if k & bit == 0 { lo } else { hi };
@@ -1099,11 +1051,6 @@ impl PhysicsWorld {
                 .fold(f32::INFINITY, f32::min);
             self.note_floor(lowest);
 
-            // The scale is along the mesh's own axes, so the mesh-scale rotation stays identity
-            // and `rotation` is applied once, by the actor pose. PxMeshScale scales along
-            // `rotation`'s axes (rotation^-1 * S * rotation); passing the pose's rotation there
-            // too put the scale on the WORLD's axes, so a Z-up model (a -90 degree X node) that
-            // was stretched or squashed collided in the wrong shape.
             let scale_px = PxVec3::new(scale.x, scale.y, scale.z);
             let rot_px = PxQuat::new(0.0, 0.0, 0.0, 1.0);
             let mesh_scale = unsafe { physx_sys::PxMeshScale_new_3(scale_px.as_ptr(), rot_px.as_ptr()) };

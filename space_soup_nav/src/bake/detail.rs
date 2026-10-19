@@ -384,7 +384,6 @@ fn delaunay_hull(pts: &[V], hull: &[i32], tris: &mut Vec<[i32; 4]>, edges: &mut 
             let last = *tris.last().unwrap();
             tris[i] = last;
             tris.pop();
-            // C++ re-checks index i, which now holds the old last (or is past the end).
             continue;
         }
         i += 1;
@@ -540,7 +539,6 @@ fn build_poly_detail(
             if verts.len() as i32 + nn >= MAX_VERTS as i32 {
                 nn = MAX_VERTS as i32 - 1 - verts.len() as i32;
             }
-            // C++ skips the loop when the vertex budget makes nn negative.
             for k in 0..(nn + 1).max(0) as usize {
                 let u = k as f32 / nn as f32;
                 let pos = &mut edge[k];
@@ -555,7 +553,6 @@ fn build_poly_detail(
             let mut k = 0usize;
             while k < nidx - 1 {
                 let (a, b) = (idx[k], idx[k + 1]);
-                // Only read when the loop below runs; with nn < 1 it never does.
                 let (va, vb) = (edge[a.max(0) as usize], edge[b.max(0) as usize]);
                 let mut maxd = 0.0f32;
                 let mut maxi = -1i32;
@@ -810,7 +807,6 @@ fn get_height_data(chf: &CompactHeightfield, poly: &[u16], verts: &[[u16; 3]], b
     if empty {
         seed_array_with_poly_center(chf, poly, verts, bs, hp, queue);
     }
-    // Breadth-first fill outwards; C++ compacts its queue every 256 pops, which keeps FIFO order.
     let mut head = 0usize;
     while head * 3 < queue.len() {
         let (cx, cy, ci) = (queue[head * 3], queue[head * 3 + 1], queue[head * 3 + 2]);

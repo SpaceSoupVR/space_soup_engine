@@ -117,9 +117,6 @@ fn intersect_segment_poly_2d(p0: DVec3, p1: DVec3, verts: &[DVec3]) -> Option<(f
         let edge = verts[i] - verts[j];
         let diff = p0 - verts[j];
         let mut nn = perp(edge, diff);
-        // A start within 0.05 mm of an edge's line is on it. Detour has no such margin, so a
-        // start a hair outside the polygon it was found on (any rounding does it) makes the ray
-        // fail outright, even when the ray leads away through that very edge.
         if nn.abs() <= ON_EDGE_MM * (edge.x * edge.x + edge.z * edge.z).sqrt() {
             nn = 0.0;
         }
@@ -208,7 +205,6 @@ impl NavWorld {
                 return Some(h);
             }
         }
-        // On an edge, where every triangle test can fail: the nearest edge point's height.
         let mut best = (f64::MAX, pos.y);
         for t in &tris {
             for k in 0..3 {
@@ -251,7 +247,6 @@ impl NavWorld {
             if max.y < isl.min.y as f64 - climb * 4.0 || min.y > isl.max.y as f64 + climb * 4.0 {
                 continue;
             }
-            // The box in the piece's own space: a quarter turn of an axis-aligned box is one.
             let back = crate::asset::Turn((4 - isl.turn.0 % 4) % 4);
             let (a, b) = (back.apply((min.floor()).as_ivec3() - isl.offset), back.apply((max.ceil()).as_ivec3() - isl.offset));
             let (qmin, qmax) = (a.min(b), a.max(b));
@@ -316,7 +311,6 @@ impl NavWorld {
                 if !l.enabled || l.kind != LinkKind::Portal || l.from_edge != Some(edge as u8) {
                     return None;
                 }
-                // The portal covers part of the edge: is `at` within it?
                 let (a, b) = (d(l.from_segment[0]), d(l.from_segment[1]));
                 let (dd, _) = dist_pt_seg_sqr_2d(at, a, b);
                 (dd <= 1.0).then_some(l.to)
@@ -375,12 +369,6 @@ impl NavWorld {
     /// itself on neither side of it, and stuck at the next inside corner). Returns where it is and
     /// on which polygon.
     pub fn slide(&self, start_poly: PolyRef, start: DVec3, end: DVec3) -> (DVec3, PolyRef) {
-        // A welded join leaves the two pieces' doorways a few centimetres apart (up to the join
-        // tolerance), and each floor stops at its own. `move_along_surface`, like Detour's, takes
-        // connected floors to touch: a step ending in the gap is on neither, and it answers with
-        // the nearest wall point it saw, which can be a corner of the far piece well off to the
-        // side. So a step out through such a doorway is split where it crosses: carried over to
-        // the same place on the other side, and the rest of it walked from there.
         let (mut pos, visited) = match self.gap_crossing(start_poly, start, end) {
             Some((to, at, landing)) => self.move_along_surface(to, landing, landing + (end - at)),
             None => self.move_along_surface(start_poly, start, end),
@@ -419,11 +407,9 @@ impl NavWorld {
             let (a, b) = (d(l.from_segment[0]), d(l.from_segment[1]));
             let (c, e) = (d(l.to_segment[0]), d(l.to_segment[1]));
             let across = DVec3::new((c.x + e.x - a.x - b.x) / 2.0, 0.0, (c.z + e.z - a.z - b.z) / 2.0);
-            // Only walking out through it, and only a real gap (not overlapping doorways).
             if across.length() < 1.0 || step.dot(across) <= 0.0 {
                 continue;
             }
-            // Where the step meets the doorway line: start + step * t = a + (b - a) * u.
             let ab = DVec3::new(b.x - a.x, 0.0, b.z - a.z);
             let denom = step.x * ab.z - step.z * ab.x;
             if denom.abs() < 1e-9 {
@@ -432,8 +418,6 @@ impl NavWorld {
             let (sx, sz) = (a.x - start.x, a.z - start.z);
             let t = (sx * ab.z - sz * ab.x) / denom;
             let u = (sx * step.z - sz * step.x) / denom;
-            // From on the line (an agent held at the edge) to the end of the step; within the
-            // doorway's width, a millimetre's slack at either end.
             let slack = 1.0 / ab.length().max(1.0);
             if !(-1e-3..=1.0).contains(&t) || u < -slack || u > 1.0 + slack {
                 continue;
@@ -454,7 +438,6 @@ impl NavWorld {
     pub fn move_along_surface(&self, start_poly: PolyRef, start: DVec3, end: DVec3) -> (DVec3, Vec<PolyRef>) {
         const MAX_NODES: usize = 64;
         const MAX_STACK: usize = 48;
-        // (polygon, parent node, closed)
         let mut nodes: Vec<(PolyRef, Option<usize>, bool)> = vec![(start_poly, None, true)];
         let mut stack: Vec<usize> = vec![0];
         let mut best_pos = start;
@@ -476,7 +459,6 @@ impl NavWorld {
             let n = verts.len();
             let mut j = n - 1;
             for i in 0..n {
-                // Edge j runs from vertex j to vertex i.
                 let neis: Vec<PolyRef> = match isl.asset.polys[cur.poly as usize].edges[j] {
                     EdgeLink::Internal(o) => vec![PolyRef { island: cur.island, poly: o }],
                     EdgeLink::Border => Vec::new(),
@@ -498,7 +480,6 @@ impl NavWorld {
                     }
                 } else {
                     for nb in neis {
-                        // Detour's pool hands out a node before checking it, and runs out at 64.
                         let ni = match nodes.iter().position(|x| x.0 == nb) {
                             Some(k) => k,
                             None if nodes.len() < MAX_NODES => {

@@ -414,7 +414,6 @@ fn merge_region_holes(conts: &mut [Contour], outline: usize, holes: &[usize]) {
         .collect();
     holes.sort_by_key(|h| (h.1, h.2));
     let max_verts = conts[outline].verts.len() + holes.iter().map(|h| conts[h.0].verts.len()).sum::<usize>();
-    // (vertex, squared distance); persists across holes as C++'s buffer does.
     let mut diags: Vec<(i32, i32)> = vec![(0, 0); max_verts.max(1)];
 
     for hi in 0..holes.len() {
@@ -436,7 +435,6 @@ fn merge_region_holes(conts: &mut [Contour], outline: usize, holes: &[usize]) {
             index = -1;
             for j in 0..ndiags {
                 let pt = conts[outline].verts[diags[j].0 as usize];
-                // Recast's `diags[i]`, i being the hole: kept for parity.
                 let skip = diags.get(hi).map_or(0, |d| d.0);
                 let mut crosses = intersect_seg_contour(&pt, &corner, skip, &conts[outline].verts);
                 let mut k = hi;

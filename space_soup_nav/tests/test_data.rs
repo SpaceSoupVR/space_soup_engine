@@ -15,12 +15,6 @@ use space_soup_nav::golden::{self, Golden};
 use space_soup_nav::obj::TriMesh;
 use space_soup_nav::scenario::{self, Goal};
 
-// --- synthetic meshes ----------------------------------------------------------------------------
-//
-// Metres, +Y up. Every floor's walkable top is at y = 0 (a 0.2 m slab under it); walls are 3 m.
-// Each mesh isolates one situation the research found voxel navmeshes getting wrong, with the
-// tricky dimension sitting on, just under, or just over a threshold of the configs.
-
 const WALL: f32 = 3.0;
 
 fn bx(min: [f32; 3], max: [f32; 3]) -> TriMesh {
@@ -38,10 +32,10 @@ fn ramp(x0: f32, x1: f32, h: f32, z0: f32, z1: f32) -> TriMesh {
     TriMesh {
         vertices: vec![v(x0, 0.0, z0), v(x0, 0.0, z1), v(x1, h, z1), v(x1, h, z0), v(x1, 0.0, z0), v(x1, 0.0, z1)],
         triangles: vec![
-            [0, 1, 2], [0, 2, 3], // the slope, facing up and back
-            [4, 3, 2], [4, 2, 5], // the high end, facing +X
-            [0, 3, 4],            // the -Z side
-            [1, 5, 2],            // the +Z side
+            [0, 1, 2], [0, 2, 3],
+            [4, 3, 2], [4, 2, 5],
+            [0, 3, 4],
+            [1, 5, 2],
         ],
     }
 }
@@ -203,7 +197,6 @@ fn synthetic_meshes_are_what_they_claim() {
             assert!((b - a).cross(c - a).length() > 1e-6, "{name}: degenerate triangle");
         }
     }
-    // The ramps' slopes, by the up component of their normals: cos 30 and cos 50.
     let ups: Vec<f32> = {
         let m = get("ramps");
         m.triangles
@@ -219,8 +212,6 @@ fn synthetic_meshes_are_what_they_claim() {
     assert!(ups.iter().filter(|y| (**y - 0.866_025_4).abs() < 1e-4).count() == 2, "30 degree ramp: {ups:?}");
     assert!(ups.iter().filter(|y| (**y - 0.642_787_6).abs() < 1e-4).count() == 2, "50 degree ramp: {ups:?}");
 }
-
-// --- every mesh, the configs, the scenarios ------------------------------------------------------
 
 fn all_meshes(data: &Path) -> Vec<String> {
     let mut out = Vec::new();
@@ -292,8 +283,6 @@ fn scenarios_load_and_stand_on_their_mesh() {
     }
 }
 
-// --- golden reference files ----------------------------------------------------------------------
-
 #[test]
 fn golden_files_cover_every_mesh_and_config_and_match_the_meshes() {
     let data = data();
@@ -315,7 +304,6 @@ fn golden_files_cover_every_mesh_and_config_and_match_the_meshes() {
 
         let c = configs.iter().find(|c| c.name == g.config_name).unwrap_or_else(|| panic!("{file}: unknown config"));
         let r = &g.recast_config;
-        // The integer settings, derived from the shared config the way Recast's sample does.
         assert_eq!(r.walkable_radius, (c.agent_radius / c.cell_size).ceil() as i32, "{file}");
         assert_eq!(r.walkable_height, (c.agent_height / c.cell_height).ceil() as i32, "{file}");
         assert_eq!(r.walkable_climb, (c.agent_max_climb / c.cell_height).floor() as i32, "{file}");

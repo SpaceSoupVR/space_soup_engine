@@ -85,7 +85,6 @@ impl Heightfield {
 /// `rcMarkWalkableTriangles`: a triangle is walkable when its normal is within the slope of up.
 /// Winding matters: the normal is `(b - a) x (c - a)`.
 pub fn mark_walkable_triangles(slope_deg: f32, verts: &[[f32; 3]], tris: &[[u32; 3]]) -> Vec<u8> {
-    // Recast's RC_PI (3.14159265f) is this same f32.
     let threshold = libm::cosf(slope_deg / 180.0 * std::f32::consts::PI);
     tris.iter()
         .map(|t| {
@@ -103,7 +102,6 @@ pub fn mark_walkable_triangles(slope_deg: f32, verts: &[[f32; 3]], tris: &[[u32;
 /// Returns the counts written to `out1` (the side below `offset`) and `out2` (above).
 fn divide_poly(input: &[[f32; 3]], out1: &mut [[f32; 3]; 12], out2: &mut [[f32; 3]; 12], offset: f32, axis: usize) -> (usize, usize) {
     let n = input.len();
-    // A sliver can be clipped down to nothing; Recast's int arithmetic gets away with it.
     if n == 0 {
         return (0, 0);
     }

@@ -146,7 +146,6 @@ pub struct MeshPart {
 pub fn mesh_lightmap_layout(parts: &[MeshPart], texel: f32) -> Option<MeshLightmapLayout> {
     let mut order: Vec<&MeshPart> = parts.iter().filter(|p| p.indices.len() >= 3).collect();
     order.sort_by_key(|p| (p.node, p.primitive));
-    // A mesh that brings its own layout is read, not packed.
     if let Some(layout) = authored_layout(&order) {
         return Some(layout);
     }
@@ -217,7 +216,6 @@ fn authored_layout(order: &[&MeshPart]) -> Option<MeshLightmapLayout> {
         for t in 0..tri_count {
             let idx = [0, 1, 2].map(|k| p.indices[t * 3 + k] as usize);
             let pos = idx.map(|i| p.positions.get(i).copied().unwrap_or([0.0; 3]));
-            // Texel-centre coordinates: texel (0, 0)'s centre is (0, 0).
             let at = idx.map(|i| {
                 let uv = p.uv1.get(i).copied().unwrap_or([0.0; 2]);
                 [uv[0] * width as f32 - 0.5, uv[1] * height as f32 - 0.5]
@@ -437,8 +435,6 @@ pub fn load_mesh_parts(path: &std::path::Path) -> Option<Vec<MeshPart>> {
     let base = path.parent();
     let buffers = gltf::import_buffers(&gltf.document, base, gltf.blob.clone()).ok()?;
     let mut parts = mesh_parts(&gltf.document, &buffers)?;
-    // A mesh that says its second uv set is its lightmap's layout. Read from
-    // the file's own JSON: `extras` is not something this crate's gltf reads.
     let authored = authored_atlases(path);
     if !authored.is_empty() {
         let mesh_of_node: std::collections::HashMap<usize, usize> =
@@ -1001,8 +997,6 @@ pub fn lightmap_uv_for_asset(
     path: &std::path::Path,
 ) -> Option<Vec<((usize, usize), Vec<[f32; 2]>)>> {
     let parts = load_mesh_parts(path)?;
-    // An authored layout is already in the file's vertices (`TEXCOORD_1`),
-    // which the renderer reads as they are: nothing to hand it, nothing to split.
     if parts.iter().any(|p| p.authored.is_some()) {
         return None;
     }
@@ -1215,7 +1209,6 @@ mod authored_tests {
         let layout = mesh_lightmap_layout(&[part.clone()], DEFAULT_TEXEL).expect("a layout");
         assert_eq!((layout.width, layout.height), (16, 16), "the atlas is the file's");
         assert_eq!(layout.charts.len(), 3);
-        // Each corner's uv2 is the file's own.
         for t in 0..3 {
             let chart = layout.chart(0, 0, t).unwrap();
             for k in 0..3 {
@@ -1241,8 +1234,6 @@ mod authored_tests {
                     }
                     let (px, py) = (chart.x + tx, chart.y + ty);
                     covered.insert((px, py));
-                    // Texel (px, py)'s centre is at atlas texel coordinate
-                    // px + 0.5: four texels a metre from texel 4.
                     let p = chart.texel_local(tx as f32, ty as f32);
                     let want = [(px as f32 + 0.5 - 4.0) / 4.0, 3.0, (py as f32 + 0.5 - 4.0) / 4.0];
                     for k in 0..3 {
@@ -1251,7 +1242,6 @@ mod authored_tests {
                 }
             }
         }
-        // The square is 8 x 8 texels: every centre in it is in one triangle or the other.
         for y in 4..12 {
             for x in 4..12 {
                 assert!(covered.contains(&(x, y)), "texel ({x}, {y}) of the square is in no triangle");
@@ -1265,7 +1255,6 @@ mod authored_tests {
         let layout = mesh_lightmap_layout(&[square()], DEFAULT_TEXEL).unwrap();
         let lip = layout.chart(0, 0, 2).unwrap();
         assert_eq!((lip.w, lip.h), (0, 0), "the lip carries its edge's uv: nothing of the atlas is its own");
-        // Nor a sliver thinner than a texel that every centre misses.
         let mut part = square();
         part.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.01]];
         part.uv1 = vec![[4.1 / 16.0, 4.6 / 16.0], [8.1 / 16.0, 4.6 / 16.0], [8.1 / 16.0, 4.64 / 16.0]];
@@ -1277,7 +1266,6 @@ mod authored_tests {
 
     #[test]
     fn an_authored_mesh_has_no_triangle_budget_and_a_half_authored_one_is_packed() {
-        // 50,000 triangles, each a texel square's half, tiled over a 256 atlas.
         let n = 160usize;
         let mut part = MeshPart { authored: Some([256, 256]), ..Default::default() };
         for j in 0..=n {
@@ -1297,7 +1285,6 @@ mod authored_tests {
         let layout = mesh_lightmap_layout(&[part.clone()], DEFAULT_TEXEL).expect("authored: no budget");
         assert_eq!(layout.charts.len(), part.indices.len() / 3);
         assert_eq!((layout.width, layout.height), (256, 256));
-        // A part with no uv1 beside it: not an authored mesh after all.
         let plain = MeshPart {
             node: 1,
             positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
@@ -1313,7 +1300,6 @@ mod authored_tests {
     #[test]
     fn a_file_that_says_its_uv1_is_its_lightmap_is_loaded_as_authored() {
         let part = square();
-        // `shift` moves the whole layout across its atlas.
         let write = |extras: &str, name: &str, shift: f32| {
             let mut bin: Vec<u8> = Vec::new();
             for p in &part.positions {
@@ -1367,14 +1353,10 @@ mod authored_tests {
         assert_eq!(parts[0].uv1.len(), 6);
         assert_eq!(mesh_lightmap_layout(&parts, DEFAULT_TEXEL).unwrap().width, 16);
         assert!(lightmap_uv_for_asset(&authored).is_none(), "the renderer reads the file's own TEXCOORD_1: nothing to hand it");
-        // The same file without the word: an ordinary mesh, packed.
         let plain = write("", "no", 0.0);
         let parts = load_mesh_parts(&plain).expect("it loads");
         assert_eq!(parts[0].authored, None);
         assert!(lightmap_uv_for_asset(&plain).is_some());
-        // AS AN OCCLUDER it is all of its triangles, wherever in its atlas they
-        // lie: on an older cave that uv marked its copy of the ground, which
-        // casts nothing, and the right half of a lightmap is not that.
         let right = write(said, "right", 0.26);
         assert_eq!(ground_model_blocking_triangles(&right).unwrap().len(), 3, "a lightmap's right half is rock");
         let marked = write("", "marked", 0.26);

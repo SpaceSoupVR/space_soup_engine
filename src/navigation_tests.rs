@@ -86,12 +86,9 @@ fn the_navmesh_is_baked_from_exactly_what_players_collide_with() {
     for kind in ["Box", "Trianglemesh", "Heightfield"] {
         assert!(geometry.shapes.contains_key(kind), "no {kind} read back: {:?}", geometry.shapes);
     }
-    // The dynamic crate is not floor.
     let inside_crate = |v: &[f32; 3]| (Vec3::from(*v) - Vec3::new(9.0, 0.5, -9.0)).abs().max_element() < 0.49;
     assert!(!geometry.vertices.iter().any(inside_crate), "the dynamic crate was read back as level geometry");
 
-    // Rays from all over, in all directions, meet the triangles where PhysX's own ray meets the
-    // colliders. The crate's corner of the scene is left out (PhysX's ray would hit it).
     let mut rng = 0x9e37_79b9_u32;
     let mut next = || {
         rng ^= rng << 13;
@@ -102,9 +99,7 @@ fn the_navmesh_is_baked_from_exactly_what_players_collide_with() {
     let (mut checked, mut hits, mut wall_hits, mut pillar_hits) = (0, 0, 0, 0);
     while checked < 400 {
         let origin = Vec3::new(next() * 30.0 - 15.0, 0.5 + next() * 14.0, next() * 30.0 - 15.0);
-        // A third aimed at the mesh-collider wall, a third at the pillar, a third anywhere.
         let aim = match checked % 3 {
-            // The wall model stands 3.9 m ahead of its object, stretched 2x and turned to +X.
             0 => Some(Vec3::new(-9.0 + 7.9, 1.5, -9.0)),
             1 => Some(Vec3::new(-9.0, 1.0, 9.0)),
             _ => None,
@@ -117,8 +112,6 @@ fn the_navmesh_is_baked_from_exactly_what_players_collide_with() {
         if dir == Vec3::ZERO || (origin.x > 5.0 && origin.z < -5.0) {
             continue;
         }
-        // From the open air only: PhysX does not report a surface a ray starts behind (under the
-        // ground, inside a pillar), where the triangles would.
         let under_ground = physics.raycast(Vec3::new(origin.x, 40.0, origin.z), Vec3::NEG_Y, 80.0).is_some_and(|(hit, _)| hit.y > origin.y);
         let inside = physics.sphere_contacts(origin, 0.05).iter().any(|c| c.distance == 0.0);
         if under_ground || inside {
@@ -154,7 +147,6 @@ fn the_navmesh_is_baked_from_exactly_what_players_collide_with() {
 #[test]
 fn a_baked_scene_walks_round_its_walls() {
     let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    // The wall runs x -10..4 along z = 0: the way across is the gap at x 4..10.
     let scene: Scene = serde_json::from_value(serde_json::json!({
         "name": "nav_room",
         "objects": [
@@ -173,17 +165,14 @@ fn a_baked_scene_walks_round_its_walls() {
     let path = nav.find_path(from, to).expect("a way round the wall");
     let length: f32 = path.windows(2).map(|w| w[0].distance(w[1])).sum();
     eprintln!("round the wall: {} corners, {length:.1} m (10 m straight through it)", path.len());
-    // It goes round the wall's end (x > 4 at the crossing) and so is much longer than 10 m.
     let crossing = path.windows(2).find(|w| (w[0].z < 0.0) != (w[1].z < 0.0)).expect("it crosses z = 0");
     let x = crossing[0].x + (crossing[1].x - crossing[0].x) * (0.0 - crossing[0].z) / (crossing[1].z - crossing[0].z);
     assert!(x > 4.3, "it crossed the wall's line at x = {x:.2}, through the wall");
     assert!(length > 22.0, "{length:.1} m: through the wall, not round it");
-    // Every corner is on the floor, and clear of the wall by the agent's radius.
     for p in &path {
         assert!(p.y.abs() < 0.15, "a corner off the floor: {p}");
         assert!(!(p.x < 4.0 + 0.35 && p.z.abs() < 0.2 + 0.35), "a corner inside the wall's clearance: {p}");
     }
-    // On the floor, near it, and off it.
     assert!(nav.nearest(Vec3::new(2.0, 1.0, 5.0)).is_some_and(|p| p.y.abs() < 0.15));
     assert!(nav.nearest(Vec3::new(2.0, 30.0, 5.0)).is_none(), "a point 30 m up is not on the floor");
     assert!(nav.find_path(from, Vec3::new(40.0, 0.0, 40.0)).is_none(), "a goal off the floor has no path");
@@ -207,7 +196,6 @@ fn a_saved_navmesh_loads_with_its_scene_and_knows_when_the_scene_has_moved_on() 
     };
     std::fs::write(dir.join("scenes/room.json"), room(-3.0).to_string()).unwrap();
 
-    // Baked and saved from the scene as the runtime builds it.
     let runtime = GameRuntime::load(&dir).unwrap();
     assert!(runtime.nav().is_none(), "nothing baked yet");
     let baked = SceneNav::bake(&runtime.rigid_physics, "room").unwrap();
@@ -216,16 +204,13 @@ fn a_saved_navmesh_loads_with_its_scene_and_knows_when_the_scene_has_moved_on() 
     assert!(nav_file.exists() && info_file.exists());
     drop(runtime);
 
-    // Loaded with the scene, the same navmesh, and current.
     let runtime = GameRuntime::load(&dir).unwrap();
     let nav = runtime.nav().expect("the runtime loads the scene's navmesh");
     assert!(!nav.stale);
-    // As baked (the bake's timing aside: a float through JSON need not come back to the bit).
     assert_eq!(crate::navigation::SceneNavInfo { bake_ms: 0.0, ..nav.info.clone() }, crate::navigation::SceneNavInfo { bake_ms: 0.0, ..baked.info.clone() });
     assert_eq!(nav.world.nearest_poly(glam::DVec3::new(2000.0, 0.0, 5000.0), glam::DVec3::splat(600.0)).map(|n| n.point), baked.world.nearest_poly(glam::DVec3::new(2000.0, 0.0, 5000.0), glam::DVec3::splat(600.0)).map(|n| n.point));
     drop(runtime);
 
-    // The wall moved: still loaded (better than none), and known to be stale.
     std::fs::write(dir.join("scenes/room.json"), room(3.0).to_string()).unwrap();
     let runtime = GameRuntime::load(&dir).unwrap();
     assert!(runtime.nav().is_some_and(|n| n.stale), "a navmesh baked for another wall was not noticed");

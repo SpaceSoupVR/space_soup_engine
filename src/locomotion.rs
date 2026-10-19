@@ -220,14 +220,11 @@ impl Locomotion {
     fn update_smooth(&mut self, dt: f32, input: &LocomotionInput, rig: &PlayerRig) {
         let (sx, sy) = input.move_stick;
         if sx.abs() < 0.08 && sy.abs() < 0.08 {
-            // Stopped: the run ends, and the next walk starts from rest.
             self.running = false;
             self.speed_now = 0.0;
             return;
         }
         let target = if self.running { self.run_speed } else { self.move_speed };
-        // From rest the walk starts at once, as it always has; a change of
-        // pace eases (`SPEED_EASE_SECONDS`).
         self.speed_now = if self.speed_now <= 0.0 {
             target
         } else {

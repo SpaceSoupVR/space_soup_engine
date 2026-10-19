@@ -62,7 +62,6 @@ fn main() {
     }
     let graph = w.room_graph();
 
-    // A long chase: player from one random spot to another, monster from a third.
     let mut rnd = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); (seed >> 8) as f64 / 16777216.0 };
     let mut pick = |w: &NavWorld| loop {
         let i = (rnd() * w.islands.len() as f64) as usize % w.islands.len();
@@ -111,7 +110,6 @@ fn main() {
         }
     };
 
-    // Draw. 1 px per 100 mm, +X right, +Z down (as the level is seen from above, north up).
     let (mut lo, mut hi) = (IVec3::MAX, IVec3::MIN);
     for isl in &w.islands {
         lo = lo.min(isl.min);

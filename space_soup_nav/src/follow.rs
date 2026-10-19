@@ -102,7 +102,6 @@ impl PathFollower {
         if !p.complete {
             return true;
         }
-        // Off the current leg.
         if self.next > 0 && self.next < p.waypoints.len() {
             let (a, b) = (p.waypoints[self.next - 1].pos(), p.waypoints[self.next].pos());
             let (d, _) = crate::query::dist_pt_seg_sqr_2d(pos, a, b);
@@ -127,9 +126,6 @@ impl PathFollower {
         }
         let line_clear = |a: DVec3, b: DVec3| world.nearest_poly(a, self.settings.half_extents).is_some_and(|n| world.walkable_line(n.poly, n.point, b));
         let Some(p) = &self.path else { return Steer::NoPath };
-        // Where to aim for waypoint k: a little inside a path corner rather than at it. Corners
-        // lie on the floor's edge, where an agent pressed against the wall can end up on the wrong
-        // side of the corner and unable to see down the next leg.
         let aim = |k: usize| -> DVec3 {
             let w = p.waypoints[k];
             if let (Waypoint::Walk(c), Some(prev), Some(next)) = (w, k.checked_sub(1).and_then(|j| p.waypoints.get(j)), p.waypoints.get(k + 1)) {
@@ -145,9 +141,6 @@ impl PathFollower {
             }
             w.pos()
         };
-        // Move on to the following waypoint once this one is reached or passed, and only when
-        // the following one is in a clear straight line: turning early at an inside corner
-        // would cut through the wall.
         while self.next < p.waypoints.len() {
             let w = p.waypoints[self.next];
             let target = aim(self.next);
@@ -174,8 +167,6 @@ impl PathFollower {
         }
         if self.next < p.waypoints.len() {
             let target = aim(self.next);
-            // Stuck somewhere the path did not foresee (pushed into a nook, wedged by others):
-            // no nearer its target for a second, it plans again from where it really is.
             let d = flat(pos, target);
             let stalled = match self.watch {
                 Some((t, best, since)) if flat(t, target) < 1.0 => {
@@ -203,8 +194,6 @@ impl PathFollower {
         if !p.complete {
             return Steer::NoPath;
         }
-        // Past the last waypoint: straight at the goal if it is in clear line, else plan now
-        // (the goal moved since the path was made).
         if line_clear(pos, goal) {
             return Steer::Walk(goal);
         }

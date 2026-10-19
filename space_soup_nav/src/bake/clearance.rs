@@ -138,7 +138,6 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
     let (bx, by, bz) = (cfg.bmin[0] as f64, cfg.bmin[1] as f64, cfg.bmin[2] as f64);
     let (climb, height) = (cfg.walkable_climb, cfg.walkable_height);
 
-    // Classify every missing neighbour as wall or drop.
     let mut dist = vec![0xffu8; chf.spans.len()];
     let mut sites: Vec<Site> = Vec::new();
     let mut site_at: Vec<Vec<u32>> = vec![Vec::new(); (w * h) as usize];
@@ -178,11 +177,8 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
     }
     chamfer(chf, &mut dist);
 
-    // Each wall cell's actual geometry within the body band, seen from above.
     let grid = TriangleGrid::new(verts, tris, cfg.bmin, cfg.bmax);
     for site in sites.iter_mut() {
-        // The cell, grown by a millimetre: Recast rasterises a wall touching a cell's edge into
-        // the cell, and a face exactly on that edge must survive the clipping where it is.
         const EDGE: f64 = 0.001;
         let (x0, z0) = (bx + site.x as f64 * cs - EDGE, bz + site.z as f64 * cs - EDGE);
         let (x1, z1) = (x0 + cs + 2.0 * EDGE, z0 + cs + 2.0 * EDGE);
@@ -206,14 +202,11 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
                 site.footprints.push(f);
             }
         }
-        // Solid was rasterised here but no triangle survived the clipping (it only touched the
-        // cell's edge): treat the whole cell as wall, the safe side.
         if site.footprints.is_empty() {
             site.footprints.push(vec![[x0, z0], [x1, z0], [x1, z1], [x0, z1]]);
         }
     }
 
-    // Keep a span when it is clear of drops by Recast's measure and of walls by the real one.
     let r = clearance_m as f64;
     let reach = (r / cs).ceil() as i32 + 1;
     let min_drop = (cfg.walkable_radius * 2).min(255) as u8;

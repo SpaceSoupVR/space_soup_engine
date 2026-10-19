@@ -20,14 +20,11 @@ fn piece<'a>(kit: &'a [Arc<space_soup_nav::asset::NavPieceAsset>], name: &str) -
 #[test]
 fn the_piece_checker_finds_floor_no_doorway_reaches() {
     let kit = common::bake_kit("human_cs10_monotone");
-    // The vent room's upper floor and the start room's catwalk have no ladder or vent in the kit.
     let vent = check_piece(piece(&kit, "VentLockRoom"));
     assert!(vent.iter().any(|i| i.severity == Severity::Warning && i.message.contains("cannot be reached") && i.at.is_some_and(|p| p.y > 3000.0)), "{vent:?}");
     let catwalk = check_piece(piece(&kit, "4WayTallWCatwalk_DoorType_A"));
     assert!(catwalk.iter().any(|i| i.message.contains("cannot be reached")), "{catwalk:?}");
-    // A plain hallway is clean: every doorway passable, all floor reachable.
     assert!(check_piece(piece(&kit, "HallwayShort_DoorType_A")).iter().all(|i| i.severity == Severity::Info));
-    // The cap has no floor and says so, without calling it an error.
     assert!(check_piece(piece(&kit, "DoorType_A_NO_PATH")).iter().all(|i| i.severity == Severity::Info));
 }
 
@@ -35,7 +32,6 @@ fn the_piece_checker_finds_floor_no_doorway_reaches() {
 fn the_piece_checker_catches_a_link_that_lands_nowhere_and_one_that_reaches_the_floor_above() {
     let kit = common::bake_kit("human_cs10_monotone");
     let vent_room = piece(&kit, "VentLockRoom");
-    // A ladder from the ground floor to the floor above, and one into thin air.
     let up_floor = check_piece(vent_room).iter().find(|i| i.message.contains("86") || i.at.is_some_and(|p| p.y > 3000.0)).and_then(|i| i.at).unwrap();
     let ground = vent_room.vertices.iter().find(|v| v.y < 500).copied().unwrap();
     let mut fixed = (**vent_room).clone();
@@ -50,7 +46,6 @@ fn the_piece_checker_catches_a_link_that_lands_nowhere_and_one_that_reaches_the_
     ];
     let issues = check_piece(&Arc::new(fixed));
     assert!(issues.iter().any(|i| i.severity == Severity::Error && i.message.contains("Vent link 1: its end is not on any floor")), "{issues:?}");
-    // With the ladder, the big upper floor is no longer cut off.
     assert!(!issues.iter().any(|i| i.message.contains("cannot be reached") && i.at.is_some_and(|p| (p - up_floor).length() < 2000.0)), "{issues:?}");
 }
 
@@ -74,7 +69,6 @@ fn the_level_report_agrees_with_the_world() {
             assert_eq!(r.missed_joins, 0);
             assert_eq!(r.open_doorways, layout.unsealed);
             assert!(!r.cutting_doors.is_empty() && r.cutting_doors.len() < r.doors);
-            // Checking doors leaves them as they were and says nothing about it.
             assert!(w.gates.iter().all(|g| g.open));
             assert!(w.drain_events().is_empty());
         }
@@ -92,7 +86,6 @@ fn debug_drawing_covers_the_world_paths_and_crowds() {
     let portals = w.links.iter().filter(|l| l.kind == WorldLinkKind::Portal).count();
     assert_eq!(d.lines.iter().filter(|l| l.layer == Layer::Doorways).count(), portals);
     assert!(d.lines.iter().any(|l| l.layer == Layer::Walls));
-    // A shut door is drawn shut.
     let gate = w.gates.iter().position(|g| !g.links.is_empty()).unwrap() as u32;
     w.set_gate(gate, false);
     let shut = DebugDraw::world(&mut w, FloorColour::ByHeight);
@@ -121,8 +114,6 @@ fn debug_drawing_covers_the_world_paths_and_crowds() {
 
 #[test]
 fn a_player_on_the_catwalk_draws_a_monster_to_the_floor_beneath_it() {
-    // The original game has no way up for monsters either: players climb with their hands, and a
-    // creature follows Unity's partial path as close as the floor allows. Ours must do the same.
     for class in ["human_cs10_monotone", "large_cs10_layers"] {
         let kit = common::bake_kit(class);
         let room = piece(&kit, "4WayTallWCatwalk_DoorType_A");
@@ -133,7 +124,6 @@ fn a_player_on_the_catwalk_draws_a_monster_to_the_floor_beneath_it() {
         let start = (door.a + door.b).as_dvec3() / 2.0;
         let p = find_path(&w, start, up, DVec3::new(1500.0, 300.0, 1500.0)).expect("start and goal are on the mesh");
         assert!(!p.complete, "{class}: the catwalk is reachable after all");
-        // It stops at the floor nearest the player: under the catwalk is structure, not floor.
         let end = p.waypoints.last().unwrap().pos();
         let below = w.nearest_poly(DVec3::new(up.x, 100.0, up.z), DVec3::new(4000.0, 500.0, 4000.0)).unwrap().point;
         assert!(end.y < up.y - 1500.0 && (end - below).length() < 1.0, "{class}: ends at {end:?}, nearest floor {below:?}");

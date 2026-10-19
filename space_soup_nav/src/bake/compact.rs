@@ -114,7 +114,6 @@ impl CompactHeightfield {
                             let top = (s.y as i32 + s.h as i32).min(n.y as i32 + n.h as i32);
                             if top - bot >= walkable_height && (n.y as i32 - s.y as i32).abs() <= walkable_climb {
                                 let layer = k - nc.index as usize;
-                                // Recast cannot link more than 62 spans up a column; it logs and skips.
                                 if layer < NOT_CONNECTED as usize {
                                     chf.spans[i].con[dir] = layer as u8;
                                 }
@@ -178,7 +177,6 @@ pub fn erode_walkable_area(chf: &mut CompactHeightfield, radius: i32) {
 /// diagonal), from the spans already at 0 in `dist`.
 pub fn chamfer(chf: &CompactHeightfield, dist: &mut [u8]) {
     let (w, h) = (chf.width, chf.height);
-    // One step of the sweep: from span `i`, through `dir`, then optionally `diag` from there.
     let relax = |chf: &CompactHeightfield, dist: &mut [u8], x: i32, z: i32, i: usize, dir: usize, diag: usize| {
         let s = chf.spans[i];
         if s.con[dir] == NOT_CONNECTED {

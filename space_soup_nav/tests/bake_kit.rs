@@ -57,12 +57,9 @@ fn every_piece_bakes_to_a_valid_asset_whose_doorways_reach_their_sockets() {
             let bytes = asset.to_bytes();
             let back = NavPieceAsset::from_bytes(&bytes).unwrap();
             assert_eq!(back, asset);
-            // Baking is deterministic: the same input gives the same bytes, so a content hash
-            // identifies a bake.
             let (again, _) = bake_piece(&input, &settings(c), [1.0; 3], &ExportOptions::default()).unwrap();
             assert_eq!(again.to_bytes(), bytes, "{} / {}: two bakes differ", piece.piece, c.name);
 
-            // Socket edges lie exactly on their plane, at the marker's floor height.
             for (k, s) in asset.sockets.iter().enumerate() {
                 let axis = if matches!(s.outward, Dir::PosX | Dir::NegX) { 0 } else { 2 };
                 let plane = (sockets[k].position[axis] * 1000.0).round() as i32;
@@ -76,7 +73,6 @@ fn every_piece_bakes_to_a_valid_asset_whose_doorways_reach_their_sockets() {
                     }
                 }
             }
-            // A human-sized agent must get through every doorway of every real room.
             if c.agent_radius <= 0.4 && !piece.piece.contains("NO_PATH") {
                 for (k, n) in report.socket_edges.iter().enumerate() {
                     if *n == 0 {

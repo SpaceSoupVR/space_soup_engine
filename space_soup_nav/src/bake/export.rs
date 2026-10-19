@@ -230,7 +230,6 @@ fn check_input(input: &PieceInput, settings: &Settings, scale: [f32; 3]) -> Resu
     if let Some(t) = input.triangles.iter().find(|t| t.iter().any(|&i| i as u64 >= n)) {
         return Err(format!("{name}: triangle {t:?} names a vertex of {n}"));
     }
-    // The extent the grid will cover: every vertex and socket, scaled, plus the aprons' reach.
     let mut lo = [f64::MAX; 3];
     let mut hi = [f64::MIN; 3];
     for p in input.vertices.iter().chain(input.sockets.iter().map(|s| &s.position)) {
@@ -272,11 +271,6 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
         .map(|s| SocketSpec { position: (Vec3::from(s.position) * sv).to_array(), ..s.clone() })
         .collect();
 
-    // The apron: floor beyond each doorway, deep enough that erosion from its far edge cannot
-    // reach back to the socket plane, with the doorway's own sides carried on through it. The
-    // neighbour on the other side has the same doorway, so this is what the agent will meet there;
-    // a plain wide apron let the opening flare out at the plane (0.60 to 1.00 m walkable for the
-    // same 1.66 m door, against 0.86 m exactly).
     let apron = settings.agent_radius + 4.0 * settings.cell_size;
     let openings: Vec<(f32, f32)> = sockets.iter().map(|s| doorway_opening(&verts, &tris, s, opts.socket_half_width)).collect();
     for (s, &(left, right)) in sockets.iter().zip(&openings) {
@@ -310,7 +304,6 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
     let pm = &b.polymesh;
     let mut report = BakeReport { recast_polys: pm.npolys(), build_ms, ..Default::default() };
 
-    // Onto the millimetre lattice.
     let cs_mm = (pm.cs as f64 * 1000.0).round() as i32;
     let ch_mm = (pm.ch as f64 * 1000.0).round() as i32;
     if ((pm.cs as f64 * 1000.0) - cs_mm as f64).abs() > 1e-3 || ((pm.ch as f64 * 1000.0) - ch_mm as f64).abs() > 1e-3 {
@@ -327,8 +320,6 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
     for i in 0..pm.npolys() {
         let pv: Vec<IVec3> = pm.poly_verts(i).iter().map(|&v| lattice(pm.verts[v as usize])).collect();
         let [vb, _, tb, tc] = b.detail.meshes[i];
-        // Recast places detail one cell height above its polygons; taken off so both describe
-        // the same floor. Its first vertices are copies of the polygon's: those use the exact ones.
         let dv = |k: u8| -> IVec3 {
             if (k as usize) < pv.len() {
                 return pv[k as usize];
@@ -346,7 +337,6 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
         polys.push(WorkPoly { verts: pv, area, detail: if flat { None } else { Some(dtris) } });
     }
 
-    // Cut at every socket plane, keeping the piece's side.
     let cuts: Vec<Cut> = sockets
         .iter()
         .map(|s| {
@@ -373,7 +363,6 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
         polys = next;
     }
 
-    // Doorway floors are exactly the marker's height, so neighbours meet without a step.
     let doorway = |v: IVec3| -> Option<usize> {
         cuts.iter().zip(&sockets).position(|(c, s)| {
             let lat = if c.axis == 0 { 2 } else { 0 };
@@ -399,7 +388,6 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
         }
     }
 
-    // Anything the cuts left too big or dented becomes triangles; the merge rebuilds them.
     let mut cleaned = Vec::with_capacity(polys.len());
     for p in polys {
         if p.verts.len() < 3 || twice_area(&p.verts) <= 0 {
@@ -493,7 +481,6 @@ fn merge_convex(polys: &mut Vec<WorkPoly>) {
                 if !(0..merged.len()).all(|k| ccw_from_above(merged[k], merged[(k + 1) % merged.len()], merged[(k + 2) % merged.len()]) >= 0) {
                     continue;
                 }
-                // Recast's rule: both corners where the polygons join must turn strictly.
                 let q = &polys[pb].verts;
                 if ccw_from_above(p.verts[(ea + na - 1) % na], p.verts[ea], q[(eb + 2) % nb]) <= 0
                     || ccw_from_above(q[(eb + nb - 1) % nb], q[eb], p.verts[(ea + 2) % na]) <= 0
@@ -605,7 +592,6 @@ fn assemble(
         }
         nav_polys.push(NavPoly { verts: p.clone(), edges, area: polys[pi].area, flags: 1 });
     }
-    // Each socket's span: the extreme ends of its edges along the doorway.
     for (k, s) in out_sockets.iter_mut().enumerate() {
         let lat = if cuts[k].axis == 0 { 2 } else { 0 };
         let ends: Vec<IVec3> = s

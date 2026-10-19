@@ -160,7 +160,6 @@ pub type ChokeMap = BTreeMap<(u32, u16, u8), u32>;
 /// The narrow places of a world for agents of `radius_mm`: polygon edges (and doorway portals)
 /// where the walkable width across is under one more agent's width, grouped when within a metre.
 pub fn find_chokes(world: &NavWorld, radius_mm: f64, gap_mm: f64) -> (Vec<Choke>, ChokeMap) {
-    // Walkable width is for agent centres, so two agents abreast need 2r + gap of it.
     let narrow = 2.0 * radius_mm + gap_mm;
     let mut edges: Vec<((u32, u16, u8), DVec3, DVec2)> = Vec::new();
     for (ii, isl) in world.islands.iter().enumerate() {
@@ -172,9 +171,8 @@ pub fn find_chokes(world: &NavWorld, radius_mm: f64, gap_mm: f64) -> (Vec<Choke>
             for (e, link) in poly.edges.iter().enumerate() {
                 let (a, b) = (v[e], v[(e + 1) % n]);
                 let width = match *link {
-                    EdgeLink::Internal(o) if (o as usize) < pi => continue, // each shared edge once
+                    EdgeLink::Internal(o) if (o as usize) < pi => continue,
                     EdgeLink::Internal(_) => {
-                        // The clear width along this edge's line: walk it both ways from just inside.
                         let mid = (a + b) / 2.0;
                         let dir = (b - a).normalize_or_zero();
                         let start = mid + (centroid - mid).normalize_or_zero();
@@ -186,7 +184,6 @@ pub fn find_chokes(world: &NavWorld, radius_mm: f64, gap_mm: f64) -> (Vec<Choke>
                         span(dir) + span(-dir)
                     }
                     EdgeLink::Socket(_) => {
-                        // A doorway: its portals' own width.
                         let w = isl.links_from[pi]
                             .iter()
                             .map(|&l| &world.links[l as usize])
@@ -207,7 +204,6 @@ pub fn find_chokes(world: &NavWorld, radius_mm: f64, gap_mm: f64) -> (Vec<Choke>
             }
         }
     }
-    // Group edges within a metre of each other into one narrow place.
     let mut group: Vec<usize> = (0..edges.len()).collect();
     fn root(g: &mut [usize], mut x: usize) -> usize {
         while g[x] != x {
@@ -247,8 +243,6 @@ pub fn find_chokes(world: &NavWorld, radius_mm: f64, gap_mm: f64) -> (Vec<Choke>
     (chokes, map)
 }
 
-// --- ORCA ------------------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy)]
 struct Line {
     point: DVec2,
@@ -260,7 +254,6 @@ struct Line {
 /// symmetric deadlock); with everyone keeping right they always pass the same way. Deterministic,
 /// unlike the random nudges RVO2's examples use.
 fn keep_right(v: DVec2) -> DVec2 {
-    // Right of a direction (x, z) seen from above is (-z, x).
     v + DVec2::new(-v.y, v.x) * 0.05
 }
 
@@ -357,7 +350,7 @@ fn lp3(lines: &[Line], num_obstacle: usize, begin: usize, radius: f64, result: &
     }
 }
 
-#[allow(clippy::too_many_arguments)] // RVO2's own parameter list, kept for comparison
+#[allow(clippy::too_many_arguments)]
 /// The ORCA half-plane agent `a` must keep its velocity in to avoid `b` for `horizon` seconds,
 /// taking `share` of the avoidance (0.5 between equals, 1 against a player who will not yield).
 fn orca_line(pos: DVec2, vel: DVec2, other_pos: DVec2, other_vel: DVec2, combined: f64, horizon: f64, dt: f64, share: f64) -> Line {
@@ -387,7 +380,6 @@ fn orca_line(pos: DVec2, vel: DVec2, other_pos: DVec2, other_vel: DVec2, combine
             u = dot2 * direction - rel_vel;
         }
     } else {
-        // Already overlapping: get apart within this step.
         let inv_dt = 1.0 / dt;
         let w = rel_vel - inv_dt * rel_pos;
         let w_len = w.length().max(1e-9);
@@ -397,8 +389,6 @@ fn orca_line(pos: DVec2, vel: DVec2, other_pos: DVec2, other_vel: DVec2, combine
     }
     Line { point: vel + share * u, direction }
 }
-
-// --- the crowd ------------------------------------------------------------------------------
 
 /// What another headset needs to carry on an agent: what the host replicates anyway, plus who
 /// is whose turn at each narrow place and who holds which attack slot. Paths are left out: the new
@@ -525,7 +515,6 @@ impl Crowd {
             c.agents[id].state = a.state;
         }
         c.players = players.to_vec();
-        // Turns, in their old order.
         let mut turns: Vec<(u32, bool, u32, AgentId, i8)> = agents
             .iter()
             .enumerate()
@@ -541,12 +530,10 @@ impl Crowd {
                 t.inside.push(i);
                 c.agents[i].token = Some(ch);
             } else {
-                // Two sides inside at once cannot be right: this one queues instead.
                 t.queue.push_front((i, from));
             }
             c.agents[i].plan = Some((ch, from));
         }
-        // Slots, where the ring is the size this crowd would make it.
         c.slots = vec![Vec::new(); c.players.len()];
         for (i, a) in agents.iter().enumerate() {
             let Some(s) = a.slot else { continue };
@@ -630,9 +617,6 @@ impl Crowd {
         let a = &self.agents[id];
         let path = a.follower.path()?;
         let here = world.nearest_poly(a.pos, DVec3::new(500.0, 2000.0, 500.0)).map(|n| n.poly);
-        // From the polygon the agent is on. Off the corridor (pushed aside, just through an
-        // opening) nothing is ahead until it replans: the whole path would include openings it
-        // has already been through, and send it back through them.
         let start = here.and_then(|h| path.corridor.iter().position(|c| c.0 == h))?;
         let mut out = Vec::new();
         for k in start..path.corridor.len().saturating_sub(1) {
@@ -643,7 +627,6 @@ impl Crowd {
                 _ => isl.asset.polys[from.poly as usize].edges.iter().position(|&e| e == EdgeLink::Internal(to.0.poly)).map(|e| e as u8),
             };
             let Some(edge) = edge else { continue };
-            // Shared edges are recorded once, from the lower-numbered polygon.
             let key_there = match to.1 {
                 crate::path::Via::Edge => world.islands[to.0.island as usize].asset.polys[to.0.poly as usize]
                     .edges
@@ -683,10 +666,6 @@ impl Crowd {
                 let dist = (flat(pos) - flat(ch.centre)).length();
                 let through = self.side(c, pos) != from && dist > r + 300.0;
                 let gave_up = dist > self.settings.approach_mm * 2.0 || matches!(a.state, AgentState::Arrived | AgentState::Idle | AgentState::NoPath);
-                // Holding a turn it no longer needs: not across yet, and its path (planned again
-                // since, for a new goal) does not go through here. Kept, the turn steered it
-                // through the opening and its path steered it back, a step each way for ever.
-                // Only for one with the turn: a queued agent waits off its path by design.
                 let changed_mind = a.token == Some(c) && self.side(c, pos) == from && self.chokes_on_path(world, i).is_some_and(|ahead| !ahead.iter().any(|x| x.0 == c));
                 if through || gave_up || changed_mind {
                     self.leave(i);
@@ -696,7 +675,6 @@ impl Crowd {
             if a.state != AgentState::Moving {
                 continue;
             }
-            // Plan the next narrow place on the path once within reach of it.
             let ahead = self.chokes_ahead(world, i);
             if let Some(&c) = ahead.first() {
                 let ch = &self.chokes[c as usize];
@@ -706,19 +684,9 @@ impl Crowd {
                 }
             }
         }
-        // Nearest the opening joins its queue first. Agents normally arrive one at a time and
-        // this changes nothing; after `replan_all` or a host change everyone plans at once, and an
-        // agent already standing in a doorway must not queue behind one waiting outside it.
         joining.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         for (_, i, c) in joining {
             let a = &self.agents[i];
-            // The side it comes from is the one its path is crossing away from: which way the
-            // corridor steps across the narrow place, from the middle of the polygon it leaves to
-            // the middle of the one it enters. Where it stands is not enough: one standing on the
-            // line (spawned there, or after a host change) can be a centimetre over it, and was
-            // steered back the way it came, a step each way. Nor is the side of the polygon it
-            // leaves: a narrow place can lie across the middle of one long polygon. Without a
-            // path, where it was a moment ago.
             let mid = |p: PolyRef| {
                 let v = world.poly_dverts(p);
                 v.iter().copied().sum::<DVec3>() / v.len().max(1) as f64
@@ -738,14 +706,11 @@ impl Crowd {
             self.agents[i].plan = Some((c, from));
             self.tokens[c as usize].queue.push_back((i, from));
         }
-        // Let the front of each queue in, one at a time.
         for c in 0..self.tokens.len() {
             let ch = self.chokes[c].clone();
             let player_near = self.players.iter().any(|p| (flat(p.pos) - flat(ch.centre)).length() < p.radius_mm + 1500.0);
             let Some(&(i, s)) = self.tokens[c].queue.front() else { continue };
             let t = &self.tokens[c];
-            // The way in is clear once everyone ahead is past its near end: a follower can enter
-            // behind them (ORCA keeps the spacing), rather than wait for them to reach the middle.
             let clear = t.inside.iter().all(|&j| {
                 let ahead = (flat(self.agents[j].pos) - flat(ch.centre)).dot(ch.normal) * t.side as f64;
                 ahead < self.agents[j].params.radius_mm
@@ -758,9 +723,6 @@ impl Crowd {
                 self.agents[i].token = Some(c as u32);
             }
         }
-        // Everyone still queued waits beside the opening in two columns, one either side of its
-        // axis and stacking backwards, so the lane straight through stays clear for whoever is
-        // coming out.
         let mut wait = vec![None; n];
         for (c, t) in self.tokens.iter().enumerate() {
             let ch = &self.chokes[c];
@@ -774,7 +736,6 @@ impl Crowd {
                 let back = s as f64 * (2.0 * r + 600.0 + row as f64 * spacing);
                 let lateral = if column == 0 { 1.0 } else { -1.0 } * spacing;
                 let want = flat(ch.centre) + ch.normal * back + ch.along * lateral;
-                // On the floor and still off the axis; if the side is a wall, the other side.
                 let spot = [want, flat(ch.centre) + ch.normal * back - ch.along * lateral]
                     .into_iter()
                     .filter_map(|w| world.nearest_poly(up(w, ch.centre.y), DVec3::new(600.0, 1000.0, 600.0)).map(|nn| nn.point))
@@ -806,14 +767,12 @@ impl Crowd {
                     && world.nearest_poly(a.pos, DVec3::new(500.0, 2000.0, 500.0)).is_some_and(|s| world.walkable_line(s.poly, s.point, player.pos))
             };
             let engaged_ids: Vec<AgentId> = chasers.iter().copied().filter(|&i| engaged(&self.agents[i])).collect();
-            // Keep slots their holders still engage; free the rest.
             for s in self.slots[p].iter_mut() {
                 if s.is_some_and(|i| !engaged_ids.contains(&i)) {
                     *s = None;
                 }
             }
             let slot_pos = |k: usize| player.pos + DVec3::new(ring * (std::f64::consts::TAU * k as f64 / count as f64).cos(), 0.0, ring * (std::f64::consts::TAU * k as f64 / count as f64).sin());
-            // Nearest engaged chasers without a slot take the free slot nearest them.
             let mut waiting: Vec<AgentId> = engaged_ids.iter().copied().filter(|i| !self.slots[p].contains(&Some(*i))).collect();
             waiting.sort_by(|&a, &b| (flat(self.agents[a].pos) - flat(player.pos)).length().total_cmp(&(flat(self.agents[b].pos) - flat(player.pos)).length()).then(a.cmp(&b)));
             for i in waiting {
@@ -823,7 +782,6 @@ impl Crowd {
                 match free {
                     Some(k) => self.slots[p][k] = Some(i),
                     None => {
-                        // Hold just outside the ring, on the side the agent is on.
                         let away = (flat(self.agents[i].pos) - flat(player.pos)).normalize_or_zero();
                         let hold = flat(player.pos) + away * (ring + 2.0 * r + self.settings.gap_mm);
                         out[i] = Some((up(hold, player.pos.y), false));
@@ -866,12 +824,6 @@ impl Crowd {
                 }
                 let (a, b) = (v[e], v[(e + 1) % n]);
                 let (d2, t) = dist_pt_seg_sqr_2d(pos, a, b);
-                // Only walls the agent faces squarely. Nearest at an end, the end is a corner: a
-                // half-plane there would block the whole way past a door frame's edge, where the
-                // agent can simply swing round it. Sliding along the floor keeps it on the
-                // navmesh at corners anyway.
-                // ...and its last 5 cm count as the corner too: an agent a few millimetres past a
-                // door frame's edge is facing the wall only in name.
                 let len = (b - a).length().max(1.0);
                 let end_margin = (50.0 / len).min(0.5);
                 if d2.sqrt() > reach || t <= end_margin || t >= 1.0 - end_margin {
@@ -883,7 +835,6 @@ impl Crowd {
                 let normal = if dist > 1e-6 {
                     to_wall / dist
                 } else {
-                    // On the wall: push straight out of it (the edge's outward side).
                     let e2 = flat(b - a).normalize_or_zero();
                     DVec2::new(e2.y, -e2.x)
                 };
@@ -898,7 +849,6 @@ impl Crowd {
     /// updated with where they are now.
     pub fn update(&mut self, world: &NavWorld, graph: &RoomGraph, dt: f64) {
         let n = self.agents.len();
-        // 1. Where each agent wants to go.
         let slot = self.assign_slots(world);
         let mut targets: Vec<Option<DVec3>> = vec![None; n];
         for i in 0..n {
@@ -942,15 +892,12 @@ impl Crowd {
                 targets[i] = Some(spot);
             }
         }
-        // An agent with its turn at a narrow place lines up with it, then walks straight through
-        // along its axis: aiming at path corners on the opening's edge, a fast agent overshoots
-        // a single-file opening and scrapes along the wall beside it.
         let mut lining_up = vec![false; n];
         for i in 0..n {
             let (Some(c), Some((_, from))) = (self.agents[i].token, self.agents[i].plan) else { continue };
             let a = &self.agents[i];
             if self.side(c, a.pos) != from {
-                continue; // through: back to the path
+                continue;
             }
             let ch = &self.chokes[c as usize];
             let r = a.params.radius_mm;
@@ -958,14 +905,11 @@ impl Crowd {
             let off_axis = rel.dot(ch.along).abs();
             let ahead = rel.dot(ch.normal) * from as f64;
             let beyond = up(flat(ch.centre) - ch.normal * from as f64 * (r + 400.0), ch.centre.y);
-            // Off the axis: onto it, where it is (at least half a metre before the opening).
             let onto_axis = up(flat(ch.centre) + ch.normal * from as f64 * ahead.clamp(r + 100.0, r + 300.0), ch.centre.y);
             let on_floor = |p: DVec3| world.nearest_poly(p, DVec3::new(30.0, 1000.0, 30.0)).is_some_and(|n| n.over_poly);
             if !(on_floor(onto_axis) && on_floor(beyond)) {
                 continue;
             }
-            // Only before the opening: once in it, straight on (re-aligning from inside sent it
-            // back out every time it drifted a few centimetres).
             if off_axis > 80.0 && ahead > r + 50.0 {
                 targets[i] = Some(onto_axis);
                 lining_up[i] = true;
@@ -974,14 +918,12 @@ impl Crowd {
             }
         }
 
-        // 2. Preferred velocities, then ORCA.
         let preferred: Vec<DVec2> = (0..n)
             .map(|i| -> DVec2 {
                 let a = &self.agents[i];
                 let Some(t) = targets[i] else { return DVec2::ZERO };
                 let d = flat(t) - flat(a.pos);
                 let dist = d.length();
-                // Slow down to stop at a spot; keep full speed past a corner of a path.
                 let stopping = lining_up[i]
                     || matches!(a.state, AgentState::Attacking | AgentState::Holding | AgentState::Waiting)
                     || a.follower.path().is_some_and(|p| p.waypoints.last().is_some_and(|w| (flat(w.pos()) - flat(t)).length() < 1.0));
@@ -990,10 +932,6 @@ impl Crowd {
                     return DVec2::ZERO;
                 }
                 let pref = d / dist * speed;
-                // Lean right only when someone is coming the other way: that is the symmetry it
-                // breaks, and anywhere else it fights the path (rounding a corner to the left).
-                // Never while holding a turn at a narrow place: the turn already settled who goes,
-                // and leaning there (from queuers shuffling aside beyond) wedged it on the jamb.
                 let oncoming = a.token.is_none() && self.agents.iter().enumerate().any(|(j, b)| {
                     let rel = flat(b.pos) - flat(a.pos);
                     j != i && rel.length() < 3000.0 && rel.dot(pref) > 0.0 && flat(b.vel).dot(pref) < 0.0
@@ -1004,9 +942,6 @@ impl Crowd {
                 if oncoming { keep_right(pref) } else { pref }
             })
             .collect();
-        // Make way: a stopped agent (arrived, queued, holding) standing in the line of an agent on
-        // the move steps off that line, to the side it is already on. ORCA alone barely moves a
-        // stopped agent: the mover slows behind it and the push it would get fades with it.
         let mut preferred = preferred;
         for i in 0..n {
             let a = &self.agents[i];
@@ -1035,13 +970,10 @@ impl Crowd {
             if step != DVec2::ZERO {
                 preferred[i] = step.clamp_length_max(a.params.max_speed_mm_s * 0.5);
                 if self.agents[i].state == AgentState::Arrived {
-                    // It has somewhere to be again for a moment.
                     targets[i] = Some(self.agents[i].pos);
                 }
             }
         }
-        // Who outranks whom: priority, then going through a narrow place over waiting for it,
-        // then moving over stopped.
         let rank = |a: &Agent| -> i32 {
             a.params.priority as i32 * 10
                 + if a.token.is_some() { 3 } else { 0 }
@@ -1051,7 +983,6 @@ impl Crowd {
                 }
         };
         let mut ranks: Vec<i32> = self.agents.iter().map(rank).collect();
-        // Through a narrow place, whoever went in first goes first.
         for t in &self.tokens {
             for (k, &i) in t.inside.iter().enumerate() {
                 ranks[i] += (t.inside.len() - k) as i32;
@@ -1086,7 +1017,6 @@ impl Crowd {
                 if (p.pos.y - a.pos.y).abs() > 1500.0 || (flat(p.pos) - pos).length() > self.settings.neighbour_mm {
                     continue;
                 }
-                // Players never yield: the agent takes all of it.
                 let combined = a.params.radius_mm + p.radius_mm + self.settings.gap_mm * 0.25;
                 lines.push(orca_line(pos, vel, flat(p.pos), flat(p.vel), combined, self.settings.time_horizon_s, dt, 1.0));
             }
@@ -1110,7 +1040,6 @@ mod tests {
 
     #[test]
     fn two_agents_head_on_pass_each_other() {
-        // No walls: two agents walking at each other on a line swap sides without touching.
         let (mut p, mut v) = ([DVec2::new(0.0, 0.0), DVec2::new(10_000.0, 0.0)], [DVec2::ZERO; 2]);
         let goal = [DVec2::new(10_000.0, 0.0), DVec2::new(0.0, 0.0)];
         let (r, speed, dt): (f64, f64, f64) = (400.0, 1500.0, 1.0 / 36.0);
@@ -1141,7 +1070,6 @@ mod tests {
 
     #[test]
     fn a_wall_line_stops_an_agent_at_the_wall() {
-        // A wall 1 m ahead (+x): walking into it, the agent stops at it and does not cross.
         let normal = DVec2::new(1.0, 0.0);
         let mut x = 0.0;
         for _ in 0..200 {

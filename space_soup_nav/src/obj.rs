@@ -94,14 +94,13 @@ impl TriMesh {
             )
         };
         let vertices = (0..8).map(c).collect();
-        // Each face as two triangles wound so the normal points out (counter-clockwise from outside).
         let quads: [[u32; 4]; 6] = [
-            [0, 4, 6, 2], // -X
-            [1, 3, 7, 5], // +X
-            [0, 1, 5, 4], // -Y
-            [2, 6, 7, 3], // +Y
-            [0, 2, 3, 1], // -Z
-            [4, 5, 7, 6], // +Z
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
         ];
         let triangles = quads.iter().flat_map(|q| [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]).collect();
         TriMesh { vertices, triangles }

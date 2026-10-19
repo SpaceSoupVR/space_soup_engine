@@ -108,7 +108,6 @@ fn carry_and_throw(physics: &mut PhysicsWorld, scene: &mut Scene, id: &str, both
     let held = physics.pose_of(id).unwrap();
     let grip = physics.grabs.get(&(hands.player, id.to_string(), Hand::Right)).and_then(|g| g.local).unwrap();
     let hung = (held.0 + held.1 * grip).distance(if both { hand - side } else { hand });
-    // The swing: a constant acceleration to `speed` in 0.3 s.
     let steps = 18;
     let mut v = 0.0;
     for _ in 0..steps {
@@ -137,9 +136,7 @@ fn a_pebble_follows_the_hand_and_is_thrown_at_the_hands_speed() {
     eprintln!("pebble: hangs {:.1} mm from the hand; hand {hand:.2} m/s, pebble {:.2} m/s at release, {:.2} m/s after", hung * 1000.0, at_release.x, after.x);
     assert!(hung < 0.005, "a held pebble hangs {hung} m from the hand");
     assert!(at_release.x > 0.85 * hand && at_release.x < 1.1 * hand, "thrown at {} of the hand's {hand} m/s", at_release.x);
-    // Let go, it keeps what it had: nothing takes its speed or adds to it.
     assert!((after.x - at_release.x).abs() < 0.3 && after.y < at_release.y, "{at_release} -> {after}");
-    // And it is in the air a metre on, falling.
     let p = scene.find_object("pebble").unwrap().cuboid.position;
     assert!(p.x > 1.0 && p.y > 0.5, "{p}");
 }
@@ -150,7 +147,6 @@ fn a_pebble_follows_the_hand_and_is_thrown_at_the_hands_speed() {
 #[test]
 fn a_heavy_rock_is_carried_lags_a_quick_hand_and_cannot_be_flung() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    // One world at a time: PhysX has one foundation a process.
     let throw = |both: bool| {
         let (mut physics, mut scene) = world(vec![ground(), body("rock", 0.0, ROCK.0, ROCK.1)], None);
         carry_and_throw(&mut physics, &mut scene, "rock", both, 9.0)
@@ -161,14 +157,10 @@ fn a_heavy_rock_is_carried_lags_a_quick_hand_and_cannot_be_flung() {
         "8 kg rock: one hand hangs {:.1} mm, thrown at {:.2} of the hand's {hand:.1} m/s; two hands hang {:.1} mm, {:.2} m/s",
         hung * 1000.0, one.x, hung_two * 1000.0, two.x
     );
-    // Carried: within two centimetres of the hand, held still.
     assert!(hung < 0.02, "one hand cannot hold it: {hung} m from the hand");
-    // One hand's strength on 8 kg for 0.3 s is 180 N / 8 kg * 0.3 s = 6.75 m/s
-    // at the very most: well short of the hand.
     assert!(one.x < 0.75 * hand, "flung at {} m/s by a {hand} m/s hand", one.x);
     assert!(one.x <= HAND_FORCE / ROCK.1 * 0.3 + 0.2, "faster than a hand's strength allows: {}", one.x);
     assert!(one.x > 2.0, "it hardly moved: {}", one.x);
-    // Two hands: more, and still not the pebble's.
     assert!(two.x > one.x + 1.0, "two hands threw it no harder: {} against {}", two.x, one.x);
 }
 
@@ -245,7 +237,6 @@ fn the_default_grab_of_a_dynamic_body_carries_it_and_the_release_drops_it() {
         rt.update(DT, &one_player(player, frame(rig_at(at), InputFrame::default())));
     }
     let carried = rt.scene().find_object("rock").unwrap().cuboid.position;
-    // Held by its top face: its middle its own half height under the hand.
     assert!(carried.distance(at - Vec3::Y * 0.05) < 0.02, "the rock is at {carried}, the hand at {at}");
     let mut release = InputFrame::default();
     release.released.push(("rock".to_string(), Hand::Right));
@@ -294,10 +285,6 @@ fn a_rock_sinks_and_a_crate_floats() {
     let crate_half = Vec3::splat(0.15);
     let mut objects = pond_floor();
     objects.push(dropped("rock", 6.0, 0.0, 1.0, ROCK.0, ROCK.1));
-    // 5 kg in 27 litres: under a fifth the weight of its water, so it
-    // floats on a face. (Between 0.21 and 0.79 of its water's weight a cube
-    // floats on an edge, as a real one does: a 9 kg crate this size settled
-    // corner down, which is right and is not what a crate should look like.)
     let mut c = dropped("crate", 10.0, 0.0, 1.0, crate_half, 5.0);
     c.cuboid.rotation = Quat::from_rotation_z(0.5);
     objects.push(c);
@@ -318,11 +305,7 @@ fn a_rock_sinks_and_a_crate_floats() {
     let floating = scene.find_object("crate").unwrap().cuboid.clone();
     eprintln!("rock sank at up to {fastest_sinking:.2} m/s to {rock}; crate floats at y {:.3}", floating.position.y);
     assert!((rock.y - (-1.5 + ROCK.0.y)).abs() < 0.03, "the rock rests on the bed: {rock}");
-    // Through the air it met the water at 4.3 m/s; under it, it is slowed
-    // toward the 1.7 m/s its weight in water and its drag settle at.
     assert!(fastest_sinking > 0.5 && fastest_sinking < 3.2, "sinking at {fastest_sinking} m/s");
-    // Afloat: 5 kg of water is 5.6 cm of its 30, so its middle 9.4 cm above
-    // the surface.
     assert!((floating.position.y - 0.094).abs() < 0.02, "the crate floats at {}", floating.position.y);
     let up = floating.rotation * Vec3::Y;
     assert!(up.abs().max_element() > 0.985, "it does not float level: {up}");
@@ -338,11 +321,8 @@ fn a_rock_sinks_and_a_crate_floats() {
 #[test]
 fn a_body_is_told_of_once_however_it_bobs_and_bounces() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    // A light crate dropped from 3 m: it plunges, is thrown back up clear of
-    // the surface and drops in again, a few times, each smaller.
     let mut objects = pond_floor();
     objects.push(dropped("crate", 10.0, 0.0, 3.0, Vec3::splat(0.15), 4.0));
-    // A rock dropped into 20 cm of water over a hard shelf: it bounces.
     objects.push(GameObject {
         id: "shelf".into(),
         brush: Some(BrushDef { solids: vec![block_solid([18.0, -1.5, -2.0], [22.0, -0.2, 2.0], "m")], subtract: vec![] }),
@@ -376,12 +356,10 @@ fn a_body_is_told_of_once_however_it_bobs_and_bounces() {
         let told: Vec<_> = entries.iter().filter(|e| e.id == id).collect();
         assert!(!told.is_empty(), "{id} was never told of");
         assert!(told.len() <= 2, "{id} splashed {} times", told.len());
-        // What is told after the first came with a real share of it.
         for pair in told.windows(2) {
             assert!(pair[1].energy() >= 0.05 * pair[0].energy(), "{id}: a {} J plop after a {} J splash", pair[1].energy(), pair[0].energy());
         }
     }
-    // The first carries the fall: 3 m (less the crate's half height) is 7.5 m/s.
     let first = entries.iter().find(|e| e.id == "crate").unwrap();
     assert!((first.velocity.length() - (2.0f32 * 9.81 * 2.85).sqrt()).abs() < 0.4, "{first:?}");
     assert!((first.energy() - 0.5 * 4.0 * 2.0 * 9.81 * 2.85).abs() < 12.0, "{} J", first.energy());
@@ -395,7 +373,6 @@ fn a_going_in_again_is_judged_by_the_energy_it_brings() {
     use crate::water::WaterState;
     let half = Vec3::splat(0.05);
     let down = |speed: f32| Vec3::new(3.0, -speed, 0.0);
-    // In at `v0`, out, and in again `gap` seconds later at `v1`.
     let again = |v0: f32, gap: f64, v1: f32| {
         let mut s = WaterState::default();
         assert!(s.see(Some(0.0), Vec3::Y * 0.5, half, down(v0), 1.0, Some(0.0)).is_none());
@@ -407,9 +384,7 @@ fn a_going_in_again_is_judged_by_the_energy_it_brings() {
     assert!(again(5.0, 0.3, 4.5), "a skip at nine tenths of the speed");
     assert!(!again(5.0, 0.3, 1.0), "a bob at a fifth of the speed, at once");
     assert!(again(5.0, 3.0, 1.0), "the same plop three seconds on");
-    // Two real strikes a tenth of a second apart are two splashes: no timer.
     assert!(again(5.0, 0.12, 5.0));
-    // With no clock every going-in counts, as it did.
     let mut s = WaterState::default();
     s.see(None, Vec3::Y * 0.5, half, down(5.0), 1.0, Some(0.0));
     assert!(s.see(None, Vec3::Y * 0.04, half, down(5.0), 1.0, Some(0.0)).is_some());
@@ -426,7 +401,6 @@ fn the_cap_drops_the_least_energetic_first() {
     let mut all = vec![e("pebble_a", 0.1, 3.0), e("boulder", 80.0, 4.0), e("pebble_b", 0.1, 6.0), e("rock", 8.0, 5.0), e("pebble_c", 0.1, 3.0)];
     keep_most_energetic(&mut all, 3);
     assert_eq!(all.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["boulder", "pebble_b", "rock"]);
-    // Ties keep the earlier; a cap of everything, or of nothing.
     let mut ties = vec![e("a", 1.0, 2.0), e("b", 1.0, 2.0), e("c", 1.0, 2.0)];
     keep_most_energetic(&mut ties, 2);
     assert_eq!(ties.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
@@ -451,7 +425,6 @@ fn a_sunk_prop_comes_back_and_so_does_every_prop_when_asked() {
     let (mut physics, mut scene) = world(objects, Some(pond()));
     let rigs = HashMap::new();
     let at = |scene: &Scene, id: &str| scene.find_object(id).unwrap().cuboid.position;
-    // Thrown out into the pond, both rocks.
     physics.apply_impulse("rock", Vec3::new(6.0, 4.0, 0.0));
     physics.apply_impulse("keeper", Vec3::new(6.0, 4.0, 0.0));
     let mut on_the_bed = None;
@@ -470,9 +443,7 @@ fn a_sunk_prop_comes_back_and_so_does_every_prop_when_asked() {
     let waited = (back - sank) as f32 * DT;
     eprintln!("sunk at {:.1} s, back {waited:.1} s later", sank as f32 * DT);
     assert!((3.0..5.0).contains(&waited), "it came back {waited} s after it sank, authored 3");
-    // The one with no `respawn_sunk` stays where it sank.
     assert!(at(&scene, "keeper").y < -1.3, "{}", at(&scene, "keeper"));
-    // Asked for: every prop is back, and the scene knows it.
     physics.apply_impulse("pebble", Vec3::new(-3.0, 3.0, 0.0));
     for _ in 0..30 {
         physics.step(DT, &mut scene, &rigs);
@@ -484,7 +455,6 @@ fn a_sunk_prop_comes_back_and_so_does_every_prop_when_asked() {
     for (id, home) in [("keeper", Vec3::new(1.0, ROCK.0.y, 2.0)), ("pebble", Vec3::new(1.0, PEBBLE.0.y, -2.0))] {
         assert!(at(&scene, id).distance(home) < 0.02, "{id} is at {}", at(&scene, id));
     }
-    // Not out of a hand.
     let mut hands = Hands::new(&mut physics, Vec3::new(1.0, 0.03, -2.0));
     for _ in 0..3 {
         physics.step(DT, &mut scene, &hands.rigs);
@@ -510,12 +480,9 @@ fn rocks_into_a_pond_cost_what_is_awake_and_tell_of_no_more_than_the_cap() {
     let mut table = Vec::new();
     for count in [1usize, 16, 128] {
         let mut objects = pond_floor();
-        // A block of rocks 40 cm apart, dropped level from 2 m: they meet
-        // the water on the same step, the worst case for the cap.
         let side = (count as f32).sqrt().ceil() as usize;
         for i in 0..count {
             let (ix, iz) = (i % side, i / side);
-            // Three sizes, by turn: pebble, fist, two-hand.
             let (half, mass) = [PEBBLE, (Vec3::new(0.05, 0.035, 0.045), 1.0), ROCK][i % 3];
             objects.push(dropped(&format!("rock_{i}"), 8.0 + ix as f32 * 0.4, -2.0 + iz as f32 * 0.4, 2.0, half, mass));
         }
@@ -556,8 +523,6 @@ fn rocks_into_a_pond_cost_what_is_awake_and_tell_of_no_more_than_the_cap() {
     for (count, falling, entering, worst, resting, seen, told, most_seen, most_told, _) in &table {
         eprintln!("{count:5} | {falling:8.1} | {entering:8.1} {worst:8.1} | {resting:7.2} | {seen:5} | {told:5} | {most_seen:4} | {most_told:4}");
     }
-    // At rest a hundred and twenty-eight rocks cost about what one does: a
-    // flag each. (Loose bound: it is a timing on a shared machine.)
     let (one, many) = (table[0].4, table[2].4);
     assert!(many < one + 60.0, "128 sleeping rocks cost {many:.1} us a step against {one:.1} for one");
 }
@@ -599,10 +564,8 @@ fn the_shipped_rocks_rest_where_they_lie_and_one_thrown_in_the_pond_comes_back()
         assert!(p.distance(*home) < 0.25, "{id} did not stay where it was put: {home} -> {p}");
         assert_eq!(physics.is_asleep(id), Some(true), "{id} never came to rest");
     }
-    // (What is still awake is the swing doors, which their closers hold.)
     assert!(physics.step_stats().awake <= 3, "{:?}", physics.step_stats());
     assert!(physics.take_water_entries().is_empty(), "a prop was put in the water");
-    // The pond's boulder, thrown out over the water (west of the bank).
     let home = at(&scene, "pond_boulder");
     physics.apply_impulse("pond_boulder", Vec3::new(-5.0, 4.0, -1.0));
     let (mut told, mut sank, mut back) = (Vec::new(), None, None);
@@ -648,15 +611,12 @@ fn the_shipped_game_by_the_headsets_events_a_rock_into_the_pond_and_a_door_by_it
     let player = PlayerId::new();
     let rig_at = |right: Vec3| {
         let mut rig = PlayerRig::new();
-        // The body an arm's length behind the hand (toward -x: the hallway
-        // side of the brick hall's door, so it is the hand that opens it).
         rig.set_head(right + Vec3::new(-0.45, 0.5, 0.0), Quat::IDENTITY);
         rig.set_hand_grip(Hand::Right, right, Quat::IDENTITY);
         rig.set_hand_grip(Hand::Left, right + Vec3::new(-0.5, -0.2, 0.4), Quat::IDENTITY);
         rig
     };
     let pos = |rt: &GameRuntime, id: &str| rt.scene().find_object(id).unwrap().cuboid.position;
-    // Let the piles settle, the hand already down at the rock.
     let home = pos(&rt, "pond_rock_1");
     let mut hand = home + Vec3::new(0.0, 0.06, 0.0);
     for _ in 0..120 {
@@ -671,7 +631,6 @@ fn the_shipped_game_by_the_headsets_events_a_rock_into_the_pond_and_a_door_by_it
     grab.grabbed.push(("pond_rock_1".to_string(), Hand::Right, String::new()));
     rt.update(DT, &one_player(player, frame(rig_at(hand), grab)));
     assert!(rt.rigid_physics.is_held("pond_rock_1"), "the grip did not take the rock");
-    // Up, and out over the water (west), at an arm's pace.
     let over = Vec3::new(-23.0, 1.0, -20.5);
     let from = hand;
     for k in 0..120 {
@@ -696,19 +655,14 @@ fn the_shipped_game_by_the_headsets_events_a_rock_into_the_pond_and_a_door_by_it
     assert_eq!(told.len(), 1, "told of {told:?}");
     assert!((told[0].1 - 1.0).abs() < 1e-3 && (5.0..30.0).contains(&told[0].2), "{told:?}");
     assert!(pos(&rt, "pond_rock_1").y < -0.4);
-    // The menu button: everything loose is back where the level put it.
     let mut press = InputFrame::default();
     press.button_presses.push(crate::events::ButtonPress::new(crate::events::RESPAWN_PROPS_BUTTON, None, Hand::Left));
     rt.update(DT, &one_player(player, frame(rig_at(hand), press)));
     rt.update(DT, &one_player(player, frame(rig_at(hand), InputFrame::default())));
     assert!(pos(&rt, "pond_rock_1").distance(home) < 0.02, "not put back: {}", pos(&rt, "pond_rock_1"));
 
-    // THE DOOR. The handle is on the leaf a metre up; the hand comes to it
-    // from the hallway side (-x), 6 cm off the leaf's face.
     let lever = pos(&rt, "brick_door_lever");
     let mut hand = lever + Vec3::new(-0.08, 0.0, 0.0);
-    // The player stands in the hallway and swings it at arm's length (a
-    // body that follows the hand through pushes the leaf on ahead of it).
     let stood = hand + Vec3::new(-0.45, 0.5, 0.0);
     let rig_at = |right: Vec3| {
         let mut rig = rig_at(right);
@@ -724,7 +678,6 @@ fn the_shipped_game_by_the_headsets_events_a_rock_into_the_pond_and_a_door_by_it
     grab.grabbed.push(("brick_door_north".to_string(), Hand::Right, "handle".to_string()));
     rt.update(DT, &one_player(player, frame(rig_at(hand), grab)));
     assert!(rt.rigid_physics.is_held("brick_door_north"), "the grip did not take the handle");
-    // Walk the handle round its arc into the brick hall: 70 degrees in a second.
     let geom = crate::door::DoorGeom::of(rt.scene().find_object("brick_door_north").unwrap()).unwrap();
     let local = geom.closed_rot.inverse() * (hand - geom.closed_pos);
     for k in 0..60 {

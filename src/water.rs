@@ -387,7 +387,6 @@ impl WaterState {
         let clear = (0.5 * radius).max(0.02);
         let was_in = before.is_some_and(|(_, was_in)| was_in);
         self.is_in = if was_in { under <= surface + clear } else { under <= surface };
-        // First seen already under, it was placed there, not dropped.
         let came_down = before.is_some_and(|(was, was_in)| !was_in && was > surface);
         if !(self.is_in && came_down && -velocity.y >= ENTRY_SPEED) {
             return None;
@@ -715,7 +714,6 @@ mod tests {
         let half = Vec3::new(0.2, 0.1, 0.3);
         let fall = Vec3::new(0.5, -4.0, 0.0);
         let mut entries = Vec::new();
-        // Falling from above the surface (0) to under it.
         for k in 0..20 {
             let centre = Vec3::new(1.0, 1.0 - 0.1 * k as f32, 2.0);
             entries.extend(w.see("box", centre, half, fall, 12.0, Some(0.0)));
@@ -723,18 +721,13 @@ mod tests {
         assert_eq!(entries.len(), 1, "{entries:?}");
         let e = &entries[0];
         assert!(e.position == Vec3::new(1.0, 0.0, 2.0) && e.velocity == fall && e.mass == 12.0);
-        // A disc as big as its 0.4 x 0.6 footprint.
         assert!((std::f32::consts::PI * e.radius * e.radius - 0.24).abs() < 1e-4);
-        // Bobbing a centimetre either side of the surface: never again.
         for k in 0..200 {
             let centre = Vec3::new(1.0, 0.1 + 0.01 * (k as f32 * 0.7).sin(), 2.0);
             assert!(w.see("box", centre, half, Vec3::new(0.0, -1.0, 0.0), 12.0, Some(0.0)).is_none());
         }
-        // Lifted clear and dropped again: once more.
         assert!(w.see("box", Vec3::new(1.0, 1.0, 2.0), half, Vec3::ZERO, 12.0, Some(0.0)).is_none());
         assert!(w.see("box", Vec3::new(1.0, 0.05, 2.0), half, fall, 12.0, Some(0.0)).is_some());
-        // Lowered in slowly, placed under it to begin with, or over dry
-        // ground: nothing.
         let mut w = WaterWatch::default();
         assert!(w.see("a", Vec3::new(0.0, 1.0, 0.0), half, Vec3::ZERO, 1.0, Some(0.0)).is_none());
         assert!(w.see("a", Vec3::new(0.0, 0.0, 0.0), half, Vec3::new(0.0, -0.2, 0.0), 1.0, Some(0.0)).is_none());

@@ -67,7 +67,6 @@ impl LevelDigest {
         let mut b = Vec::with_capacity(8 + self.islands.len() * 29 + self.joins.len() * 13);
         b.extend_from_slice(&(self.islands.len() as u32).to_le_bytes());
         for i in &self.islands {
-            // The name is covered by the content hash; it is in the digest only to report.
             b.extend_from_slice(&i.content_hash.to_le_bytes());
             b.push(i.turn);
             for c in i.offset {

@@ -104,7 +104,6 @@ impl DebugDraw {
     /// A horizontal circle as line segments.
     pub fn circle(&mut self, c: DVec3, r: f64, colour: Rgba, layer: Layer) {
         const N: usize = 16;
-        // Points of a unit circle, every 22.5 degrees (written out: no trigonometry here).
         const H: f64 = std::f64::consts::FRAC_1_SQRT_2;
         const UNIT: [(f64, f64); N] = [
             (1.0, 0.0), (0.92388, 0.38268), (H, H), (0.38268, 0.92388), (0.0, 1.0), (-0.38268, 0.92388), (-H, H), (-0.92388, 0.38268),
@@ -124,7 +123,6 @@ impl DebugDraw {
     /// edges), doorways (blue: open passage; orange: door open; red: door shut) and typed links.
     pub fn world(world: &mut NavWorld, colour: FloorColour) -> DebugDraw {
         let mut d = DebugDraw::new();
-        // Area labels in a fixed order (first appearance), so colours do not depend on root ids.
         let mut seen: Vec<u32> = Vec::new();
         let refs: Vec<PolyRef> = world
             .islands
@@ -171,7 +169,6 @@ impl DebugDraw {
                             .filter(|l| l.kind == LinkKind::Portal && l.from_edge == Some(e as u8))
                             .collect();
                         if portals.is_empty() {
-                            // A doorway joined to nothing (or impassable for this size): a wall.
                             d.line(a, b, Rgba::WALL, Layer::Walls);
                         }
                         for l in portals {

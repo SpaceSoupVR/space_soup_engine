@@ -296,7 +296,6 @@ fn the_baked_cave_is_walked_through_without_a_jolt() {
         .as_ref()
         .and_then(|t| t.holes.as_ref())
         .is_some_and(|h| game.join(crate::terrain::ground_patch_path(&h.path)).is_file());
-    // `CAVE_WALK_ANY=1` walks an older cave too, for the number to compare.
     if !patched && std::env::var("CAVE_WALK_ANY").is_err() {
         eprintln!("skipped: this level's cave is not a baked distance-field cave");
         return;
@@ -304,14 +303,11 @@ fn the_baked_cave_is_walked_through_without_a_jolt() {
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);
 
-    // The bench views' own eyes, front to back (`quest_app/bench_views.json`).
     let way = [(12.5, 35.0), (18.0, 33.4), (19.6, 33.3), (26.0, 33.5), (31.5, 33.6), (35.5, 35.5)];
     let mut loco = Locomotion::new(LocomotionMode::Smooth);
     let y0 = physics.raycast_down(Vec3::new(way[0].0, 20.0, way[0].1), 40.0).expect("the beach is under the start").0.y;
     loco.player_offset = Vec3::new(way[0].0, y0, way[0].1);
     let (mut worst_step, mut worst_at, mut lowest, mut steps) = (0f32, Vec3::ZERO, f32::MAX, 0u32);
-    // Where a ray straight down from chest height found no floor within four
-    // metres: a gap at a join, or a collider that is not there.
     let mut holes = Vec::new();
     for leg in way.windows(2) {
         let (from, to) = (Vec3::new(leg[0].0, 0.0, leg[0].1), Vec3::new(leg[1].0, 0.0, leg[1].1));
@@ -345,10 +341,5 @@ fn the_baked_cave_is_walked_through_without_a_jolt() {
     assert!(holes.is_empty(), "no floor under {:?}", &holes[..holes.len().min(5)]);
     assert!((end.x - 35.5).abs() < 0.3 && (end.z - 35.5).abs() < 0.3, "stopped on the way, at {end:?}");
     assert!(lowest > -3.0, "fell through the floor, to y = {lowest}");
-    // A kerb's worth: the sculpt's own floor may end a few centimetres above
-    // the ground it runs out onto (7.4 cm at the shipped cave's back mouth,
-    // 2026-10-13 -- a ledge in the sculpt, the same surface on both sides).
-    // A join that did not meet would be a fall, or a step of the lip's depth
-    // at every crossing.
     assert!(worst_step < 0.10, "the floor jolts {:.1} cm in one 2 cm step at {worst_at:?}", worst_step * 100.0);
 }

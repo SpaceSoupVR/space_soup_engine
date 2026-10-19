@@ -148,8 +148,6 @@ impl GrabTargets {
     /// hands whose choice changed to a new thing this frame.
     pub fn update(&mut self, offers: [Option<&[Offer]>; 2], held: [Option<&str>; 2]) -> [bool; 2] {
         let is_held = |id: &str| held.iter().flatten().any(|h| *h == id);
-        // Each hand's offers in reach, cheapest first, the thing it has
-        // weighed with its looser limits.
         let ranked: [Vec<(f32, &Offer)>; 2] = [0, 1].map(|h| {
             let (Some(offers), None) = (offers[h], held[h]) else { return Vec::new() };
             let had = self.hands[h].as_ref().map(|c| c.id.as_str());
@@ -161,8 +159,6 @@ impl GrabTargets {
             list.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id)));
             list
         });
-        // Hysteresis: the thing a hand has, unless another beats it by the
-        // margin.
         let pick = |h: usize, not: Option<&str>| -> Option<(f32, &Offer)> {
             let list = &ranked[h];
             let best = list.iter().find(|(_, o)| Some(o.id.as_str()) != not).copied()?;
@@ -173,8 +169,6 @@ impl GrabTargets {
             }
         };
         let mut picks = [pick(0, None), pick(1, None)];
-        // Both hands on one thing: the better-placed has it (the one that had
-        // it, on a tie), the other its next best.
         if let (Some(l), Some(r)) = (picks[0], picks[1]) {
             if l.1.id == r.1.id {
                 let had_left = self.hands[0].as_ref().is_some_and(|c| c.id == l.1.id);
@@ -271,32 +265,24 @@ mod tests {
 
     #[test]
     fn a_hand_reaches_by_touch_in_front_and_along_its_aim_and_no_further() {
-        // Touching, behind the wrist: taken.
         assert!(cost(&rock("a", 0.1, 170.0), false).is_some());
-        // In front of the palm at 30 cm, 60 degrees off: taken; behind: not.
         assert!(cost(&rock("a", 0.3, 60.0), false).is_some());
         assert!(cost(&rock("a", 0.3, 110.0), false).is_none());
-        // Along the aim at 55 cm: taken within the cone, not outside it.
         assert!(cost(&rock("a", 0.55, 15.0), false).is_some());
         assert!(cost(&rock("a", 0.55, 40.0), false).is_none());
-        // Past arm's reach plus the cone: never (no force grab).
         assert!(cost(&rock("a", 0.65, 0.0), false).is_none());
         assert!(CONE_REACH * KEEP_SLACK < crate::rigid_physics_grab::HOLD_BREAK, "a choice must be within the hold's reach");
     }
 
     #[test]
     fn under_the_palm_the_nearest_wins_and_further_out_the_one_pointed_at() {
-        // Both touching: the nearer, whatever the angle.
         assert!(cost(&rock("a", 0.02, 80.0), false).unwrap() < cost(&rock("b", 0.08, 0.0), false).unwrap());
-        // At arm's length: the one pointed at beats a slightly nearer one
-        // well off the aim.
         assert!(cost(&rock("a", 0.45, 2.0), false).unwrap() < cost(&rock("b", 0.40, 20.0), false).unwrap());
     }
 
     #[test]
     fn the_choice_does_not_flicker_between_two_rocks() {
         let mut t = GrabTargets::default();
-        // Two rocks at nearly the same cost; the hand sways between them.
         let mut switches = 0;
         let mut last = None;
         for k in 0..200 {
@@ -310,12 +296,10 @@ mod tests {
             last = now;
         }
         assert_eq!(switches, 0, "the choice flickered");
-        // A clearly better one takes over.
         let offers = [rock("a", 0.30, 10.0), rock("b", 0.10, 0.0)];
         let had = t.choice(1).unwrap().id.clone();
         t.update([None, Some(&offers)], [None, None]);
         assert_eq!(t.choice(1).unwrap().id, "b", "had {had}");
-        // The one it has keeps it a little past where a newcomer is taken.
         let offers = [rock("b", CONE_REACH * 1.1, 5.0)];
         t.update([None, Some(&offers)], [None, None]);
         assert_eq!(t.choice(1).map(|c| c.id.as_str()), Some("b"));
@@ -328,17 +312,14 @@ mod tests {
     fn neither_hand_is_offered_what_a_hand_holds_and_two_hands_share_out() {
         let mut t = GrabTargets::default();
         let offers = [rock("a", 0.05, 0.0), rock("b", 0.2, 5.0)];
-        // The left hand holds a: the right is offered b.
         t.update([Some(&offers), Some(&offers)], [Some("a"), None]);
         assert!(t.choice(0).is_none(), "a full hand offers nothing");
         assert_eq!(t.choice(1).unwrap().id, "b");
-        // Both empty and both nearest a: the nearer hand has it, the other b.
         let left = [rock("a", 0.10, 0.0), rock("b", 0.25, 5.0)];
         let right = [rock("a", 0.05, 0.0), rock("b", 0.30, 5.0)];
         t.update([Some(&left), Some(&right)], [None, None]);
         assert_eq!(t.choice(1).unwrap().id, "a");
         assert_eq!(t.choice(0).unwrap().id, "b");
-        // Only one thing: one hand has it, the other nothing.
         let one = [rock("a", 0.05, 0.0)];
         t.update([Some(&one), Some(&one)], [None, None]);
         assert!(t.choice(0).is_none() ^ t.choice(1).is_none());
@@ -385,7 +366,6 @@ mod tests {
 
     #[test]
     fn the_angle_is_to_the_things_edge() {
-        // Pointing beside a 20 cm sphere 50 cm off, 10 cm to the side: on it.
         assert_eq!(angle_to_sphere(Vec3::ZERO, Vec3::NEG_Z, Vec3::new(0.1, 0.0, -0.5), 0.2), 0.0);
         let a = angle_to_sphere(Vec3::ZERO, Vec3::NEG_Z, Vec3::new(0.5, 0.0, -0.5), 0.1);
         assert!((a.to_degrees() - (45.0 - (0.1f32 / 0.5f32.hypot(0.5)).asin().to_degrees())).abs() < 0.01);

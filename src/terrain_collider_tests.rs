@@ -90,7 +90,6 @@ fn cave_patch(bare: &Heightfield) -> GroundPatch {
     let grid = bare.patch(bare.bounds(), 1);
     let stride = bare.meshed_cells()[0] + 1;
     let at = |ix: u32, iz: u32| grid.positions[(iz * stride + ix) as usize];
-    // Round the outline: along +z, then +x, then back.
     let ring: [(u32, u32); 12] =
         [(20, 15), (20, 16), (20, 17), (20, 18), (21, 18), (22, 18), (23, 18), (23, 17), (23, 16), (23, 15), (22, 15), (21, 15)];
     let mut positions: Vec<Vec3> = ring.iter().map(|&(ix, iz)| at(ix, iz)).collect();
@@ -225,13 +224,10 @@ fn sweep(field: &Heightfield, kind: TerrainCollider, expect_a_height_field: bool
     let bounds = field.bounds();
     let [dx, dz] = field.cell_size();
     let grid = relief_grid(field);
-    // By the higher and the lower end, whichever way round the range is written.
     let (high, low) = (bounds.max.y.max(bounds.min.y), bounds.max.y.min(bounds.min.y));
     let (top, reach) = (high + 3.0, high - low + 10.0);
     let mut out = Swept::default();
     let mut state = 0x5eed_u32;
-    // A cell with a twist of more than this between its two possible splits
-    // has to have been asked at a point that tells them apart.
     const TWIST: f32 = 0.05;
     const TELLS: f32 = 0.005;
     let mut told: HashMap<(u32, u32), bool> = HashMap::new();
@@ -259,8 +255,6 @@ fn sweep(field: &Heightfield, kind: TerrainCollider, expect_a_height_field: bool
                             "{kind:?}: the ray at ({x}, {z}) in cell ({ix}, {iz}) met a face turned {normal:?}, and the drawn triangle there is turned {n:?}"
                         );
                         out.hits += 1;
-                        // The two heights this point could have had: under
-                        // the split b-c, and under a-d.
                         let bc = if tx + tz <= 1.0 { ha + (hb - ha) * tx + (hc - ha) * tz } else { hd + (hc - hd) * (1.0 - tx) + (hb - hd) * (1.0 - tz) };
                         let ad = if tx >= tz { ha + (hb - ha) * tx + (hd - hb) * tz } else { ha + (hc - ha) * tz + (hd - hc) * tx };
                         if (bc - ad).abs() > TELLS && ((y - bc).abs() < 1e-3 || (y - ad).abs() < 1e-3) {
@@ -289,7 +283,6 @@ fn sweep(field: &Heightfield, kind: TerrainCollider, expect_a_height_field: bool
         }
     }
 
-    // Past the field on every side: nothing.
     for k in 0..200 {
         let t = k as f32 / 200.0;
         let (w, d) = (bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z);
@@ -303,9 +296,6 @@ fn sweep(field: &Heightfield, kind: TerrainCollider, expect_a_height_field: bool
         }
     }
 
-    // FROM UNDERNEATH: the ground is one-sided, as the mesh's back faces are.
-    // A cave's ceiling is the cave's own rock; a ray inside it that met the
-    // terrain's underside would put a floor over the player's head.
     for _ in 0..400 {
         let (x, z) = (bounds.min.x + next(&mut state) * (bounds.max.x - bounds.min.x), bounds.min.z + next(&mut state) * (bounds.max.z - bounds.min.z));
         let hit = physics.raycast(Vec3::new(x, low - 3.0, z), Vec3::Y, reach);
@@ -330,7 +320,6 @@ fn a_ray_lands_on_the_drawn_triangle_everywhere_on_a_ground_with_relief_holes_an
     let field = relief_with_holes_and_a_patch();
     assert_eq!(field.meshed_cells(), [NX - 2, NZ - 1], "the fixture is meant to leave its last column of cells undrawn");
 
-    // The reference against the collider it was cooked into, first.
     let mesh = sweep(&field, TerrainCollider::TriangleMesh, false);
     let grid = sweep(&field, TerrainCollider::HeightField, true);
     eprintln!("triangle mesh: {mesh:?}\nheight field:  {grid:?}");
@@ -339,7 +328,6 @@ fn a_ray_lands_on_the_drawn_triangle_everywhere_on_a_ground_with_relief_holes_an
         assert!(swept.hits > 24_000, "too few rays met ground to mean anything: {swept:?}");
         assert!(swept.open > 600, "too few rays went through holes to mean anything: {swept:?}");
         assert!(swept.edge * 5 < swept.hits, "too many rays were on edges and not asked: {swept:?}");
-        // Both diagonals, in number: a sweep of one of them proves half.
         assert!(swept.splits[0] > 300 && swept.splits[1] > 300, "the fixture does not use both diagonals: {swept:?}");
     }
     assert_eq!((mesh.hits, mesh.open, mesh.edge), (grid.hits, grid.open, grid.edge), "the two colliders were asked the same rays");
@@ -406,7 +394,6 @@ fn rolling_ground_with_an_opening() -> Heightfield {
 fn a_body_rests_on_the_height_field_where_it_rests_on_the_mesh_and_falls_through_a_hole() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let field = rolling_ground_with_an_opening();
-    // Over solid ground, four places; and over the middle of the opening.
     let solid = [(-9.3f32, -7.4f32), (6.6, -11.2), (10.2, 9.7), (-4.1, 12.3)];
     let hole = (-0.5f32, -0.5f32);
     const HALF: f32 = 0.2;
@@ -504,13 +491,11 @@ fn a_real_levels_ground_meets_every_ray_where_its_triangle_mesh_did() {
         eprintln!("skipped: {name}'s terrain does not load");
         return;
     };
-    // The ground alone: nothing else to be met.
     scene.objects.clear();
     scene.water.clear();
 
     let b = ground.bounds();
     let (top, reach) = (b.max.y + 5.0, b.max.y - b.min.y + 60.0);
-    // Each ray: where from, which way, how far.
     let mut rays: Vec<(Vec3, Vec3, f32)> = Vec::new();
     let mut state = 0xca7e_u32;
     const SIDE: u32 = 300;
@@ -520,12 +505,10 @@ fn a_real_levels_ground_meets_every_ray_where_its_triangle_mesh_did() {
     }
     let lattice = rays.len();
     if let Some(extra) = ground.as_heightfield().and_then(|f| f.ground_patch()) {
-        // No more than some tens of thousands, however many caves there are.
         let every = (extra.indices.len() / 3 / 40_000).max(1);
         for tri in extra.triangles_in(b).step_by(every) {
             let c = [0, 1, 2].map(|k| extra.positions[tri[k] as usize]);
             let Some(n) = (c[1] - c[0]).cross(c[2] - c[0]).try_normalize() else { continue };
-            // Well inside it: a fifth of the way in from every edge at least.
             let (u, v) = (0.2 + 0.4 * next(&mut state), 0.2 + 0.4 * next(&mut state));
             let (u, v) = if u + v > 0.8 { (0.6 - u * 0.5, 0.6 - v * 0.5) } else { (u, v) };
             let p = c[0] + (c[1] - c[0]) * u + (c[2] - c[0]) * v;
@@ -543,13 +526,6 @@ fn a_real_levels_ground_meets_every_ray_where_its_triangle_mesh_did() {
     let on_mesh = ask(TerrainCollider::TriangleMesh);
     let on_grid = ask(TerrainCollider::HeightField);
 
-    // `shared`: the same point on another face. A ray that arrives exactly on
-    // an edge two faces share -- the patch's vertices sit on the grid's own
-    // lines, so some of the lattice's do -- is given either face, and either
-    // is right; a cell split the wrong way would move the point across the
-    // whole cell instead.
-    // `past_an_edge`: the nearer of two faces by one collider and the one
-    // behind it by the other, no more than two centimetres apart.
     let (mut met, mut open, mut shared, mut past_an_edge, mut furthest, mut differ) = (0usize, 0usize, 0usize, 0usize, 0f32, Vec::new());
     let mut patch_faces_met = 0usize;
     for (i, (mesh, grid)) in on_mesh.iter().zip(&on_grid).enumerate() {
@@ -590,9 +566,6 @@ fn a_real_levels_ground_meets_every_ray_where_its_triangle_mesh_did() {
 fn the_caves_ground_is_batched_in_whole_connected_pieces() {
     use crate::rigid_physics_spawn::ground_patch_batches;
 
-    // Five strips of ground, each its own piece: 2 x 1500 triangles on a
-    // ribbon of 1501 x 2 vertices, three metres apart in z. The third is
-    // stored in two parts with two other strips between them, as a file may.
     let ribbon = |piece: u32, from: u32, to: u32, base: u32, positions: &mut Vec<Vec3>, indices: &mut Vec<u32>| {
         for i in from..=to {
             for side in 0..2u32 {
@@ -610,8 +583,6 @@ fn the_caves_ground_is_batched_in_whole_connected_pieces() {
         starts.push(positions.len() as u32);
         ribbon(piece, 0, 1500, positions.len() as u32, &mut positions, &mut indices);
     }
-    // Piece 2 again, further along, joined to its first half by one triangle
-    // that reaches back to it.
     let more = positions.len() as u32;
     ribbon(2, 1501, 2000, more, &mut positions, &mut indices);
     indices.extend([starts[2] + 1500 * 2, starts[2] + 1500 * 2 + 1, more]);
@@ -620,26 +591,21 @@ fn the_caves_ground_is_batched_in_whole_connected_pieces() {
     let everywhere = crate::physics::Aabb { min: Vec3::splat(-1e6), max: Vec3::splat(1e6) };
 
     let batches = ground_patch_batches(&patch, everywhere);
-    // 3000 triangles a piece, and 3999 for the third (its second half is 499
-    // steps, and the one triangle that joins them): closed past 8192.
     assert_eq!(batches.iter().map(|(_, i)| i.len() / 3).collect::<Vec<_>>(), vec![3000 + 3000 + 3999, 3000 + 3000]);
     assert_eq!(batches.iter().map(|(_, i)| i.len()).sum::<usize>(), patch.indices.len());
     let mut seen: Vec<Vec<u32>> = Vec::new();
     for (points, indices) in &batches {
         assert!(indices.iter().all(|i| (*i as usize) < points.len()));
-        // A piece is known by its height here; a batch holds whole pieces.
         let mut pieces: Vec<u32> = points.iter().map(|p| p.y() as u32).collect();
         pieces.sort_unstable();
         pieces.dedup();
         seen.push(pieces);
-        // No vertex twice: each is the patch's own, once.
         let mut at: Vec<(u32, u32, u32)> = points.iter().map(|p| (p.x().to_bits(), p.y().to_bits(), p.z().to_bits())).collect();
         at.sort_unstable();
         at.dedup();
         assert_eq!(at.len(), points.len());
     }
     assert_eq!(seen, vec![vec![0, 1, 2], vec![3, 4]], "a piece was split between two meshes");
-    // Every triangle, with its corners where they were.
     let mut before: Vec<[(u32, u32, u32); 3]> =
         patch.indices.chunks_exact(3).map(|t| [0, 1, 2].map(|k| { let p = patch.positions[t[k] as usize]; (p.x.to_bits(), p.y.to_bits(), p.z.to_bits()) })).collect();
     let mut after: Vec<[(u32, u32, u32); 3]> = batches
@@ -697,7 +663,6 @@ fn print_what_the_physics_rebuild_costs() {
     let rebuild_ms = started.elapsed().as_secs_f64() * 1000.0;
     let after = rss_mb();
 
-    // The rays: over the ground's own extent, measured after the memory is.
     let mut rays = String::new();
     if let Some(def) = &scene.terrain {
         let ground = crate::terrain::load(def, game).expect("the terrain loads");
@@ -714,7 +679,6 @@ fn print_what_the_physics_rebuild_costs() {
             }
         }
         let down_ms = started.elapsed().as_secs_f64() * 1000.0 / ROUNDS as f64;
-        // Which of them met nothing, as a map: x across, z down.
         let mut missed = String::new();
         if down_hits < 100 * ROUNDS {
             missed = "\n  rays down that met no ground (x across, z down):".to_string();
@@ -723,8 +687,6 @@ fn print_what_the_physics_rebuild_costs() {
                 missed.extend(row.iter().map(|&(x, z)| if physics.raycast_down(Vec3::new(x, b.max.y + 10.0, z), reach).is_some() { '#' } else { '.' }));
             }
         }
-        // Along the ground, a metre and a half over it, the length of the
-        // level: a shot, or a line of sight.
         let along = Vec3::new(1.0, -0.004, 0.31).normalize();
         let started = std::time::Instant::now();
         for _ in 0..ROUNDS {
@@ -735,9 +697,6 @@ fn print_what_the_physics_rebuild_costs() {
             }
         }
         let long_ms = started.elapsed().as_secs_f64() * 1000.0 / ROUNDS as f64;
-        // Across the whole level, level, at nine tenths of the ground's
-        // height range: over nearly all of it, so a height field walks every
-        // cell under the ray where a mesh's tree steps over them.
         let across = Vec3::new(1.0, 0.0, 0.31).normalize();
         let high = b.min.y + (b.max.y - b.min.y) * 0.9;
         let started = std::time::Instant::now();

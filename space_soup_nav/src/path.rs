@@ -100,7 +100,6 @@ struct Open {
 impl Eq for Open {}
 impl Ord for Open {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Lowest f first; ties to the lower polygon index, so the order is fixed.
         other.f.total_cmp(&self.f).then_with(|| other.node.cmp(&self.node))
     }
 }
@@ -222,7 +221,6 @@ impl PathQuery {
             if node.closed || node.search != self.search {
                 continue;
             }
-            // A stale heap entry for a node since improved.
             if top.f > node.g + (self.goal - node.pos).length() + 1e-9 {
                 continue;
             }
@@ -240,17 +238,12 @@ impl PathQuery {
                 }
                 let ni = world.poly_index(next) as u32;
                 let n = self.nodes[ni as usize];
-                // Enter `next` at the point of its doorway nearest where we are.
                 let (_, t) = dist_pt_seg_sqr_2d(node.pos, portal.0, portal.1);
                 let entry = portal.0.lerp(portal.1, t);
                 let g = node.g + (entry - node.pos).length() + cost;
-                // Entry points move, so a polygon already expanded can turn out to have a cheaper
-                // way in; it is reopened then (a real improvement, not rounding).
                 if n.search == self.search && g >= n.g - 1e-6 {
                     continue;
                 }
-                // For a partial path, a polygon is as close as its nearest point, not its entry:
-                // a monster drawn to a player on a catwalk should stop under the nearest floor.
                 if n.search != self.search {
                     let near = (self.goal - world.closest_point_on_poly(next, self.goal).0).length();
                     if near < self.best.0 {
@@ -323,8 +316,6 @@ fn portal_between(world: &NavWorld, a: PolyRef, b: PolyRef, via: Via) -> Vec<(DV
             let verts = world.poly_dverts(a);
             let n = verts.len();
             let e = poly.edges.iter().position(|&x| x == EdgeLink::Internal(b.poly)).expect("corridor steps are neighbours");
-            // Counter-clockwise from above, the interior is left of each edge: walking out across
-            // edge v[e] -> v[e+1], v[e+1] is on the left.
             vec![(verts[(e + 1) % n], verts[e])]
         }
     }
@@ -349,7 +340,6 @@ pub fn straighten(world: &NavWorld, corridor: &[(PolyRef, Via)], start: DVec3, g
         if let Via::Link(l) = via {
             let link = &world.links[l as usize];
             if let LinkKind::Typed(_) = link.kind {
-                // Walk to the nearest point of the link's start, jump, carry on from its end.
                 let s = link.from_segment.map(|v| v.as_dvec3());
                 let (_, t) = dist_pt_seg_sqr_2d(from, s[0], s[1]);
                 let at = s[0].lerp(s[1], t);
@@ -381,13 +371,11 @@ fn funnel(start: DVec3, goal: DVec3, portals: &[(DVec3, DVec3)], out: &mut Vec<W
     let mut i = 0usize;
     while i < pts.len() {
         let (nl, nr) = pts[i];
-        // Tighten the right side.
         if side(apex, right, nr) >= 0.0 {
             if same(apex, right) || side(apex, left, nr) < 0.0 {
                 right = nr;
                 ri = i;
             } else {
-                // The right side crossed the left: the left corner is on the path.
                 out.push(Waypoint::Walk(left));
                 apex = left;
                 right = apex;
@@ -396,7 +384,6 @@ fn funnel(start: DVec3, goal: DVec3, portals: &[(DVec3, DVec3)], out: &mut Vec<W
                 continue;
             }
         }
-        // Tighten the left side.
         if side(apex, left, nl) <= 0.0 {
             if same(apex, left) || side(apex, right, nl) > 0.0 {
                 left = nl;
@@ -455,7 +442,6 @@ fn route_rooms(world: &NavWorld, graph: &crate::world::RoomGraph, q: &mut PathQu
     if rs == rg {
         return None;
     }
-    // Walking distance inside `room` from a point to each of its doorways.
     let mut legs = |room: u32, at: (PolyRef, DVec3)| -> Vec<(u32, u64)> {
         let mut out = Vec::new();
         for &c in &graph.doorways[room as usize] {

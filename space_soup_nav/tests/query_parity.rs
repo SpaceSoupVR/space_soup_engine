@@ -81,7 +81,6 @@ fn point_queries_agree_with_detour() {
         let shift = lattice_shift(g.stages.as_ref().unwrap().polymesh.bmin);
         let mm = |v: [f32; 3]| mm(v) + shift;
         let far = g.recast_config.bmin.iter().chain(&g.recast_config.bmax).fold(0.0f64, |a, &b| a.max(b.abs() as f64));
-        // Twice an f32's spacing at the mesh's farthest coordinate, in millimetres.
         let resolution = (far * 1000.0 * 2.0f64.powi(-23) * 2.0).max(0.05);
 
         for (k, n) in q.nearest.iter().enumerate() {
@@ -90,13 +89,11 @@ fn point_queries_agree_with_detour() {
             let ours = w.nearest_poly(center, ext);
             let ours_poly = ours.map_or(-1, |o| o.poly.poly as i32);
             if ours_poly != n.poly {
-                // Detour may pick a polygon just outside the box, which it rounds out to cells.
                 let candidates = w.polys_in_box(center - ext, center + ext);
                 if n.poly >= 0 && !candidates.contains(&pref(n.poly)) {
                     tally.nearest_box_rounding += 1;
                     continue;
                 }
-                // Or two polygons are equally near (a point over both, within the climb).
                 if let (Some(o), true) = (ours, n.poly >= 0) {
                     let (theirs_pt, over) = w.closest_point_on_poly(pref(n.poly), center);
                     let dist = |p: DVec3, over: bool| {
@@ -108,8 +105,6 @@ fn point_queries_agree_with_detour() {
                         tally.nearest_ties += 1;
                         continue;
                     }
-                    // A race closer than one cell height, which is how far Detour's detail
-                    // heights sit above ours.
                     if (dt.sqrt() - d_o.sqrt()).abs() <= ch_mm + 2.0 {
                         tally.nearest_detail_offset += 1;
                         continue;
@@ -123,7 +118,6 @@ fn point_queries_agree_with_detour() {
                 let dxz = ((o.point.x - t.x).powi(2) + (o.point.z - t.z).powi(2)).sqrt();
                 let flat = |p: DVec3| ((p.x - center.x).powi(2) + (p.z - center.z).powi(2)).sqrt();
                 if dxz > 2.0 && (flat(o.point) - flat(t)).abs() <= resolution.max(1.0) {
-                    // Two outline points equally near, where the outline turns a corner.
                     tally.nearest_equally_near_points += 1;
                     continue;
                 }
@@ -142,22 +136,15 @@ fn point_queries_agree_with_detour() {
             let reached = r.t > 1e30;
             let len = (e - s).length();
             let theirs_normal = DVec3::new(r.hit_normal[0] as f64, r.hit_normal[1] as f64, r.hit_normal[2] as f64);
-            // A start exactly on a wall (the starts are nearest points, often on an edge): which
-            // side of it the start is depends on half a millimetre of vertex rounding, and both
-            // answers are "blocked at once".
             let blocked_at_start = |t: f64, reached: bool| !reached && t * len <= 2.0;
             if blocked_at_start(hit.t, hit.t == f64::MAX) && blocked_at_start(r.t as f64, reached) {
                 tally.rays_starting_on_a_wall += 1;
                 continue;
             }
-            // Far from the origin Detour's f32 coordinates are only good to `resolution`; a start
-            // that close to its polygon's edge is in or out depending on that rounding.
             if (hit.path.is_empty() || r.path.is_empty()) && edge_distance(&w.poly_dverts(pref(r.start_poly)), s) <= resolution {
                 tally.rays_f32_far_from_origin += 1;
                 continue;
             }
-            // Detour stopping at t = 0 with no wall: its float test failing at the edge the ray
-            // starts on (the case `query.rs`'s on-edge margin exists for). Ours walks on.
             if !reached && r.t == 0.0 && r.hit_normal == [0.0; 3] && !r.path.is_empty() && path.starts_with(&r.path) {
                 tally.rays_detour_stalled += 1;
                 continue;
@@ -165,8 +152,6 @@ fn point_queries_agree_with_detour() {
             let ok = if reached {
                 hit.t == f64::MAX && path == r.path
             } else {
-                // Same wall, same polygons; the hit points may differ along a grazing ray by the
-                // rounding, so compare them across the wall.
                 let dir = (e - s) / len;
                 let across = (hit.t - r.t as f64).abs() * len * dir.dot(theirs_normal).abs();
                 hit.t != f64::MAX && path == r.path && (hit.normal - theirs_normal).length() < 1e-3 && across <= 1.5
@@ -184,8 +169,6 @@ fn point_queries_agree_with_detour() {
             let t = mm(m.result);
             let off = (pos - t).abs().max_element();
             if visited != m.visited && off <= 2.0 && visited.first() == m.visited.first() {
-                // The same nearest point, a corner several polygons share, reached through another
-                // of them.
                 tally.moves_corner_ties += 1;
                 continue;
             }

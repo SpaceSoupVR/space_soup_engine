@@ -69,7 +69,6 @@ fn run(s: &Scenario) -> Result {
     let mut anchor: Vec<(DVec3, f64)> = crowd.agents.iter().map(|a| (a.pos, 0.0)).collect();
     let mut queued_since: Vec<Option<f64>> = vec![None; crowd.agents.len()];
     let mut was_waiting = vec![false; crowd.agents.len()];
-    // Per narrow place: (who was inside last tick, time without letting anyone new in while queued).
     let mut handover: Vec<(Vec<usize>, f64)> = (0..crowd.chokes.len()).map(|_| (Vec::new(), 0.0)).collect();
     let flat = |a: DVec3, b: DVec3| ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
     let mut t = 0.0;
@@ -97,7 +96,6 @@ fn run(s: &Scenario) -> Result {
             println!("t {t:4.1} {} | chokes {}", line.join(" "), chokes.join(" "));
         }
 
-        // Handovers: someone new inside resets the clock; only queued time counts.
         for (c, h) in handover.iter_mut().enumerate() {
             let (_, inside, queue) = crowd.choke_state(c);
             if inside.iter().any(|i| !h.0.contains(i)) || queue.is_empty() {
@@ -109,7 +107,6 @@ fn run(s: &Scenario) -> Result {
             h.0 = inside;
         }
 
-        // Overlaps.
         let n = crowd.agents.len();
         for i in 0..n {
             for j in i + 1..n {
@@ -120,7 +117,6 @@ fn run(s: &Scenario) -> Result {
                 r.max_overlap_mm = r.max_overlap_mm.max(crowd.agents[i].params.radius_mm + p.radius_mm - flat(crowd.agents[i].pos, p.pos));
             }
         }
-        // Arrival and contact.
         let point_goals: Vec<(usize, DVec3)> = crowd.agents.iter().enumerate().filter_map(|(i, a)| if let Goal::Point(p) = a.goal { Some((i, p)) } else { None }).collect();
         if r.all_arrived_s.is_none() && !point_goals.is_empty() && point_goals.iter().all(|&(i, p)| flat(crowd.agents[i].pos, p) <= arrive) {
             r.all_arrived_s = Some(t);
@@ -128,7 +124,6 @@ fn run(s: &Scenario) -> Result {
         if r.first_contact_s.is_none() && crowd.players.iter().any(|p| crowd.agents.iter().any(|a| flat(a.pos, p.pos) <= reach)) {
             r.first_contact_s = Some(t);
         }
-        // Stuck: no progress while it still has somewhere to go.
         for (i, a) in crowd.agents.iter().enumerate() {
             let done = match a.goal {
                 Goal::Point(p) => flat(a.pos, p) <= arrive,
@@ -145,7 +140,6 @@ fn run(s: &Scenario) -> Result {
                 _ => {}
             }
             if waiting != was_waiting[i] {
-                // A queue wait is measured on its own; the stall clock restarts either side of it.
                 anchor[i] = (a.pos, t);
                 was_waiting[i] = waiting;
             }
@@ -194,7 +188,6 @@ fn every_crowd_scenario_meets_its_criteria() {
         if r.max_overlap_mm > p.max_overlap as f64 * 1000.0 {
             fail.push(format!("overlap {:.0} mm > {:.0}", r.max_overlap_mm, p.max_overlap * 1000.0));
         }
-        // Queue waits are exempt (see `PassCriteria::max_stuck_s`); a queue that stops is not.
         if r.worst_stuck_moving_s > p.max_stuck_s as f64 {
             fail.push(format!("stuck {:.1} s > {} s", r.worst_stuck_moving_s, p.max_stuck_s));
         }

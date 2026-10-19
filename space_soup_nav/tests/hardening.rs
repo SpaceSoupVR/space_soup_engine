@@ -61,7 +61,6 @@ fn mutate(rng: &mut Rng, bytes: &[u8]) -> Vec<u8> {
         match rng.below(6) {
             0 => b[at] ^= 1 << rng.below(8),
             1 => b[at] = rng.next() as u8,
-            // A whole field: lengths, indices and coordinates are 2 and 4 bytes.
             2 => {
                 let v = [0u32, 1, 0xffff, 0x7fff_ffff, 0x8000_0000, u32::MAX, rng.next() as u32][rng.below(7)];
                 for (k, x) in v.to_le_bytes().iter().enumerate() {
@@ -127,7 +126,6 @@ fn damaged_assets_are_refused_or_safe() {
                 Err(_) => failures.push(format!("{} case {case}", asset.name)),
             }
         }
-        // Without the hash fixed up, every change is refused before parsing.
         let mut flipped = bytes.clone();
         flipped[bytes.len() / 2] ^= 0x10;
         assert!(NavPieceAsset::from_bytes(&flipped).is_err());
@@ -163,7 +161,6 @@ fn random_mesh(rng: &mut Rng) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
         let b = v.len() as u32;
         let p = [rng.range(-8.0, 8.0) as f32, rng.range(-1.0, 4.0) as f32, rng.range(-8.0, 8.0) as f32];
         for _ in 0..3 {
-            // Sometimes a sliver or a point: all three corners nearly or exactly together.
             let s = [0.0, 1e-6, 0.01, 2.0][rng.below(4)];
             v.push([p[0] + rng.range(-s, s) as f32, p[1] + rng.range(-s, s) as f32, p[2] + rng.range(-s, s) as f32]);
         }
@@ -194,7 +191,6 @@ fn the_baker_survives_random_and_broken_meshes() {
         let mut rng = Rng(0x5eed_0000 + config.len() as u64);
         for case in 0..if config == "human_cs20_layers" { 300 } else { 100 } {
             let (mut v, mut t) = random_mesh(&mut rng);
-            // A few inputs no exporter should send, which must be refused rather than crash.
             match case % 10 {
                 7 => {
                     let (i, k) = (rng.below(v.len()), rng.below(3));
@@ -211,7 +207,6 @@ fn the_baker_survives_random_and_broken_meshes() {
             let input = PieceInput { name: "fuzz", vertices: &v, triangles: &t, sockets: &sockets, links: Vec::new() };
             let r = catch_unwind(AssertUnwindSafe(|| {
                 let a = bake_piece(&input, &s, [1.0; 3], &ExportOptions::default()).map(|x| x.0);
-                // Accepted means: valid, survives its own bytes, and the same again on a re-bake.
                 if let Ok(a) = &a {
                     a.validate().unwrap();
                     assert_eq!(&NavPieceAsset::from_bytes(&a.to_bytes()).unwrap(), a);
@@ -241,7 +236,6 @@ fn random_queries_on_real_levels_agree_with_the_world() {
             let mut w = common::assemble(&kit, layout, 0);
             let graph = w.room_graph();
             let mut rng = Rng(layout.seed as u64 * 7919 + 1);
-            // Shut a few doors so some pairs really are apart.
             for g in 0..w.gates.len() as u32 {
                 if rng.below(4) == 0 {
                     w.set_gate(g, false);
@@ -267,15 +261,11 @@ fn random_queries_on_real_levels_agree_with_the_world() {
                     assert_eq!(p.corridor.last().unwrap().0, nb.poly);
                     assert!((p.waypoints.last().unwrap().pos() - nb.point).length() < 1.0);
                 }
-                // Every leg is walkable floor, and the corridor steps only to neighbours.
                 for c in p.corridor.windows(2) {
                     assert!(w.neighbours(c[0].0).any(|(n, _)| n == c[1].0), "{class} seed {}: corridor jumps", layout.seed);
                 }
-                // Choosing rooms first finds a route exactly when the plain search does.
                 let g = find_path_guided(&w, &graph, a, b, ext).unwrap();
                 assert_eq!(g.complete, p.complete);
-                // Measured: the guided path is never longer, and up to 3% shorter (A* on polygon
-                // entry points is not exactly optimal once the path is pulled straight).
                 assert!(!p.complete || g.length() <= p.length() * 1.001 + 1.0, "guided path longer: {} vs {}", g.length(), p.length());
             }
         }
@@ -308,8 +298,6 @@ fn bad_joins_are_refused_and_good_ones_hold() {
         let n = layout.pieces.len();
         let mut todo = good.clone();
         while !todo.is_empty() {
-            // Between the real joins, pairs the level never asked for, sockets that do not exist,
-            // and a socket with itself: all refused, and none may use up a socket.
             for _ in 0..rng.below(6) {
                 let s = |rng: &mut Rng| SocketRef { island: rng.below(n + 1) as u32, socket: rng.below(6) as u16 };
                 let (a, b) = if rng.below(8) == 0 { let a = s(&mut rng); (a, a) } else { (s(&mut rng), s(&mut rng)) };
@@ -326,10 +314,8 @@ fn bad_joins_are_refused_and_good_ones_hold() {
             let (a, b) = todo.swap_remove(rng.below(todo.len()));
             w.connect(a, b, None).unwrap_or_else(|e| panic!("seed {}: real join {a:?} {b:?} refused: {e:?}", layout.seed));
             joined += 1;
-            // Joining it again, either way round, is refused.
             assert!(w.connect(a, b, None).is_err() && w.connect(b, a, None).is_err());
         }
-        // The level is whole: the same as the layout built the ordinary way.
         assert!(w.check_joins().iter().all(|j| !matches!(j, space_soup_nav::world::JoinIssue::MissedJoin(..))));
         exercise_world(&mut w, &mut rng);
     }

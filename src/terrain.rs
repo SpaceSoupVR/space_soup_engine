@@ -227,7 +227,6 @@ impl TerrainSource for Heightfield {
         }
         let [lo, hi] = self.height_range;
         let at = |raw: u16| self.origin.y + lo + (raw as f32 / u16::MAX as f32) * (hi - lo);
-        // Both ends, so a range written upside down is still answered.
         let ground = at(least).min(at(most));
         self.ground_patch.iter().flat_map(|p| p.positions.iter()).fold(ground, |low, p| low.min(p.y))
     }
@@ -288,12 +287,6 @@ impl TerrainSource for Heightfield {
                 let c = a + stride;
                 let d = c + 1;
 
-                // Skip the quad entirely where the ground is absent. Sampled at
-                // the quad's CENTRE: at a coarse LOD step one quad spans several
-                // mask cells, so a hole edge can shift by up to half a step at
-                // distance. Centre sampling makes that error symmetric rather
-                // than biased toward holes growing or shrinking, and physics
-                // always cooks at step 1 where it is exact.
                 if self.quad_is_open(xs[col as usize], xs[col as usize + 1], iz_at(&zs, row), iz_at(&zs, row + 1)) {
                     continue;
                 }
@@ -303,11 +296,6 @@ impl TerrainSource for Heightfield {
                 let hc = patch.positions[c as usize].y;
                 let hd = patch.positions[d as usize].y;
 
-                // Both windings below are counter-clockwise, matching the
-                // renderer's front_face(Ccw) -- cuboids were once wound the
-                // other way and every one of them lit inside-out without
-                // erroring, so a second winding is a second chance to make that
-                // mistake. They are asserted equivalent in the tests.
                 if splits_b_to_c(ha, hb, hc, hd) {
                     patch.indices.extend_from_slice(&[a, c, b, b, c, d]);
                 } else {
@@ -316,11 +304,6 @@ impl TerrainSource for Heightfield {
             }
         }
 
-        // THE GROUND A CAVE PUT BACK, in the cells it holed: the same triangles
-        // for the renderer and for physics, as the grid's are. A vertex of it
-        // that IS a sample of the grid is the grid's own vertex here, by index,
-        // so whoever computes normals from these triangles gets one normal
-        // there for both sides of the join.
         if let Some(extra) = &self.ground_patch {
             let mut mapped: Vec<Option<u32>> = vec![None; extra.positions.len()];
             for tri in extra.triangles_in(region) {
@@ -389,10 +372,6 @@ pub fn load(def: &TerrainDef, game_dir: &std::path::Path) -> Result<Box<dyn Terr
                 }
                 None => None,
             };
-            // The ground the caves put back in those holes, BESIDE the mask by
-            // name (`terrain/x.holes` -> `terrain/x.patch`): written by the
-            // same bake that opens the cells, and loaded here for the reason
-            // the mask is. Absent on a level whose holes are plain openings.
             let ground_patch = match &def.holes {
                 Some(h) => {
                     let patch_path = game_dir.join(ground_patch_path(&h.path));
@@ -438,7 +417,6 @@ pub const SHEER_SKIRT_TEXELS: u32 = 4;
 fn feather_sheer(sheer: &[f32], w: u32, h: u32) -> Vec<u8> {
     let (w, h) = (w as i32, h as i32);
     let mut m: Vec<i32> = sheer.iter().map(|&s| (s.clamp(0.0, 1.0) * 255.0).round() as i32).collect();
-    // A step along a row or column, and a diagonal one: 255 over the skirt, and 4/3 of it.
     let step = 255 / SHEER_SKIRT_TEXELS as i32;
     let diagonal = step * 4 / 3;
     let at = |x: i32, z: i32| (z * w + x) as usize;
@@ -532,7 +510,6 @@ impl SplatMap {
     pub fn bare_rock_on_sheer_ground(&mut self, ground: &dyn TerrainSource) -> usize {
         const ROCK: usize = 1;
         const SOIL: [usize; 2] = [0, 3];
-        // A face's normal y: soil holds above the first, none below the second.
         const HOLDS: f32 = 0.5;
         const BARE: f32 = 0.34;
         let bounds = ground.bounds();
@@ -552,12 +529,6 @@ impl SplatMap {
             }
             let t = ((HOLDS - ny) / (HOLDS - BARE)).clamp(0.0, 1.0);
             let s = t * t * (3.0 - 2.0 * t);
-            // The texels its footprint covers, and one beyond each side: the
-            // filter reads the next texel's weight up to a texel away.
-            // Snapped to a 1024th of a texel: a cell's edge very often lies
-            // exactly on a texel's, and whether that came out as 151.99999 or
-            // 152 would otherwise decide a texel -- differently here in f32
-            // and in the editor's port in f64.
             let snap = |t: f32| (t * 1024.0).round() / 1024.0;
             let tx = |x: f32| snap((x - bounds.min.x) / extent.x * w as f32);
             let tz = |z: f32| snap((z - bounds.min.z) / extent.z * h as f32);
@@ -575,13 +546,6 @@ impl SplatMap {
                 }
             }
         }
-        // THE FOOT AND THE RIM FADE. Bared to the texel, the rock ended on
-        // the level ground at a cliff's foot in a hard line that followed the
-        // texels -- a seam drawn where the paint used to smear. The share
-        // falls away over `SHEER_SKIRT_TEXELS` beyond the face instead, as
-        // scree does at a foot and bare rock at a rim. Whole numbers
-        // throughout, and one fixed order, so the editor's port
-        // (`sheerGround`, splatmap.js) lands on the same bytes.
         let share = feather_sheer(&sheer, w, h);
         let mut changed = 0;
         for (k, &m) in share.iter().enumerate() {
@@ -700,28 +664,20 @@ mod splat_tests {
     /// layer keep what was painted.
     #[test]
     fn soil_painted_on_a_cliff_becomes_bare_rock_and_level_ground_keeps_its_paint() {
-        // 9 x 9 samples over 4 m: level at 0 for x < 2 m, 3 m up beyond.
         let res = 9u32;
         let samples: Vec<u16> =
             (0..res * res).map(|i| if (i % res) as f32 * 0.5 >= 2.25 { u16::MAX } else { 0 }).collect();
         let field = Heightfield::new(samples, [res, res], [4.0, 4.0], [0.0, 3.0], Vec3::ZERO).unwrap();
-        // Grass and sediment everywhere, with some `high`.
         let texels = 16u32;
         let mut map = SplatMap::new([200u8, 0, 30, 25].repeat((texels * texels) as usize), [texels, texels]).unwrap();
         let changed = map.bare_rock_on_sheer_ground(&field);
         assert!(changed > 0);
-        // A texel on the step (x 2.0-2.5 m), and one on level ground far from it.
         let on_step = map.at_index(9, 8);
         assert_eq!(on_step, [0, 225, 30, 0], "the cliff's soil should be rock, its `high` kept");
         let level = map.at_index(1, 8);
         assert_eq!(level, [200, 0, 30, 25], "level ground keeps its paint");
-        // THE EDITOR SHOWS THE SAME MAP: its port (`bareRockOnSheerGround`,
-        // scene_editor_web splatmap.js) bares this fixture to the same bytes,
-        // pinned there as SHEER_FIXTURE_CHECKSUM (steepRise.test.js). If this
-        // moves, that one must.
         let fnv = map.as_bytes().iter().fold(0x811c9dc5u32, |h, &b| (h ^ b as u32).wrapping_mul(0x01000193));
         assert_eq!(fnv, SHEER_FIXTURE_CHECKSUM, "the engine and the editor bare different texels");
-        // A level field changes nothing at all.
         let flat = Heightfield::new(vec![0; 81], [res, res], [4.0, 4.0], [0.0, 3.0], Vec3::ZERO).unwrap();
         let mut untouched = SplatMap::new([200u8, 0, 30, 25].repeat((texels * texels) as usize), [texels, texels]).unwrap();
         assert_eq!(untouched.bare_rock_on_sheer_ground(&flat), 0);
@@ -868,7 +824,6 @@ mod splat_tests {
         /// was drawn to, to within a few degrees, all along.
         #[test]
         fn a_slanted_face_faces_one_way_when_its_edge_is_drawn_across_the_grid() {
-            // By area: the share of the steep face turned more than 20 degrees in plan from where it should face.
             let astray = |shape: Shape, drawn: bool| {
                 let (mut off, mut all) = (0.0f32, 0.0f32);
                 for (c, n, _) in triangles(&field(shape, drawn)) {
@@ -877,7 +832,6 @@ mod splat_tests {
                     }
                     let area = (c[1] - c[0]).cross(c[2] - c[0]).length() * 0.5;
                     let plan = Vec2::new(n.x, n.z).normalize_or_zero();
-                    // The ridge has two sides; either way is its own.
                     let turn = plan.dot(-ACROSS).abs().clamp(0.0, 1.0).acos().to_degrees();
                     all += area;
                     if turn > 20.0 {
@@ -889,14 +843,9 @@ mod splat_tests {
             for shape in [Shape::Face85, Shape::Step, Shape::Ridge] {
                 assert!(astray(shape, true) < 0.06, "{shape:?}: {:.0}% of the drawn face is turned away", astray(shape, true) * 100.0);
             }
-            // What it replaces, for the record: on whole samples a quarter of the face is.
             for shape in [Shape::Step, Shape::Ridge] {
                 assert!(astray(shape, false) > 0.15, "{shape:?}: the staircase this guards against: {:.2}", astray(shape, false));
             }
-            // And a drawn edge stands no steeper than its 1.5 cells allow, so its
-            // triangles are no thinner than that slope makes them: the 4 m ridge
-            // and pit at most 81 degrees and never under 8, the 6 m step at most
-            // 84 and never under 5.8.
             for (shape, rise) in [(Shape::Step, 6.0f32), (Shape::Ridge, 4.0), (Shape::Pit, 4.0)] {
                 let allowed = (rise / (1.5 * CELL)).atan();
                 for (c, n, thin) in triangles(&field(shape, true)).into_iter().filter(|t| t.1.y < 0.5) {
@@ -960,7 +909,6 @@ mod splat_tests {
                     for (c, n, _) in &tris {
                         if n.y < 0.5 {
                             for (x, z) in texels_under(c) {
-                                // The filter's texel, and the skirt the rock fades over.
                                 let reach = 1 + SHEER_SKIRT_TEXELS as i32;
                                 for dz in -reach..=reach {
                                     for dx in -reach..=reach {
@@ -972,7 +920,6 @@ mod splat_tests {
                                 }
                             }
                         }
-                        // Past 70 degrees no soil is left under the triangle.
                         if n.y < 0.34 {
                             for (x, z) in texels_under(c) {
                                 let w = bared.at_index(x, z);
@@ -993,11 +940,6 @@ mod splat_tests {
                     }
                 }
             }
-            // NO HARD LINE WHERE THE ROCK ENDS. On ground painted one soil all
-            // over, the soil comes back over several texels at a face's foot
-            // and rim: no texel differs from its neighbour by more than a
-            // third of the whole. (Bared to the texel it was all of it, in
-            // one step, along a line that followed the texels.)
             for shape in ALL {
                 let field = field(shape, true);
                 let mut bared = SplatMap::new([255u8, 0, 0, 0].repeat((TEXELS * TEXELS) as usize), [TEXELS, TEXELS]).unwrap();
@@ -1011,7 +953,6 @@ mod splat_tests {
                     }
                 }
             }
-            // The 60-degree bank is the steepest ground that holds its paint: nearly all of it does.
             let (field, painted) = (field(Shape::Bank60, true), painted());
             let mut bared = painted.clone();
             bared.bare_rock_on_sheer_ground(&field);
@@ -1322,8 +1263,6 @@ impl Heightfield {
     fn sample_span(&self, region: Aabb) -> (u32, u32, u32, u32) {
         let (dx, dz) = self.step_metres();
 
-        // Sample indices covering the region, clamped to the field and widened
-        // by one so adjacent patches share an edge instead of leaving a crack.
         let to_index = |world: f32, origin: f32, spacing: f32, max: u32| -> u32 {
             let i = ((world - origin) / spacing).floor();
             if i < 0.0 { 0 } else { (i as u32).min(max) }
@@ -1416,7 +1355,6 @@ mod ground_patch_tests {
         GroundPatch {
             positions: vec![c[0], c[1], c[2], c[3], mid],
             normals: vec![Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0)],
-            // Counter-clockwise seen from above, as the grid's: (x, z) -> (z, x) turn.
             indices: vec![0, 3, 4, 3, 2, 4, 2, 1, 4, 1, 0, 4],
         }
     }
@@ -1437,7 +1375,6 @@ mod ground_patch_tests {
         let holed = field();
         let before = holed.patch(holed.bounds(), 1);
         assert_eq!(before.positions.len(), 25);
-        // The field's rim, and the four edges of the hole.
         assert_eq!(open_edges(&before.indices), 16 + 4);
         assert!(before.normals.is_empty(), "no patch: nothing is authored");
 
@@ -1449,7 +1386,6 @@ mod ground_patch_tests {
         assert_eq!(after.normals.len(), 26);
         assert_eq!(after.normals.iter().filter(|n| **n != Vec3::ZERO).count(), 1, "only the patch's own vertex has an authored normal");
         assert_eq!(after.normals[25], Vec3::Y);
-        // Wound as the grid is: every triangle faces up.
         for t in after.indices.chunks_exact(3) {
             let [a, b, c] = [0, 1, 2].map(|k| after.positions[t[k] as usize]);
             assert!((b - a).cross(c - a).y > 0.0);
@@ -1477,7 +1413,6 @@ mod ground_patch_tests {
         let corner = patched.patch(far, 1);
         assert_eq!(corner.indices.len(), 6, "one cell of grid, none of the patch");
         assert!(corner.normals.is_empty());
-        // A coarse step keeps the patch whole, on vertices of its own where the grid's are skipped.
         let coarse = patched.patch(b, 2);
         assert_eq!(coarse.indices.len() % 3, 0);
         assert!(coarse.indices.iter().all(|i| (*i as usize) < coarse.positions.len()));
@@ -1543,7 +1478,6 @@ mod ground_patch_tests {
         let patch = with.patch(with.bounds(), 1);
         assert_eq!(patch.positions.len(), 26);
         assert_eq!(open_edges(&patch.indices), 16);
-        // A damaged patch is an error naming the file, not ground silently missing.
         std::fs::write(dir.join("terrain/t.patch"), b"SSTPxx").unwrap();
         assert!(load(&def, &dir).err().unwrap().contains("t.patch"));
         let _ = std::fs::remove_dir_all(dir);

@@ -55,12 +55,9 @@ fn random_point(w: &NavWorld, rng: &mut Lcg) -> DVec3 {
 /// Every point of the leg is on the floor (within 1 mm), sampled every 50 mm. Stricter and more
 /// robust than a raycast for legs that run exactly along a wall.
 fn on_floor(w: &NavWorld, a: DVec3, b: DVec3) -> bool {
-    // Steps along the full 3D length: two corners stacked one above the other are 0 apart from
-    // above but not on one floor.
     let steps = ((b - a).length() / 50.0).ceil().max(1.0) as usize;
     (0..=steps).all(|k| {
         let p = a.lerp(b, k as f64 / steps as f64);
-        // On the floor at this height: a catwalk over a floor is not a way between them.
         w.nearest_poly(p, DVec3::new(20.0, 2000.0, 20.0)).is_some_and(|n| flat(n.point, p) <= 1.0 && (n.point.y - p.y).abs() <= 300.0) || in_welded_gap(w, p)
     })
 }
@@ -264,7 +261,6 @@ fn across_a_whole_level_through_doorways_and_doors() {
         lengths.iter().cloned().fold(0.0, f64::max) / 1000.0
     );
 
-    // A path through a door is told apart from one that is not, and a closed door reroutes or cuts.
     let (a, b) = (random_point(&w, &mut rng), random_point(&w, &mut rng));
     let p = find_path(&w, a, b, EXT).unwrap();
     let through_door = p.links().find(|&l| w.links[l as usize].gate.is_some());
@@ -306,16 +302,12 @@ fn the_room_graph_measures_real_walking_distances() {
     let mut w = common::assemble(&kit, layout, 0);
     let g = w.room_graph();
 
-    // Straight through a hallway: its length, door to door.
     let h = layout.pieces.iter().position(|p| names[p.kind] == "HallwayShort_DoorType_A").unwrap();
     let across = g.crossing[h][0][1].unwrap();
     assert!((20_400..=20_600).contains(&across), "hallway crossing {across} mm");
 
-    // Doorway to doorway through several rooms: the graph's distance passes through each doorway's
-    // middle, so it is never shorter than the real path and should be close to it.
     let mut rng = Lcg(5);
     let (mut n, mut worst) = (0, 0.0f64);
-    // Real passages only: a capped doorway is a dead end, not a way through.
     let passages: Vec<u32> = (0..w.connections.len() as u32).filter(|&c| !w.connections[c as usize].links.is_empty()).collect();
     for _ in 0..60 {
         let c1 = passages[(rng.next() * passages.len() as f64) as usize % passages.len()];
@@ -334,7 +326,6 @@ fn the_room_graph_measures_real_walking_distances() {
     println!("{n} doorway pairs: room graph at most {:.1}% longer than the real path", (worst - 1.0) * 100.0);
     assert!(worst < 1.25);
 
-    // The field towards a room points a monster at the right doorway, and reroutes round a closed door.
     let target = layout.pieces.len() as u32 - 1;
     let field = g.field_to(&w, target);
     for room in 0..layout.pieces.len() as u32 {

@@ -364,7 +364,6 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
         }
     }
 
-    // Remove too small regions (counting whole connected groups).
     let mut stack: Vec<i32> = Vec::new();
     let mut trace: Vec<i32> = Vec::new();
     for i in 0..nreg {
@@ -405,7 +404,6 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
         }
     }
 
-    // Merge too small regions into neighbours.
     loop {
         let mut merge_count = 0;
         for i in 0..nreg {

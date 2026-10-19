@@ -128,7 +128,6 @@ impl GrabGrid {
         if self.entries.iter().all(|e| e.seen == round) {
             return;
         }
-        // Something has gone: file again what is left. Rare, and linear.
         let kept: Vec<Entry> = std::mem::take(&mut self.entries).into_iter().filter(|e| e.seen == round).collect();
         self.by_id.clear();
         self.cells.clear();
@@ -174,8 +173,6 @@ impl GrabGrid {
                 return;
             }
             let d = distance_to_oriented_box(e.position, e.rotation, e.half, point);
-            // Ties to the earlier name, so the answer does not depend on the
-            // order things were filed in.
             let better = match best {
                 None => true,
                 Some((b, bd)) => d < bd || (d == bd && e.id < self.entries[b].id),
@@ -249,7 +246,6 @@ mod tests {
                 (format!("thing_{i}"), p, Quat::from_rotation_y(mix(i + 7000) * 6.0) * Quat::from_rotation_x(mix(i + 7100)), half)
             })
             .collect();
-        // A room's shell and a sea: big things a hand is always inside.
         out.push(("hall_shell".into(), Vec3::new(0.0, 1.7, -6.0), Quat::IDENTITY, Vec3::new(3.0, 1.7, 10.0)));
         out.push(("sea".into(), Vec3::ZERO, Quat::IDENTITY, Vec3::new(80.0, 0.5, 80.0)));
         out
@@ -283,7 +279,6 @@ mod tests {
         let loose = |id: &str| id.starts_with("thing_");
         let mut found = 0;
         for k in 0..3000u32 {
-            // Half the hands beside an object, half anywhere.
             let point = if k % 2 == 0 {
                 let o = &objects[(k as usize * 7) % 4000];
                 o.1 + Vec3::new(mix(k + 1) - 0.5, mix(k + 2) - 0.5, mix(k + 3) - 0.5) * 0.5
@@ -293,7 +288,6 @@ mod tests {
             let (a, b) = (g.nearest(point, 0.15, loose), brute(&objects, point, 0.15, loose));
             assert_eq!(a.map(|x| x.0), b.map(|x| x.0), "at {point}");
             found += a.is_some() as usize;
-            // With the shells allowed, the hand in the hall is in the hall.
             assert_eq!(g.nearest(point, 0.15, |_| true).map(|x| x.0), brute(&objects, point, 0.15, |_| true).map(|x| x.0));
         }
         assert!(found > 500, "the test's hands found only {found} things");
@@ -335,12 +329,9 @@ mod tests {
         let worst = (0..500u32).map(|k| g.read_by(objects[(k * 8) as usize].1, 0.15)).max().unwrap();
         eprintln!("4,002 objects: a query reads {worst} entries at most");
         assert!(worst <= 40, "a query read {worst} of {} entries", g.len());
-        // A hand's targets ask further (`grab_target::QUERY_REACH`): still
-        // what is near it.
         let wide = (0..500u32).map(|k| g.read_by(objects[(k * 8) as usize].1, crate::grab_target::QUERY_REACH)).max().unwrap();
         eprintln!("4,002 objects: a hand's targets read {wide} entries at most");
         assert!(wide <= 200, "a target query read {wide} of {} entries", g.len());
-        // Ten times the things in ten times the ground: no more read.
         assert_eq!(g.len(), 4002);
     }
 
@@ -361,7 +352,6 @@ mod tests {
         };
         update(&mut g, &objects);
         assert_eq!(g.refiled(), filed, "a still level was filed again");
-        // A millimetre, staying in its cells -- and still found where it is.
         objects[10].1 = Vec3::new(10.25, 1.25, 10.25);
         update(&mut g, &objects);
         let filed = g.refiled();
@@ -374,14 +364,12 @@ mod tests {
         assert_eq!(g.refiled(), after_resize, "a move inside its cells filed it again");
         assert!(after_resize <= filed + 1);
         assert_eq!(g.nearest(objects[10].1, 0.15, |id| id == "thing_10").map(|x| x.0), Some("thing_10"));
-        // Thrown across the level: found there, and not where it was.
         let was = objects[10].1;
         objects[10].1 = Vec3::new(-70.0, 2.0, 33.0);
         update(&mut g, &objects);
         assert_eq!(g.refiled(), after_resize + 1);
         assert_eq!(g.nearest(objects[10].1, 0.15, |id| id == "thing_10").map(|x| x.0), Some("thing_10"));
         assert!(g.nearest(was, 0.15, |id| id == "thing_10").is_none());
-        // Despawned: gone from the grid, and the rest still found.
         let gone = objects.remove(10);
         update(&mut g, &objects);
         assert_eq!(g.len(), objects.len());

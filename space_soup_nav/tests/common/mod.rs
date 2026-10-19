@@ -121,7 +121,6 @@ pub fn assemble(kit: &[Arc<NavPieceAsset>], layout: &Layout, extra_turns: u8) ->
             let a = SocketRef { island: i as u32, socket: s as u16 };
             let b = SocketRef { island: j as u32, socket: t2 as u16 };
             let names = (&kit[p.kind].sockets[s].name, &kit[layout.pieces[j].kind].sockets[t2].name);
-            // A cap closes a doorway off; it has no floor and gets no door.
             let floors = !kit[p.kind].polys.is_empty() && !kit[layout.pieces[j].kind].polys.is_empty();
             let door = (floors && !names.0.contains("OPEN") && !names.1.contains("OPEN")).then_some("door");
             w.connect(a, b, door).unwrap_or_else(|e| panic!("seed {} join {i}.{s} - {j}.{t2}: {e:?}", layout.seed));

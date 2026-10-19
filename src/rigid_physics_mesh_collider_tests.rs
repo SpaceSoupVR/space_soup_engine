@@ -25,7 +25,6 @@ fn box_glb(min: Vec3, max: Vec3, node_rotation: Quat) -> Vec<u8> {
     };
     let positions: Vec<Vec3> = (0..8).map(corner).collect();
     let centre = (min + max) * 0.5;
-    // Each face as two triangles, flipped where needed so the normal points away from the centre.
     let faces = [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]];
     let mut indices: Vec<u32> = Vec::new();
     for f in faces {
@@ -129,7 +128,6 @@ fn a_model_collider_is_where_the_model_is_drawn() {
     near(wall_ahead(&dir, Vec3::new(1.0, 1.0, 2.0), 1), 7.8, "stretched, turned 90 degrees");
     near(wall_ahead(&dir, Vec3::new(1.0, 1.0, 2.0), 2), 7.8, "stretched, turned 180 degrees");
     near(wall_ahead(&dir, Vec3::new(1.0, 1.0, 2.0), 3), 7.8, "stretched, turned 270 degrees");
-    // Squashing the height must not move the wall: the 0.8-tall hallway case.
     near(wall_ahead(&dir, Vec3::new(1.0, 0.8, 1.0), 1), 3.9, "squashed to 0.8 tall, turned 90 degrees");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -170,7 +168,6 @@ fn a_swept_sphere_stops_at_the_first_surface_and_says_whether_it_is_fixed() {
     let dir = wall_model_dir();
     let physics = query_world(&dir);
 
-    // Into the room model's wall: its near face is 3.9 m ahead, so a 10 cm sphere stops 3.8 m on.
     let wall = physics.sphere_sweep(Vec3::new(0.0, 1.5, 0.0), 0.1, Vec3::Z, 20.0).expect("the wall");
     assert!((wall.distance - 3.8).abs() < 0.01, "wall at {}", wall.distance);
     assert!(wall.normal.distance(Vec3::NEG_Z) < 0.01, "normal {}", wall.normal);
@@ -194,7 +191,6 @@ fn a_hand_near_a_room_mesh_finds_the_wall_and_which_way_is_out() {
     let dir = wall_model_dir();
     let physics = query_world(&dir);
 
-    // 10 cm in front of the mesh wall. Unity's ClosestPoint returned the hand itself here.
     let hand = Vec3::new(0.3, 1.5, 3.8);
     let contacts = physics.sphere_contacts(hand, 0.2);
     let nearest = contacts.first().expect("the wall is within reach");
@@ -203,11 +199,9 @@ fn a_hand_near_a_room_mesh_finds_the_wall_and_which_way_is_out() {
     assert!(nearest.normal.distance(Vec3::NEG_Z) < 0.01, "out of the wall is -Z, got {}", nearest.normal);
     assert!(nearest.fixed);
 
-    // Inside a solid box there is no single way out: distance 0 and no normal.
     let inside = physics.sphere_contacts(Vec3::new(6.0, 1.0, 0.0), 0.1);
     assert!(inside.first().is_some_and(|c| c.distance == 0.0 && c.normal == Vec3::ZERO), "{inside:?}");
 
-    // The crate is found, but marked as not fixed.
     let near_crate = physics.sphere_contacts(Vec3::new(-5.4, 1.0, 0.0), 0.2);
     assert!(near_crate.first().is_some_and(|c| !c.fixed && (c.distance - 0.1).abs() < 0.005), "{near_crate:?}");
 

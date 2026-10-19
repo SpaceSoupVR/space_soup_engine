@@ -44,7 +44,6 @@ impl CollisionTriangles {
     fn push_box(&mut self, half: Vec3, to_world: impl Fn(Vec3) -> Vec3) {
         let c = |x: f32, y: f32, z: f32| to_world(Vec3::new(x * half.x, y * half.y, z * half.z));
         let middle = to_world(Vec3::ZERO);
-        // Each face as two triangles of its four corners.
         for axis in 0..3 {
             for side in [-1.0f32, 1.0] {
                 let corner = |u: f32, v: f32| match axis {
@@ -121,7 +120,6 @@ impl PhysicsWorld {
                 let g = &*(geometry as *const physx_sys::PxBoxGeometry);
                 out.push_box(vec(&g.halfExtents), &world);
             }
-            // Obstacles, never floors: their box is enough. A capsule lies along its +X.
             G::Sphere => {
                 let g = &*(geometry as *const physx_sys::PxSphereGeometry);
                 out.push_box(Vec3::splat(g.radius), &world);
@@ -134,7 +132,6 @@ impl PhysicsWorld {
                 let g = &*(geometry as *const physx_sys::PxTriangleMeshGeometry);
                 let mesh = g.triangleMesh as *const physx_sys::PxTriangleMesh;
                 let scale = mesh_scale(&g.scale);
-                // A mirroring scale turns every triangle inside out: turned back.
                 let mirrored = scale.determinant() < 0.0;
                 let nv = physx_sys::PxTriangleMesh_getNbVertices(mesh) as usize;
                 let verts = std::slice::from_raw_parts(physx_sys::PxTriangleMesh_getVertices(mesh), nv);
@@ -168,7 +165,6 @@ impl PhysicsWorld {
                         continue;
                     }
                     let corners: Vec<Vec3> = (0..poly.mNbVerts as usize).map(|i| verts[*index.add(poly.mIndexBase as usize + i) as usize]).collect();
-                    // A fan over each face, facing out of the hull.
                     for i in 1..corners.len().saturating_sub(1) {
                         out.push_out(corners[0], corners[i], corners[i + 1], middle);
                     }
@@ -178,7 +174,6 @@ impl PhysicsWorld {
                 let g = &*(geometry as *const physx_sys::PxHeightFieldGeometry);
                 let field = g.heightField as *const physx_sys::PxHeightField;
                 let (rows, cols) = (physx_sys::PxHeightField_getNbRows(field), physx_sys::PxHeightField_getNbColumns(field));
-                // Rows along x, columns along z (`spawn_scene_height_field`).
                 let at = |r: u32, c: u32| {
                     let s = physx_sys::PxHeightField_getSample(field, r, c) as *const u8;
                     let height = i16::from_le_bytes([*s, *s.add(1)]);
@@ -197,7 +192,6 @@ impl PhysicsWorld {
                         let bytes = s as *const u8;
                         let (m0, m1) = (*bytes.add(2) & 0x7f, *bytes.add(3) & 0x7f);
                         let (v0, v1, v2, v3) = (id(r, c), id(r, c + 1), id(r + 1, c), id(r + 1, c + 1));
-                        // Up-facing either way; split through the first sample when flagged.
                         let (t0, t1) = if physx_sys::PxHeightFieldSample_tessFlag(s) != 0 { ([v0, v1, v3], [v0, v3, v2]) } else { ([v0, v1, v2], [v1, v3, v2]) };
                         if m0 != HOLE {
                             out.triangles.push(t0);

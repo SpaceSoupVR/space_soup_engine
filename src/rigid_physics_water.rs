@@ -118,7 +118,6 @@ impl PhysicsWorld {
             if pos.y - extent.y >= surface {
                 continue;
             }
-            // Each octant's middle, and how much of its height is under.
             let part = state.volume / 8.0;
             let tall = extent.y.max(1e-4);
             let mut under = 0.0f32;
@@ -130,8 +129,6 @@ impl PhysicsWorld {
                     continue;
                 }
                 under += share / 8.0;
-                // (Without waking it: a force that woke the body it is put
-                // on would keep everything in water awake for ever.)
                 let lift = px(Vec3::Y * (WATER_DENSITY * g * part * share));
                 unsafe { physx_sys::PxRigidBodyExt_addForceAtPos(body, &lift, &px(at), physx_sys::PxForceMode::Force, false) };
             }
@@ -171,9 +168,6 @@ impl PhysicsWorld {
         let (kill_y, now) = (self.kill_y, self.clock);
         let zero = PxVec3::new(0.0, 0.0, 0.0);
         let mut respawned = 0;
-        // The map's own order, which holds while nothing is spawned or
-        // removed; when something is, a turn is missed or taken twice. Twice
-        // through where the turn runs off the end and starts again.
         for (skip, n) in [(first, take.min(count - first)), (0, (first + take).saturating_sub(count))] {
           for (id, state) in self.dynamic.iter_mut().skip(skip).take(n) {
             let since = (now - state.checked_at).max(0.0) as f32;
@@ -201,7 +195,6 @@ impl PhysicsWorld {
             }
             state.elapsed = 0.0;
             state.sunk_for = 0.0;
-            // Put there, not dropped in: its next going-in is a new one.
             state.water = crate::water::WaterState::default();
             let spawn = to_px_transform(state.spawn_pos, state.spawn_rot);
             unsafe {
@@ -232,7 +225,6 @@ impl PhysicsWorld {
             stats.awake += 1;
             let pose = unsafe { (*state.ptr).get_global_pose() };
             let (pos, rot) = from_px_transform(&pose);
-            // Its object: where it was last time, or found again.
             if scene.objects.get(state.object).map_or(true, |o| o.id != *id) {
                 let Some(index) = scene.objects.iter().position(|o| o.id == *id) else { continue };
                 state.object = index;
@@ -252,8 +244,6 @@ impl PhysicsWorld {
             }
             stats.in_water += state.water.is_in() as usize;
         }
-        // NO MORE THAN CAN BE DRAWN: the most energetic of a step's entries,
-        // and of what waits if nobody takes them.
         stats.entries_seen = entries.len();
         crate::water::keep_most_energetic(&mut entries, crate::water::MAX_ENTRIES_A_STEP);
         stats.entries_told = entries.len();

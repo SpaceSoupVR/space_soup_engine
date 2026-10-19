@@ -137,7 +137,6 @@ fn closing_a_door_on_the_monsters_route_makes_it_go_round_or_stop() {
         }
         let Some(door) = f.path().unwrap().links().find_map(|l| w.links[l as usize].gate) else { continue };
         w.set_gate(door, false);
-        // After the replan delay it plans round the door, or reports there is no way.
         let mut s = Steer::Arrived;
         for _ in 0..20 {
             s = f.update(&w, &graph, pos, p, DT);
@@ -148,7 +147,6 @@ fn closing_a_door_on_the_monsters_route_makes_it_go_round_or_stop() {
             other => panic!("{other:?}"),
         }
         if !f.path().is_some_and(|p| p.complete) {
-            // Only reachable by that door: the path ends short of the player.
             assert!(!f.path().is_some_and(|p| p.complete));
         }
         w.set_gate(door, true);
