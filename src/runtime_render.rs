@@ -33,13 +33,30 @@ impl GameRuntime {
         self.scene
             .objects
             .iter()
-
+            // `hidden` is what the level author decided; `is_removed` is what
+            // this match has done to it. A chunk shot out of a wall has to stop
+            // being drawn, and it has no named parts for `hidden_parts` to
+            // reach -- that field is only consulted for meshes below.
+            //
+            // Brushes are excluded because they are NOT boxes. Sending one here
+            // drew a wall as its bounding cuboid -- a fractured wall came out as
+            // twelve overlapping crates -- so the client meshes brushes itself
+            // from scene data it already has, and this list would only double
+            // -draw them. See `hidden_brushes` for how it is told which to skip.
+            //
+            // Markers -- spawn points, reflection probes, trigger volumes -- carry
+            // a cuboid only as the editor's handle (the baker's `occludes_light`
+            // and `reflection_proxy::is_drawn_geometry` skip them too). Drawn in
+            // play, the hall's spawn point was a 10 cm green box half sunk in
+            // the marble floor.
             .filter(|o| {
                 !o.hidden
                     && !self.damage.is_removed(o)
                     && o.mesh.is_none()
                     && o.brush.is_none()
-                    && o.walk_area.is_none()
+                    && o.spawn_point.is_none()
+                    && o.reflection_probe.is_none()
+                    && o.trigger_volume.is_none()
             })
             .map(|o| RenderCuboid {
                 id: o.id.clone(),

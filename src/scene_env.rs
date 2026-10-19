@@ -180,6 +180,14 @@ pub struct EffectDef {
 
     #[serde(default, skip_serializing_if = "is_effect_seed_zero")]
     pub seed: u32,
+    /// AN EFFECT ASSET by name (`game/effects/<asset>.json`, authored in the
+    /// editor's effect editor): with it, `kind` is ignored and the asset's
+    /// stack is drawn, `scale` sizing its sprites, `rate` its streams and
+    /// `tint` its colour, `intensity` its strength (a fog slab's density; the
+    /// other variation fields are a template's and do not apply). Without it, `kind` names the built-in template, as every scene
+    /// before it did. Left out of the file when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
 }
 
 impl Default for EffectDef {
@@ -198,6 +206,7 @@ impl Default for EffectDef {
             flicker_rate: 1.0,
             turbulence: 1.0,
             seed: 0,
+            asset: None,
         }
     }
 }
@@ -276,5 +285,21 @@ mod effect_tests {
         assert!(!json.contains("flicker") && !json.contains("turbulence"), "{json}");
         let back: EffectDef = serde_json::from_str(&json).expect("parse");
         assert_eq!((back.intensity, back.seed, back.temperature_variation), (1.4, 12, 0.3));
+    }
+
+    /// AN EFFECT ASSET BY NAME: read and written back as written, `kind`
+    /// kept beside it as the shorthand it was; absent, nothing is written,
+    /// so every scene before it re-saves unchanged.
+    #[test]
+    fn an_effect_names_its_asset_and_keeps_its_kind() {
+        let obj: GameObject = serde_json::from_str(r#"{"id": "vent", "effect": {"kind": "smoke", "asset": "steam_vent", "scale": 1.2}}"#).expect("parse");
+        let e = obj.effect.clone().expect("an effect");
+        assert_eq!((e.asset.as_deref(), e.kind, e.scale), (Some("steam_vent"), EffectKindDef::Smoke, 1.2));
+        let json = serde_json::to_string(&obj.effect).expect("serialize");
+        assert!(json.contains(r#""asset":"steam_vent""#) && json.contains(r#""kind":"smoke""#), "{json}");
+        let back: EffectDef = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back.asset.as_deref(), Some("steam_vent"));
+        let plain = serde_json::to_string(&EffectDef::default()).expect("serialize");
+        assert!(!plain.contains("asset"), "{plain}");
     }
 }

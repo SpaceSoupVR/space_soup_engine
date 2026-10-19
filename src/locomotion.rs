@@ -41,7 +41,11 @@ pub struct Locomotion {
     pub player_offset: Vec3,
     pub player_yaw: f32,
 
+    /// The walk, metres a second (`LocomotionSettings::walk_speed`).
     pub move_speed: f32,
+    /// The run, metres a second, while running (`set_running`;
+    /// `LocomotionSettings::run_speed`).
+    pub run_speed: f32,
     pub snap_turn_deg: f32,
     pub turn_speed_deg_per_sec: f32,
     pub teleport_range: f32,
@@ -53,6 +57,64 @@ pub struct Locomotion {
     last_body_xz: Option<(f32, f32)>,
 
     teleported: bool,
+    /// Running: until the stick comes back to the middle. See `toggle_run`.
+    running: bool,
+    /// The speed the walk is at now, eased toward the walk's or the run's
+    /// (`SPEED_EASE_SECONDS`), so starting to run is not a jolt.
+    speed_now: f32,
+}
+
+/// How long the speed takes to close most of its gap to the walk's or the
+/// run's, seconds (a time constant): a stride, so a run starts as a
+/// quickening, not a jump -- the kind of acceleration that unsettles a
+/// stomach in a headset is a sudden one.
+pub const SPEED_EASE_SECONDS: f32 = 0.2;
+
+/// THE WALK AND THE RUN, per game and per scene: `"locomotion"` in the
+/// game's `manifest.json`, and `"locomotion_scenes": {"<scene>": {...}}`
+/// there for one scene's own. Every key optional; absent, the defaults.
+/// Data, because another game wants another pace.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocomotionSettings {
+    /// Metres a second, the stick pushed: a brisk walk (people walk at
+    /// about 1.4).
+    pub walk_speed: f32,
+    /// Metres a second while running (the left stick's click).
+    pub run_speed: f32,
+}
+
+impl Default for LocomotionSettings {
+    fn default() -> Self {
+        Self { walk_speed: 1.6, run_speed: 3.0 }
+    }
+}
+
+impl LocomotionSettings {
+    /// The game's settings for `scene`, from `game_dir/manifest.json`:
+    /// the game's `"locomotion"`, then the scene's own over it. A missing
+    /// or unreadable file, or a key out of range, keeps the defaults.
+    pub fn load(game_dir: &std::path::Path, scene: &str) -> Self {
+        std::fs::read_to_string(game_dir.join("manifest.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .map_or_else(Self::default, |v| Self::from_manifest(&v, scene))
+    }
+
+    /// [`Self::load`] from the manifest's JSON.
+    pub fn from_manifest(manifest: &serde_json::Value, scene: &str) -> Self {
+        let mut out = Self::default();
+        for layer in [manifest.get("locomotion"), manifest.get("locomotion_scenes").and_then(|s| s.get(scene))].into_iter().flatten() {
+            let speed = |key: &str| layer.get(key).and_then(|v| v.as_f64()).map(|v| v as f32).filter(|v| v.is_finite() && *v > 0.0 && *v <= 12.0);
+            if let Some(v) = speed("walk_speed") {
+                out.walk_speed = v;
+            }
+            if let Some(v) = speed("run_speed") {
+                out.run_speed = v;
+            }
+        }
+        out
+    }
 }
 
 impl Default for Locomotion {
@@ -62,7 +124,8 @@ impl Default for Locomotion {
             turn_mode: TurnMode::Snap,
             player_offset: Vec3::ZERO,
             player_yaw: 0.0,
-            move_speed: 1.6,
+            move_speed: LocomotionSettings::default().walk_speed,
+            run_speed: LocomotionSettings::default().run_speed,
             snap_turn_deg: 45.0,
             turn_speed_deg_per_sec: 90.0,
             teleport_range: 5.0,
@@ -71,6 +134,8 @@ impl Default for Locomotion {
             last_turn_stick: 0.0,
             last_body_xz: None,
             teleported: false,
+            running: false,
+            speed_now: 0.0,
         }
     }
 }
@@ -81,6 +146,23 @@ impl Locomotion {
             mode,
             ..Default::default()
         }
+    }
+
+    /// The walk and the run from the game's settings.
+    pub fn apply_settings(&mut self, settings: &LocomotionSettings) {
+        self.move_speed = settings.walk_speed;
+        self.run_speed = settings.run_speed;
+    }
+
+    /// RUN, or walk again: a click of the stick. A run lasts until the stick
+    /// comes back to the middle (the player stops), as in most games with a
+    /// stick to walk with, so it never has to be clicked off.
+    pub fn toggle_run(&mut self) {
+        self.running = !self.running;
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running
     }
 
     pub fn set_mode(&mut self, mode: LocomotionMode) {
@@ -138,8 +220,19 @@ impl Locomotion {
     fn update_smooth(&mut self, dt: f32, input: &LocomotionInput, rig: &PlayerRig) {
         let (sx, sy) = input.move_stick;
         if sx.abs() < 0.08 && sy.abs() < 0.08 {
+            // Stopped: the run ends, and the next walk starts from rest.
+            self.running = false;
+            self.speed_now = 0.0;
             return;
         }
+        let target = if self.running { self.run_speed } else { self.move_speed };
+        // From rest the walk starts at once, as it always has; a change of
+        // pace eases (`SPEED_EASE_SECONDS`).
+        self.speed_now = if self.speed_now <= 0.0 {
+            target
+        } else {
+            self.speed_now + (target - self.speed_now) * (1.0 - (-dt.max(0.0) / SPEED_EASE_SECONDS).exp())
+        };
 
         let head_rot = rig.head().rotation;
         let fwd = head_rot * Vec3::new(0.0, 0.0, -1.0);
@@ -154,7 +247,7 @@ impl Locomotion {
         let right = Vec3::new(-forward.z, 0.0, forward.x);
 
         let move_dir = (forward * sy + right * sx).normalize_or_zero();
-        self.player_offset += move_dir * self.move_speed * dt;
+        self.player_offset += move_dir * self.speed_now * dt;
     }
 
     fn update_teleport(&mut self, input: &LocomotionInput, target: Option<TeleportTarget>) {
@@ -300,6 +393,42 @@ const MAX_HEAD_JUMP: f32 = 1.0;
 mod turn_test {
     use super::*;
     use crate::rig::PlayerRig;
+
+    /// THE WALK AND THE RUN: the walk at once from rest, the run eased in by
+    /// a click and ended by stopping; the speeds from the game's manifest
+    /// and a scene's own, out-of-range values ignored.
+    #[test]
+    fn a_click_runs_until_the_stick_is_let_go_and_the_paces_are_data() {
+        let mut l = Locomotion::new(LocomotionMode::Smooth);
+        let rig = PlayerRig::new();
+        let push = LocomotionInput { move_stick: (0.0, 1.0), ..LocomotionInput::default() };
+        let rest = LocomotionInput::default();
+        let dt = 1.0 / 36.0;
+        let step = |l: &mut Locomotion, input: &LocomotionInput| {
+            let before = l.player_offset;
+            l.update(dt, input, &rig, None);
+            (l.player_offset - before).length() / dt
+        };
+        assert!((step(&mut l, &push) - 1.6).abs() < 1e-4, "the walk starts at once");
+        l.toggle_run();
+        let first = step(&mut l, &push);
+        assert!(first > 1.6 && first < 2.0, "the run eases in: {first}");
+        for _ in 0..36 {
+            step(&mut l, &push);
+        }
+        assert!((step(&mut l, &push) - 3.0).abs() < 0.01, "a second on, running");
+        step(&mut l, &rest);
+        assert!(!l.is_running(), "stopping ends the run");
+        assert!((step(&mut l, &push) - 1.6).abs() < 1e-4);
+        let manifest: serde_json::Value = serde_json::from_str(
+            r#"{"locomotion": {"walk_speed": 1.8, "run_speed": 3.2}, "locomotion_scenes": {"cave": {"run_speed": 2.2}, "bad": {"walk_speed": -1, "run_speed": "fast"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(LocomotionSettings::from_manifest(&manifest, "test_room"), LocomotionSettings { walk_speed: 1.8, run_speed: 3.2 });
+        assert_eq!(LocomotionSettings::from_manifest(&manifest, "cave"), LocomotionSettings { walk_speed: 1.8, run_speed: 2.2 });
+        assert_eq!(LocomotionSettings::from_manifest(&manifest, "bad"), LocomotionSettings { walk_speed: 1.8, run_speed: 3.2 });
+        assert_eq!(LocomotionSettings::from_manifest(&serde_json::json!({}), "x"), LocomotionSettings::default());
+    }
 
     fn turn_input(turn_stick_x: f32) -> LocomotionInput {
         LocomotionInput {

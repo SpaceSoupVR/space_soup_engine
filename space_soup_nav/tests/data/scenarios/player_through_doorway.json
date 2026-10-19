@@ -1,0 +1,85 @@
+{
+  "name": "player_through_doorway",
+  "description": "A player walks through the doorway against three monsters heading the other way. The player never yields (ORCA's reciprocity assumption is false for a human), so the monsters must give way completely.",
+  "mesh": "synthetic/two_rooms_door.obj",
+  "dt": 0.013888888888888888,
+  "duration_s": 30.0,
+  "agents": [
+    {
+      "start": [
+        2.0,
+        0.0,
+        3.0
+      ],
+      "goal": {
+        "Point": [
+          10.0,
+          0.0,
+          2.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        2.0,
+        0.0,
+        5.0
+      ],
+      "goal": {
+        "Point": [
+          10.0,
+          0.0,
+          6.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        3.0,
+        0.0,
+        4.0
+      ],
+      "goal": {
+        "Point": [
+          9.0,
+          0.0,
+          4.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    }
+  ],
+  "players": [
+    {
+      "waypoints": [
+        [
+          10.5,
+          0.0,
+          4.0
+        ],
+        [
+          1.5,
+          0.0,
+          4.0
+        ]
+      ],
+      "speed": 1.4,
+      "radius": 0.3
+    }
+  ],
+  "pass": {
+    "all_arrive_within_s": 25.0,
+    "arrive_radius": 0.5,
+    "max_stuck_s": 3.0,
+    "stuck_distance": 0.2,
+    "max_overlap": 0.05,
+    "first_contact_within_s": null,
+    "reach": 1.0,
+    "max_handover_s": 6.0
+  }
+}

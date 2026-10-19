@@ -6,7 +6,7 @@ use physx::traits::Class;
 
 use space_soup_protocol::PlayerId;
 
-use crate::door::{body_push_force, DoorDef, DoorGeom, BODY_PUSH_RADIUS, BODY_PUSH_SPAN};
+use crate::door::{body_push_force, DoorDef, DoorGeom, DoorLatch, BODY_PUSH_RADIUS, BODY_PUSH_SPAN, LATCH_PLAY_DEG};
 use crate::rig::{JointId, PlayerRig};
 use crate::rigid_physics::{from_px_transform, to_px_transform, to_raw_transform, DynamicActor, PhysicsWorld};
 use crate::scene::GameObject;
@@ -16,6 +16,14 @@ pub const HINGE_DRY_FRICTION: f32 = 1.0;
 pub const CLOSER_PRELOAD: f32 = 2.0;
 
 const DOOR_TICK: f32 = 1.0 / 60.0;
+
+/// A latching door's handle and bolt in the physics world: whether the bolt
+/// is home, and the hinge whose limits it narrows while it is.
+pub(crate) struct LatchState {
+    pub(crate) latch: DoorLatch,
+    pub(crate) bolted: bool,
+    pub(crate) joint: *mut physx_sys::PxD6Joint,
+}
 
 fn mass_of(body: *mut physx_sys::PxRigidBody) -> f32 {
     unsafe { physx_sys::PxRigidBody_getMass(body) }
@@ -33,12 +41,45 @@ fn px(v: Vec3) -> physx_sys::PxVec3 {
     physx_sys::PxVec3 { x: v.x, y: v.y, z: v.z }
 }
 
+/// Every hand of every player, world: the grips, which is where a hand
+/// reaching for a handle is.
+fn hands_of(rigs: &HashMap<PlayerId, PlayerRig>) -> impl Iterator<Item = Vec3> + '_ {
+    rigs.values().flat_map(|rig| {
+        [crate::events::Hand::Left, crate::events::Hand::Right].into_iter().filter_map(|h| rig.get(JointId::HandGrip(h)).map(|t| t.position))
+    })
+}
+
 impl PhysicsWorld {
 
     pub(crate) fn spawn_door(&mut self, obj: &GameObject, def: &DoorDef) {
         let geom = DoorGeom::new(obj.cuboid.position, obj.cuboid.rotation, obj.cuboid.half_size, def);
         let start = def.start_deg.to_radians().clamp(geom.lo, geom.hi);
         let (pos, rot) = geom.pose_at(start);
+        // A LEAF THAT CANNOT TURN IS A WALL: a static box, with no joint, no
+        // body to step and nothing to push -- the bolted leaf of a pair.
+        if geom.fixed() {
+            if self.statics.contains_key(&obj.id) || self.dynamic.contains_key(&obj.id) || self.kinematic.contains_key(&obj.id) {
+                log::warn!("rigid_physics: door '{}' already has a collider", obj.id);
+                return;
+            }
+            let h = geom.half;
+            let (Some(mut material), geo) =
+                (self.foundation.create_material(def.surface_friction, def.surface_friction, 0.0, ()), PxBoxGeometry::new(h.x, h.y, h.z))
+            else {
+                return;
+            };
+            if let Some(mut actor) =
+                self.foundation.create_rigid_static(to_px_transform(pos, rot), &geo, material.as_mut(), PxTransform::default(), ())
+            {
+                let ptr: *mut crate::rigid_physics::PxRigidStatic = &mut *actor as *mut _;
+                self.scene.add_static_actor(actor);
+                self.statics.insert(obj.id.clone(), ptr);
+                self.materials.push(material);
+                self.note_floor(pos.y - crate::water::world_half_extents(h, rot).y);
+                self.doors.insert(obj.id.clone(), geom);
+            }
+            return;
+        }
         if !self.dynamic.contains_key(&obj.id) {
             if self.statics.contains_key(&obj.id) || self.kinematic.contains_key(&obj.id) {
                 log::warn!("rigid_physics: door '{}' already has a non-dynamic collider", obj.id);
@@ -64,6 +105,19 @@ impl PhysicsWorld {
                 return;
             };
             actor.set_mass(def.mass.max(0.5));
+            // And the inertia of a slab that heavy: made at a density of one,
+            // the leaf turned about its own middle as if it weighed 70 grams,
+            // a quarter lighter on its hinge than `DoorGeom::hinge_inertia`
+            // -- which the headset's own hinge and the dry friction use --
+            // says it is.
+            unsafe {
+                physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(
+                    &mut *actor as *mut crate::rigid_physics::PxRigidDynamic as *mut physx_sys::PxRigidBody,
+                    def.mass.max(0.5),
+                    std::ptr::null(),
+                    false,
+                );
+            }
             actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
             actor.set_solver_iteration_counts(16, 4);
             let ptr: *mut crate::rigid_physics::PxRigidDynamic = &mut *actor as *mut _;
@@ -77,10 +131,11 @@ impl PhysicsWorld {
             }
             self.scene.add_dynamic_actor(actor);
             self.materials.push(material);
-            self.dynamic.insert(
-                obj.id.clone(),
-                DynamicActor { ptr, spawn_pos: pos, spawn_rot: rot, respawn_interval: None, elapsed: 0.0 },
-            );
+            self.dynamic.insert(obj.id.clone(), DynamicActor::new(ptr, pos, rot, h, 8.0 * h.element_product()));
+            // The leaf's lowest edge, for the level's floor: a door is a
+            // dynamic body, and one hung under the kill height would be put
+            // back every tick.
+            self.note_floor(pos.y - crate::water::world_half_extents(h, rot).y);
         }
         let Some(child) = self.dynamic.get(&obj.id) else { return };
 
@@ -112,14 +167,80 @@ impl PhysicsWorld {
         }
         self.doors.insert(obj.id.clone(), geom);
         self.door_hinges.insert(obj.id.clone(), (def.closer.max(0.0), def.friction.max(0.0)));
+        if let Some(latch) = DoorLatch::of(def) {
+            // Shut at load, its bolt is home; `push_doors` narrows the hinge
+            // to it on the first step.
+            self.door_latches.insert(obj.id.clone(), LatchState { latch, bolted: false, joint });
+        }
+    }
+
+    /// Whether a latching door's bolt is home. None for a door with no latch.
+    pub fn door_bolted(&self, id: &str) -> Option<bool> {
+        self.door_latches.get(id).filter(|l| l.latch.bolts).map(|l| l.bolted)
+    }
+
+    /// Whether a hand is at a door's handle, or holding it: the lever is
+    /// down. None for a door with no handle.
+    pub fn door_handle_worked(&self, id: &str, rigs: &HashMap<PlayerId, PlayerRig>) -> Option<bool> {
+        let latch = self.door_latches.get(id)?;
+        let (geom, state) = (self.doors.get(id)?, self.dynamic.get(id)?);
+        let pose = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
+        Some(self.is_held(id) || latch.latch.worked(pose, geom.half.z, hands_of(rigs)))
     }
 
     pub(crate) fn push_doors(&mut self, rigs: &HashMap<PlayerId, PlayerRig>) {
         for (id, geom) in &self.doors {
             let Some(state) = self.dynamic.get(id) else { continue };
             let body = state.ptr as *mut physx_sys::PxRigidBody;
-            let (_, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
+            let (pos, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
             let angle = geom.angle_of(rot);
+            // THE LATCH: drawn while a hand is at the handle or holds it,
+            // home when the leaf is shut with no hand there (`DoorLatch`).
+            // Home, the hinge's own limits are narrowed to the bolt's play --
+            // the one constraint that already holds the leaf at its stops,
+            // so a body leaning on a latched door is a steady load it holds
+            // and nothing rattles -- and no torque is put on the leaf at all.
+            let mut bolted = false;
+            if let Some(latch) = self.door_latches.get_mut(id) {
+                let held = self.grabs.keys().any(|(_, held, _)| held == id);
+                let worked = held || latch.latch.worked((pos, rot), geom.half.z, hands_of(rigs));
+                let w = unsafe { physx_sys::PxRigidBody_getAngularVelocity(body) };
+                let spin = Vec3::new(w.x, w.y, w.z).dot(geom.axis());
+                let now = latch.latch.bolt(latch.bolted, angle, spin, worked);
+                if now != latch.bolted {
+                    let play = LATCH_PLAY_DEG.to_radians();
+                    let (lo, hi) = if now { (-play, play) } else { (geom.lo, geom.hi.max(geom.lo + 1e-3)) };
+                    unsafe {
+                        let limit = physx_sys::PxJointAngularLimitPair_new(lo, hi, 0.0);
+                        physx_sys::PxD6Joint_setTwistLimit_mut(latch.joint, &limit);
+                        physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr as *mut physx_sys::PxRigidDynamic);
+                    }
+                    latch.bolted = now;
+                }
+                bolted = now;
+            }
+            if bolted {
+                continue;
+            }
+            // THE SOFT STOPS: a leaf turning into a stop faster than the
+            // buffer lets it (`door::soft_stop`) is slowed to that, about its
+            // hinge -- its turning and its centre's speed together, as the
+            // hinge couples them.
+            {
+                let w = unsafe { physx_sys::PxRigidBody_getAngularVelocity(body) };
+                let w = Vec3::new(w.x, w.y, w.z);
+                let spin = w.dot(geom.axis());
+                let allowed = crate::door::soft_stop(angle, spin, geom.lo, geom.hi);
+                if allowed != spin {
+                    let turning = w + geom.axis() * (allowed - spin);
+                    let moving = turning.cross(pos - geom.hinge());
+                    let dynamic = state.ptr as *mut physx_sys::PxRigidDynamic;
+                    unsafe {
+                        physx_sys::PxRigidDynamic_setAngularVelocity_mut(dynamic, &px(turning), false);
+                        physx_sys::PxRigidDynamic_setLinearVelocity_mut(dynamic, &px(moving), false);
+                    }
+                }
+            }
             let axis = geom.axis();
             let hinge = geom.hinge();
             let mut torque = 0.0f32;
@@ -137,7 +258,28 @@ impl PhysicsWorld {
                 let force = -n * body_push_force(depth, closing);
                 torque += arm.cross(force).dot(axis);
             }
-
+            // THE HANDS HOLDING ITS HANDLE: each draws the point it holds to
+            // itself (`door::door_pull_force`, `grab_door`).
+            for ((player, held, hand), grab) in &self.grabs {
+                let (true, Some(local)) = (held == id, grab.local) else { continue };
+                let (Some(rig), Some(&anchor)) = (rigs.get(player), self.hand_anchors.get(&(*player, *hand))) else { continue };
+                if anchor.is_null() {
+                    continue;
+                }
+                // Where the hand is going this tick, and from where.
+                let to = rig.hand_grip(*hand).position;
+                let (from, _) = from_px_transform(&unsafe { (*anchor).get_global_pose() });
+                let point = pos + rot * local;
+                let arm = point - hinge;
+                let w = unsafe { physx_sys::PxRigidBody_getAngularVelocity(body) };
+                let moving = Vec3::new(w.x, w.y, w.z).cross(arm) - (to - from) / DOOR_TICK;
+                torque += arm.cross(crate::door::door_pull_force(to - point, moving)).dot(axis);
+            }
+            // THE HINGE'S DRY FRICTION: a constant torque against any
+            // turning, which stops a coasting leaf in finite time where the
+            // drive's viscous friction alone only slows it -- a door that has
+            // not quite stopped after six seconds reads as a door on ice. Up
+            // to what stops the leaf this tick, so it never turns it back.
             let w = unsafe { physx_sys::PxRigidBody_getAngularVelocity(body) };
             let spin = Vec3::new(w.x, w.y, w.z).dot(axis);
             let inertia = geom.hinge_inertia(mass_of(body));
@@ -179,6 +321,9 @@ impl PhysicsWorld {
 
     pub fn door_angle(&self, id: &str) -> Option<f32> {
         let geom = self.doors.get(id)?;
+        if geom.fixed() {
+            return Some(geom.lo);
+        }
         let state = self.dynamic.get(id)?;
         let (_, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
         Some(geom.angle_of(rot))
@@ -336,6 +481,164 @@ mod tests {
         assert!((physics.door_angle("door").unwrap() - 95f32.to_radians()).abs() < 1e-3);
     }
 
+    /// A latching door: the test leaf with a lever 31 cm out from its middle
+    /// (9 cm in from the free edge), a metre off the floor.
+    fn latching() -> DoorDef {
+        DoorDef { latch: true, handle: Some([0.31, -0.1, 0.0]), ..Default::default() }
+    }
+
+    /// The handle's hold point on the leaf's +z face at `angle`, world.
+    fn handle_at(angle: f32) -> Vec3 {
+        let geom = DoorGeom::new(Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY, Vec3::new(0.4, 1.05, 0.02), &latching());
+        let (c, r) = geom.pose_at(angle);
+        c + r * Vec3::new(0.31, -0.1, 0.02 + crate::door::HANDLE_STANDOFF)
+    }
+
+    /// A LATCH HOLDS THE DOOR SHUT against a body leaning on it, with nothing
+    /// moving; a hand at the handle draws the bolt and the same lean opens
+    /// the door; shut again with no hand there, the bolt goes home.
+    #[test]
+    fn a_latched_door_holds_against_a_body_and_opens_with_a_hand_at_the_handle() {
+        let _guard = lock();
+        let (mut physics, mut scene) = door(latching());
+        // The body where the walk's ray stops it, pushing the leaf toward -z
+        // (the way it opens); its hands down at its sides.
+        let lean = Vec3::new(0.1, 1.7, 0.27);
+        let rigs = rig_at(lean, Some(Vec3::new(0.3, 0.8, 0.6)));
+        let pushed = run(&mut physics, &mut scene, &rigs, 3.0);
+        assert_eq!(physics.door_bolted("door"), Some(true));
+        let worst = pushed.iter().map(|a| a.abs()).fold(0.0, f32::max);
+        assert!(worst <= (LATCH_PLAY_DEG + 0.1).to_radians(), "a latched door gave {} deg to a lean", worst.to_degrees());
+        let tail = &pushed[pushed.len() - 60..];
+        let step = tail.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+        assert!(step < 0.02f32.to_radians(), "it rattles in its latch: {} deg a tick", step.to_degrees());
+        // A hand on the lever: the bolt is drawn, and the lean opens the door.
+        let rigs = rig_at(lean, Some(handle_at(0.0) + Vec3::new(0.0, 0.0, 0.03)));
+        assert_eq!(physics.door_handle_worked("door", &rigs), Some(true));
+        let opened = run(&mut physics, &mut scene, &rigs, 1.0);
+        assert_eq!(physics.door_bolted("door"), Some(false));
+        assert!(*opened.last().unwrap() > 8f32.to_radians(), "bolt drawn, a second's lean opened it {} deg", opened.last().unwrap().to_degrees());
+    }
+
+    /// BY ITS HANDLE: a hand that takes the lever and walks its arc swings
+    /// the door after it, with the leaf's weight -- behind a quick hand, up
+    /// with it when it stops. A hand that goes on past the stop does not
+    /// rattle the door against it. Brought back and let go, the bolt goes
+    /// home, and the door is shut and held.
+    #[test]
+    fn a_hand_on_the_handle_swings_the_door_and_the_latch_catches_it_shut() {
+        let _guard = lock();
+        let (mut physics, mut scene) = door(latching());
+        let mut rigs = rig_at(Vec3::new(2.0, 1.7, 2.0), Some(handle_at(0.0)));
+        let player = *rigs.keys().next().unwrap();
+        let hold = |rigs: &mut HashMap<PlayerId, PlayerRig>, p: Vec3| {
+            rigs.get_mut(&player).unwrap().joints.insert(JointId::HandGrip(crate::events::Hand::Right), Transform { position: p, ..Default::default() });
+        };
+        // The left hand out of the way.
+        rigs.get_mut(&player).unwrap().joints.insert(JointId::HandGrip(crate::events::Hand::Left), Transform { position: Vec3::new(2.0, 1.0, 2.0), ..Default::default() });
+        run(&mut physics, &mut scene, &rigs, 0.1);
+        assert!(physics.grab_door(player, "door", crate::events::Hand::Right, handle_at(0.0)), "the hand is at the handle");
+        assert!(!physics.grab_door(player, "door", crate::events::Hand::Left, Vec3::new(2.0, 1.0, 2.0)), "a hand across the room took the handle");
+        // Round to 70 degrees in 0.8 s, then held there.
+        let mut lag = 0.0f32;
+        for k in 0..48 {
+            let a = 70f32.to_radians() * (k + 1) as f32 / 48.0;
+            hold(&mut rigs, handle_at(a));
+            physics.step(DT, &mut scene, &rigs);
+            lag = lag.max(a - physics.door_angle("door").unwrap());
+        }
+        let held = run(&mut physics, &mut scene, &rigs, 1.0);
+        let at = *held.last().unwrap();
+        eprintln!("swung to 70 deg by the handle: the leaf was up to {:.1} deg behind the hand, and rests at {:.1}", lag.to_degrees(), at.to_degrees());
+        assert!(lag > 1f32.to_radians() && lag < 30f32.to_radians(), "the leaf was {} deg behind the hand", lag.to_degrees());
+        assert!((at - 70f32.to_radians()).abs() < 2f32.to_radians(), "held at 70, the leaf rests at {}", at.to_degrees());
+        // On round, past the stop at 100: the hand is at 125, the door is at
+        // its stop, still.
+        for k in 0..40 {
+            hold(&mut rigs, handle_at((70.0 + 55.0 * (k + 1) as f32 / 40.0).to_radians()));
+            physics.step(DT, &mut scene, &rigs);
+        }
+        let stopped = run(&mut physics, &mut scene, &rigs, 1.5);
+        let most = stopped.iter().cloned().fold(f32::MIN, f32::max);
+        assert!(most < 100.6f32.to_radians(), "pulled past its stop to {} deg", most.to_degrees());
+        let tail = &stopped[stopped.len() - 60..];
+        let step = tail.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+        assert!(step < 0.02f32.to_radians(), "held past its stop it jitters {} deg a tick", step.to_degrees());
+        assert!(physics.is_held("door"), "25 degrees past the stop is 30 cm: not out of reach");
+        // Back to shut, and let go: no hand at the handle, the bolt goes home.
+        for k in 0..90 {
+            hold(&mut rigs, handle_at((125.0 * (1.0 - (k + 1) as f32 / 90.0)).to_radians()));
+            physics.step(DT, &mut scene, &rigs);
+        }
+        run(&mut physics, &mut scene, &rigs, 0.5);
+        assert_eq!(physics.door_bolted("door"), Some(false), "a held handle keeps the bolt drawn");
+        physics.release(player, "door", crate::events::Hand::Right);
+        hold(&mut rigs, Vec3::new(2.0, 1.0, 2.0));
+        let shut = run(&mut physics, &mut scene, &rigs, 1.0);
+        assert_eq!(physics.door_bolted("door"), Some(true), "left at {} deg", shut.last().unwrap().to_degrees());
+        assert!(shut.last().unwrap().abs() <= (LATCH_PLAY_DEG + 0.1).to_radians());
+    }
+
+    /// THE SOFT STOP: a leaf flung at its stop as fast as a leaf turns
+    /// arrives without passing it and without bouncing back off it.
+    #[test]
+    fn a_door_flung_at_its_stop_arrives_softly_and_stays() {
+        let _guard = lock();
+        let (mut physics, mut scene) = door(DoorDef { friction: 0.5, ..Default::default() });
+        let state = physics.dynamic.get("door").unwrap();
+        let w = px(Vec3::Y * 18.0);
+        let (pos, _) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
+        let v = px((Vec3::Y * 18.0).cross(pos - Vec3::new(-0.4, 1.1, 0.0)));
+        unsafe {
+            physx_sys::PxRigidDynamic_setAngularVelocity_mut(state.ptr as *mut physx_sys::PxRigidDynamic, &w, true);
+            physx_sys::PxRigidDynamic_setLinearVelocity_mut(state.ptr as *mut physx_sys::PxRigidDynamic, &v, true);
+        }
+        let angles = run(&mut physics, &mut scene, &HashMap::new(), 2.0);
+        let most = angles.iter().cloned().fold(f32::MIN, f32::max);
+        let end = *angles.last().unwrap();
+        eprintln!("flung at 18 rad/s: reached {:.2} deg, rests at {:.2}", most.to_degrees(), end.to_degrees());
+        assert!(most <= 100.3f32.to_radians(), "it passed its stop: {} deg", most.to_degrees());
+        assert!(most > 99f32.to_radians(), "it never reached its stop: {} deg", most.to_degrees());
+        assert!(end > 97f32.to_radians(), "it bounced back off the stop to {} deg", end.to_degrees());
+    }
+
+    /// IN STEP: the headset's own hinge, given the same hand on the same
+    /// handle, swings its leaf as the server's physics does -- so the door a
+    /// player draws under their own hand is the door the server will send.
+    #[test]
+    fn the_headsets_hinge_follows_a_held_handle_as_the_physics_does() {
+        use crate::door::{HingeLoad, HingeState};
+        let _guard = lock();
+        let def = latching();
+        let (mut physics, mut scene) = door(def.clone());
+        let geom = DoorGeom::new(Vec3::new(0.0, 1.1, 0.0), Quat::IDENTITY, Vec3::new(0.4, 1.05, 0.02), &def);
+        let load = HingeLoad::of(&geom, &def);
+        let local = Vec3::new(0.31, -0.1, 0.02 + crate::door::HANDLE_STANDOFF);
+        let mut rigs = rig_at(Vec3::new(2.0, 1.7, 2.0), Some(handle_at(0.0)));
+        let player = *rigs.keys().next().unwrap();
+        rigs.get_mut(&player).unwrap().joints.insert(JointId::HandGrip(crate::events::Hand::Left), Transform { position: Vec3::new(2.0, 1.0, 2.0), ..Default::default() });
+        run(&mut physics, &mut scene, &rigs, 0.1);
+        assert!(physics.grab_door(player, "door", crate::events::Hand::Right, handle_at(0.0)));
+        let mut own = HingeState::default();
+        let mut was = handle_at(0.0);
+        let mut worst = 0.0f32;
+        // Out to 80 degrees and back to 30, with a pause between: 3 s.
+        for k in 0..180 {
+            let t = k as f32 / 60.0;
+            let a = if t < 1.0 { 80.0 * t } else if t < 1.5 { 80.0 } else { 80.0 - 50.0 * ((t - 1.5) / 1.5).min(1.0) };
+            let hand = handle_at(a.to_radians());
+            rigs.get_mut(&player).unwrap().joints.insert(JointId::HandGrip(crate::events::Hand::Right), Transform { position: hand, ..Default::default() });
+            physics.step(DT, &mut scene, &rigs);
+            own = geom.step_hinge_held(own, &load, &[], &[], &[(was, hand, local)], DT);
+            was = hand;
+            worst = worst.max((own.angle - physics.door_angle("door").unwrap()).abs());
+        }
+        let server = physics.door_angle("door").unwrap();
+        eprintln!("held handle: the headset's hinge and the physics were never more than {:.1} deg apart; they end at {:.1} and {:.1}", worst.to_degrees(), own.angle.to_degrees(), server.to_degrees());
+        assert!(worst < 6f32.to_radians(), "{} deg apart", worst.to_degrees());
+        assert!((own.angle - server).abs() < 1.5f32.to_radians());
+    }
+
     fn shipped() -> (PhysicsWorld, Scene) {
         let game = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
         let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
@@ -359,45 +662,65 @@ mod tests {
         }
     }
 
+    /// END TO END: a player walking the hallway from the marble hall to the
+    /// brick hall at walking pace, stopped by the leaves as the client's walk
+    /// stops them (`Locomotion::apply_collision`). The hall's swing doors open
+    /// under their body, and the closers bring them home behind them. THE
+    /// BRICK HALL'S DOOR IS LATCHED: their body alone leans on it and it
+    /// stays shut; with a hand at its handle the bolt is drawn, and the same
+    /// walk opens it and comes out the far side past the leaf that is bolted.
     #[test]
-    fn walking_down_the_hallway_pushes_both_pairs_of_doors_open() {
+    fn walking_down_the_hallway_opens_the_swing_doors_by_body_and_the_latched_door_by_its_handle() {
         use crate::locomotion::{Locomotion, LocomotionMode};
         let _guard = lock();
         let (mut physics, mut scene) = shipped();
         let mut loco = Locomotion::new(LocomotionMode::Smooth);
-
-        loco.player_offset = Vec3::new(1.5, 0.0, -3.25);
-        let mut rigs = rig_at(Vec3::new(1.5, 1.7, -3.25), None);
+        // Into the north leaves: the brick hall's north leaf is the one that opens.
+        loco.player_offset = Vec3::new(1.5, 0.0, -2.7);
+        let mut rigs = rig_at(Vec3::new(1.5, 1.7, -2.7), None);
         let player = *rigs.keys().next().unwrap();
         physics.ensure_player(player);
         let speed = 1.4;
         let mut opened = [0.0f32; 2];
-        let mut seconds = 0.0;
-        while seconds < 20.0 && loco.player_offset.x < 12.0 {
+        let mut walk = |physics: &mut PhysicsWorld, scene: &mut Scene, loco: &mut Locomotion, hand: bool, opened: &mut [f32; 2]| {
             let start = loco.collision_start(Some(loco.player_offset + Vec3::Y * 1.7));
             loco.player_offset.x += speed * DT;
-            loco.apply_collision(&physics, start);
+            loco.apply_collision(physics, start);
             let head = loco.player_offset + Vec3::Y * 1.7;
-            rigs.get_mut(&player).unwrap().joints.insert(JointId::Head, Transform { position: head, ..Default::default() });
-            physics.step(DT, &mut scene, &rigs);
-            opened[0] = opened[0].max(physics.door_angle("hall_door_south").unwrap().abs());
-            opened[1] = opened[1].max(physics.door_angle("brick_door_south").unwrap().abs());
+            let rig = rigs.get_mut(&player).unwrap();
+            rig.joints.insert(JointId::Head, Transform { position: head, ..Default::default() });
+            // The right hand held out at the handle's height, in line with it.
+            let grip = if hand { Vec3::new(head.x + 0.4, 1.0, -2.928) } else { Vec3::new(0.0, -20.0, 0.0) };
+            rig.joints.insert(JointId::HandGrip(crate::events::Hand::Right), Transform { position: grip, ..Default::default() });
+            physics.step(DT, scene, &rigs);
+            opened[0] = opened[0].max(physics.door_angle("hall_door_north").unwrap().abs());
+            opened[1] = opened[1].max(physics.door_angle("brick_door_north").unwrap().abs());
+        };
+        // Hands down: through the swing doors, and up against the latched one.
+        let mut seconds = 0.0;
+        while seconds < 10.0 {
+            walk(&mut physics, &mut scene, &mut loco, false, &mut opened);
             seconds += DT;
         }
-        eprintln!(
-            "through in {seconds:.1} s; hall door opened {:.0} deg, brick door {:.0} deg",
-            opened[0].to_degrees(),
-            opened[1].to_degrees()
-        );
-        assert!(loco.player_offset.x >= 12.0, "stuck at {:?} after {seconds:.1} s", loco.player_offset);
-
-        assert!(seconds < 12.0, "took {seconds:.1} s");
-        assert!(opened[0] > 30f32.to_radians() && opened[1] > 30f32.to_radians(), "{opened:?}");
-
-        for _ in 0..300 {
-            physics.step(DT, &mut scene, &HashMap::new());
-        }
-        let back = physics.door_angle("hall_door_south").unwrap();
+        eprintln!("hands down, 10 s: at x = {:.2}; hall door opened {:.0} deg, brick door {:.2} deg", loco.player_offset.x, opened[0].to_degrees(), opened[1].to_degrees());
+        assert!(opened[0] > 30f32.to_radians(), "the swing door opened {} deg", opened[0].to_degrees());
+        assert!(loco.player_offset.x > 9.0 && loco.player_offset.x < 10.3, "not held at the latched door: {:?}", loco.player_offset);
+        assert!(opened[1] < 0.5f32.to_radians(), "a body alone opened the latched door {} deg", opened[1].to_degrees());
+        assert_eq!(physics.door_bolted("brick_door_north"), Some(true));
+        // The hall's closers have drawn their pair shut behind them.
+        let back = physics.door_angle("hall_door_north").unwrap();
         assert!(crate::door::DoorGeom::shut(back), "the closer left the hall door at {} deg", back.to_degrees());
+        // A step back, then on with a hand out to the handle.
+        loco.player_offset.x -= 0.6;
+        let mut seconds = 0.0;
+        while seconds < 8.0 && loco.player_offset.x < 12.0 {
+            walk(&mut physics, &mut scene, &mut loco, true, &mut opened);
+            seconds += DT;
+        }
+        eprintln!("hand at the handle: through in {seconds:.1} s; the latched door opened {:.0} deg", opened[1].to_degrees());
+        assert!(loco.player_offset.x >= 12.0, "stuck at {:?} after {seconds:.1} s", loco.player_offset);
+        assert!(opened[1] > 30f32.to_radians(), "{opened:?}");
+        // The leaf that is bolted never moved, and nothing came through it.
+        assert_eq!(physics.door_angle("brick_door_south"), Some(0.0));
     }
 }

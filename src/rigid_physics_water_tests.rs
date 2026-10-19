@@ -93,3 +93,61 @@ fn the_shipped_beach_is_waded_into_and_no_further_and_the_pond_all_the_way() {
     assert!(end.distance(Vec3::new(to.x, end.y, to.z)) < 0.1, "stopped short of the pond's middle, at {end:?}");
     assert!(deepest > MAX_WADE_DEPTH, "walked in on the pond's bed only {deepest} m deep");
 }
+
+/// A body physics drops into the water is seen going in once, as it met the
+/// surface: where, how fast (what the fall gives it), how wide, how heavy --
+/// what its splash is drawn from. Resting on the bed after, it is not seen
+/// again.
+#[test]
+fn a_body_dropped_into_water_is_reported_once_as_it_met_the_surface() {
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut scene: Scene = serde_json::from_str(r#"{"name":"water_drop","objects":[]}"#).unwrap();
+    let mut body = GameObject { id: "box".into(), ..Default::default() };
+    body.cuboid.position = Vec3::new(6.0, 2.2, 0.0);
+    body.cuboid.half_size = Vec3::new(0.1, 0.1, 0.15);
+    // Stone: 30 kg in twelve litres. (At 2.5 kg, as this test first had it,
+    // the box is lighter than its water and floats: see the tests below.)
+    body.rigid_body = Some(serde_json::from_str(r#"{"mode":"Dynamic","shape":"Box","mass":30.0}"#).unwrap());
+    scene.objects = vec![
+        GameObject {
+            id: "ground".into(),
+            brush: Some(BrushDef { solids: vec![block_solid([-20.0, -1.0, -20.0], [20.0, 0.0, 20.0], "m")], subtract: vec![] }),
+            ..Default::default()
+        },
+        body,
+    ];
+    scene.water = vec![serde_json::from_value(serde_json::json!({ "height": 0.5, "bounds": [2.0, -5.0, 10.0, 5.0] })).unwrap()];
+    let mut physics = PhysicsWorld::new();
+    physics.rebuild(&scene, Path::new("."));
+    let rigs = std::collections::HashMap::new();
+    let mut entries = Vec::new();
+    for _ in 0..240 {
+        physics.step(1.0 / 120.0, &mut scene, &rigs);
+        entries.extend(physics.take_water_entries());
+    }
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    let e = &entries[0];
+    assert_eq!(e.id, "box");
+    assert!((e.position - Vec3::new(6.0, 0.5, 0.0)).length() < 0.02, "{e:?}");
+    // Its underside fell 1.6 m to the surface: 5.6 m/s.
+    assert!((-e.velocity.y - (2.0f32 * 9.81 * 1.6).sqrt()).abs() < 0.3, "{e:?}");
+    assert!((e.mass - 30.0).abs() < 1e-3 && (e.radius - (4.0f32 * 0.1 * 0.15 / std::f32::consts::PI).sqrt()).abs() < 0.02, "{e:?}");
+    // It came to rest on the bed, under the surface.
+    let rested = scene.find_object("box").unwrap().cuboid.position;
+    assert!(rested.y < 0.3, "{rested:?}");
+}
+
+/// A shot's line finds the water it meets, and how deep it is there -- and
+/// not water behind a wall, nor any looking up.
+#[test]
+fn a_shot_finds_where_it_meets_the_water() {
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let physics = pool(1.0);
+    let muzzle = Vec3::new(0.0, 2.0, 0.0);
+    let (hit, depth) = physics.water_hit(muzzle, Vec3::new(1.0, -0.25, 0.0), 50.0).expect("the shot meets the pool");
+    assert!((hit - Vec3::new(4.0, 1.0, 0.0)).length() < 1e-3, "{hit:?}");
+    assert!((depth - 1.0).abs() < 0.05, "{depth}");
+    assert!(physics.water_hit(muzzle, Vec3::new(1.0, 0.1, 0.0), 50.0).is_none(), "upward");
+    assert!(physics.water_hit(muzzle, Vec3::new(-1.0, -0.25, 0.0), 50.0).is_none(), "onto dry ground");
+    assert!(physics.water_hit(muzzle, Vec3::new(1.0, -0.25, 0.0), 3.0).is_none(), "out of range");
+}

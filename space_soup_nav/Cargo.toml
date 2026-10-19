@@ -1,0 +1,17 @@
+[package]
+name = "space_soup_nav"
+version = "0.1.0"
+edition = "2021"
+description = "Navigation for Space Soup: room-piece navmeshes baked offline, stitched at doorway sockets at load, paths and crowds at runtime"
+license = "MIT OR Apache-2.0"
+
+# Its own workspace root: it lives inside the engine's folder, and builds and tests on its own.
+[workspace]
+
+[dependencies]
+# The engine's version, so positions cross the boundary without conversion.
+glam = { version = "0.29", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Transcendental functions with the same result on every platform. See DETERMINISM.md.
+libm = "0.2"

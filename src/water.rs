@@ -49,6 +49,14 @@ pub struct WaterDef {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_wade_depth: Option<f32>,
+
+    /// A MIRROR: a small calm body -- a pond under a bank -- whose
+    /// reflection is the scene drawn mirrored in its surface when it is the
+    /// largest such body on the screen (the renderer's `planar_water`), not
+    /// the ground map's top-down picture, which smears a steep bank. Leave
+    /// it off for the sea: its waves break a mirror up anyway.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirror: bool,
 }
 
 pub const DEFAULT_WADE_DEPTH: f32 = 0.6;
@@ -251,6 +259,12 @@ impl WaterFootprint {
         })
     }
 
+    /// The still surface's height, where this water stands at all.
+    pub fn surface_height(&self) -> Option<f32> {
+        (self.wet.iter().any(|&w| w) || self.skirt > 0.0).then_some(self.height)
+    }
+
+    /// The deepest of this water a walk goes into, metres.
     pub fn wade_depth(&self) -> f32 {
         self.wade
     }
@@ -267,6 +281,202 @@ impl WaterFootprint {
         let a = iz * self.nx + ix;
         [a, a + 1, a + self.nx, a + self.nx + 1].iter().any(|&i| self.wet[i]).then_some(self.height)
     }
+}
+
+/// SOMETHING BREAKING A WATER SURFACE from above: what a splash is made by.
+/// Raised by [`WaterWatch::see`] for the bodies physics moves
+/// (`PhysicsWorld::take_water_entries`), and by the headset for what it only
+/// sees move; drawn by the renderer from these numbers alone
+/// (`space_soup::renderer::effects::Splash`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WaterEntry {
+    pub id: String,
+    /// Where it met the still surface, world.
+    pub position: glam::Vec3,
+    /// How it was moving as it did, m/s.
+    pub velocity: glam::Vec3,
+    /// The radius of a disc as big as its cross-section there, metres.
+    pub radius: f32,
+    pub mass: f32,
+}
+
+/// The slowest thing that splashes going in, m/s down: slower, it is lowered.
+pub const ENTRY_SPEED: f32 = 0.6;
+
+/// AN ENTRY THE WORLD STILL TELLS OF: one a simulation saw in the last
+/// [`WATER_ENTRY_KEPT`] seconds (`GameRuntime::water_entries`), with a number
+/// that is its alone and how long ago it was. An entry is a moment, and a
+/// snapshot of the world is a state: told once it would be lost with the one
+/// snapshot that carried it, so it is told in every snapshot for a while, and
+/// whoever draws it knows by its number that they have, and by its age when
+/// it was.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecentWaterEntry {
+    pub serial: u64,
+    /// Seconds since it went in, as of the simulation's last step.
+    pub age: f32,
+    pub entry: WaterEntry,
+}
+
+/// How long an entry is told of, seconds: thirty snapshots at the server's
+/// sixty a second, and well under the time its splash is in the air.
+pub const WATER_ENTRY_KEPT: f32 = 0.5;
+
+impl WaterEntry {
+    /// The energy it brought to the water, joules: half its mass by its
+    /// speed squared. What a splash is as big as, what a going-in again is
+    /// measured against ([`WaterState`]) and what decides which entries are
+    /// told of when there are too many ([`keep_most_energetic`]).
+    pub fn energy(&self) -> f32 {
+        0.5 * self.mass.max(0.0) * self.velocity.length_squared()
+    }
+}
+
+/// A body that goes in again soon after it went in splashes only if it comes
+/// with at least this share of the energy it had then...
+pub const REENTRY_SHARE: f32 = 0.5;
+/// ...a share that halves with every this many seconds since: the water it
+/// churned has settled, and a small plop shows on it again.
+pub const REENTRY_HALF_LIFE: f32 = 0.4;
+
+/// ONE BODY AND THE WATER: whether it is in, and what it last went in with.
+///
+/// A body is in from the moment its underside is at the surface until it has
+/// come clear of it again -- by a quarter of its own width, and no less than
+/// two centimetres. Without that, one floating at the waterline, bobbing a
+/// millimetre either way, went in again every time it dipped: a splash a
+/// tenth of a second, for as long as it floated.
+///
+/// And one that does come clear and goes in again -- a stone skipping, a
+/// crate thrown up by its own buoyancy, a rock bouncing off a shallow bed --
+/// splashes again only by what it brings: at least [`REENTRY_SHARE`] of the
+/// energy of its last splash, less as that splash settles
+/// ([`REENTRY_HALF_LIFE`]). A skip keeps most of its speed and splashes; a bob
+/// keeps a tenth and does not. By the energy, not by a timer: two real
+/// strikes a tenth of a second apart are both seen.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct WaterState {
+    /// Its underside when last seen; none before it has been.
+    under: Option<f32>,
+    is_in: bool,
+    /// When it last splashed, and with what energy.
+    last: Option<(f64, f32)>,
+}
+
+impl WaterState {
+    /// Whether it was in the water when last seen.
+    pub fn is_in(&self) -> bool {
+        self.is_in
+    }
+
+    /// The body as it is at `now` (seconds on any steady clock; none where
+    /// there is no clock, and then every going-in counts): its `centre`, the
+    /// half extents of the box round it along the world's axes, how it is
+    /// moving and its mass; `surface` the still water's height where it is,
+    /// none over dry ground. Returns its entry (with no id) on the step it
+    /// goes in.
+    pub fn see(&mut self, now: Option<f64>, centre: glam::Vec3, half: glam::Vec3, velocity: glam::Vec3, mass: f32, surface: Option<f32>) -> Option<WaterEntry> {
+        let under = centre.y - half.y.abs();
+        let before = self.under.map(|was| (was, self.is_in));
+        self.under = Some(under);
+        let Some(surface) = surface else {
+            self.is_in = false;
+            return None;
+        };
+        let radius = (4.0 * half.x.abs() * half.z.abs() / std::f32::consts::PI).sqrt();
+        let clear = (0.5 * radius).max(0.02);
+        let was_in = before.is_some_and(|(_, was_in)| was_in);
+        self.is_in = if was_in { under <= surface + clear } else { under <= surface };
+        // First seen already under, it was placed there, not dropped.
+        let came_down = before.is_some_and(|(was, was_in)| !was_in && was > surface);
+        if !(self.is_in && came_down && -velocity.y >= ENTRY_SPEED) {
+            return None;
+        }
+        let entry = WaterEntry { id: String::new(), position: glam::Vec3::new(centre.x, surface, centre.z), velocity, radius, mass };
+        if let (Some(now), Some((when, energy))) = (now, self.last) {
+            let since = (now - when).max(0.0) as f32;
+            if entry.energy() < REENTRY_SHARE * energy * 0.5f32.powf(since / REENTRY_HALF_LIFE) {
+                return None;
+            }
+        }
+        if let Some(now) = now {
+            self.last = Some((now, entry.energy()));
+        }
+        Some(entry)
+    }
+}
+
+/// THE MOST ENERGETIC `cap` OF `entries`, in the order they were in: what is
+/// told of when more things strike the water at once than anyone can draw. The
+/// least energetic go first -- a hundred pebbles and a boulder is the boulder
+/// and the biggest pebbles -- and ties keep the earlier.
+pub fn keep_most_energetic(entries: &mut Vec<WaterEntry>, cap: usize) {
+    if entries.len() <= cap {
+        return;
+    }
+    if cap == 0 {
+        entries.clear();
+        return;
+    }
+    let mut energies: Vec<f32> = entries.iter().map(WaterEntry::energy).collect();
+    energies.sort_by(|a, b| b.total_cmp(a));
+    let floor = energies[cap - 1];
+    let mut ties = cap - energies.iter().filter(|e| **e > floor).count();
+    entries.retain(|e| {
+        let energy = e.energy();
+        if energy > floor {
+            true
+        } else if energy == floor && ties > 0 {
+            ties -= 1;
+            true
+        } else {
+            false
+        }
+    });
+}
+
+/// The most entries one step of a simulation tells of
+/// (`PhysicsWorld::step`), and the most a world tells of at once
+/// (`GameRuntime::water_entries`: in every snapshot for half a second).
+pub const MAX_ENTRIES_A_STEP: usize = 8;
+pub const MAX_ENTRIES_TOLD: usize = 32;
+
+/// WHICH BODIES ARE IN THE WATER, by name, so each going in is seen once: a
+/// [`WaterState`] each, for someone who only sees things move (the headset,
+/// for a server that does not tell). No clock, so every going-in counts.
+#[derive(Debug, Default, Clone)]
+pub struct WaterWatch {
+    bodies: std::collections::HashMap<String, WaterState>,
+}
+
+impl WaterWatch {
+    /// A body as it is now: its `centre`, the half extents of the box round
+    /// it along the world's axes, how it is moving and its mass; `surface`
+    /// the still water's height where it is, none over dry ground. Returns
+    /// its entry, on the step it goes in.
+    pub fn see(&mut self, id: &str, centre: glam::Vec3, half: glam::Vec3, velocity: glam::Vec3, mass: f32, surface: Option<f32>) -> Option<WaterEntry> {
+        if !self.bodies.contains_key(id) {
+            self.bodies.insert(id.to_string(), WaterState::default());
+        }
+        let state = self.bodies.get_mut(id)?;
+        state.see(None, centre, half, velocity, mass, surface).map(|mut e| {
+            e.id = id.to_string();
+            e
+        })
+    }
+
+    /// Forget every body not in `seen`.
+    pub fn keep(&mut self, seen: impl Fn(&str) -> bool) {
+        self.bodies.retain(|id, _| seen(id));
+    }
+}
+
+/// The half extents, along the world's axes, of the box round a box of
+/// `half_size` turned by `rotation`.
+pub fn world_half_extents(half_size: glam::Vec3, rotation: glam::Quat) -> glam::Vec3 {
+    let m = glam::Mat3::from_quat(rotation);
+    let h = half_size.abs();
+    m.x_axis.abs() * h.x + m.y_axis.abs() * h.y + m.z_axis.abs() * h.z
 }
 
 #[cfg(test)]
@@ -292,6 +502,7 @@ mod tests {
             mud: 0.0,
         name: None,
         max_wade_depth: None,
+        mirror: false,
         }
     }
 
@@ -495,5 +706,49 @@ mod tests {
         let w = water();
         let text = serde_json::to_string(&w).unwrap();
         assert_eq!(serde_json::from_str::<WaterDef>(&text).unwrap(), w);
+    }
+
+    #[test]
+    fn a_body_going_in_is_seen_once_and_one_bobbing_at_the_surface_is_not_seen_again() {
+        use glam::Vec3;
+        let mut w = WaterWatch::default();
+        let half = Vec3::new(0.2, 0.1, 0.3);
+        let fall = Vec3::new(0.5, -4.0, 0.0);
+        let mut entries = Vec::new();
+        // Falling from above the surface (0) to under it.
+        for k in 0..20 {
+            let centre = Vec3::new(1.0, 1.0 - 0.1 * k as f32, 2.0);
+            entries.extend(w.see("box", centre, half, fall, 12.0, Some(0.0)));
+        }
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        let e = &entries[0];
+        assert!(e.position == Vec3::new(1.0, 0.0, 2.0) && e.velocity == fall && e.mass == 12.0);
+        // A disc as big as its 0.4 x 0.6 footprint.
+        assert!((std::f32::consts::PI * e.radius * e.radius - 0.24).abs() < 1e-4);
+        // Bobbing a centimetre either side of the surface: never again.
+        for k in 0..200 {
+            let centre = Vec3::new(1.0, 0.1 + 0.01 * (k as f32 * 0.7).sin(), 2.0);
+            assert!(w.see("box", centre, half, Vec3::new(0.0, -1.0, 0.0), 12.0, Some(0.0)).is_none());
+        }
+        // Lifted clear and dropped again: once more.
+        assert!(w.see("box", Vec3::new(1.0, 1.0, 2.0), half, Vec3::ZERO, 12.0, Some(0.0)).is_none());
+        assert!(w.see("box", Vec3::new(1.0, 0.05, 2.0), half, fall, 12.0, Some(0.0)).is_some());
+        // Lowered in slowly, placed under it to begin with, or over dry
+        // ground: nothing.
+        let mut w = WaterWatch::default();
+        assert!(w.see("a", Vec3::new(0.0, 1.0, 0.0), half, Vec3::ZERO, 1.0, Some(0.0)).is_none());
+        assert!(w.see("a", Vec3::new(0.0, 0.0, 0.0), half, Vec3::new(0.0, -0.2, 0.0), 1.0, Some(0.0)).is_none());
+        assert!(w.see("b", Vec3::new(0.0, -1.0, 0.0), half, fall, 1.0, Some(0.0)).is_none());
+        assert!(w.see("c", Vec3::new(0.0, 1.0, 0.0), half, fall, 1.0, None).is_none());
+        assert!(w.see("c", Vec3::new(0.0, -1.0, 0.0), half, fall, 1.0, None).is_none());
+        w.keep(|id| id == "a");
+        assert_eq!(w.bodies.len(), 1);
+    }
+
+    #[test]
+    fn a_turned_box_is_wider_along_the_worlds_axes() {
+        use glam::{Quat, Vec3};
+        let h = world_half_extents(Vec3::new(1.0, 0.1, 0.2), Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
+        assert!((h - Vec3::new(0.1, 1.0, 0.2)).length() < 1e-5, "{h:?}");
     }
 }

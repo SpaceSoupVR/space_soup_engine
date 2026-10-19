@@ -93,3 +93,9 @@ impl InputAxes {
         }
     }
 }
+
+
+/// The name of the button press that asks for every loose prop to be put
+/// back where it started (`GameRuntime::dispatch_input`): sent with no
+/// object, by whatever control the headset gives it.
+pub const RESPAWN_PROPS_BUTTON: &str = "respawn_props";

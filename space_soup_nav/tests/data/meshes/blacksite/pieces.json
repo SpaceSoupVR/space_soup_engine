@@ -1,0 +1,334 @@
+{
+  "pieces": [
+    {
+      "doorways": [
+        {
+          "name": "EDoorType_A",
+          "outward": "PosX",
+          "position": [
+            9.032401084899902,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NDoorType_A",
+          "outward": "NegZ",
+          "position": [
+            0.08254031091928482,
+            0.0,
+            -9.032087326049805
+          ],
+          "size": "default"
+        },
+        {
+          "name": "WDoorType_A",
+          "outward": "NegX",
+          "position": [
+            -9.032401084899902,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        },
+        {
+          "name": "SDoorType_A",
+          "outward": "PosZ",
+          "position": [
+            0.08254031091928482,
+            1.9002894759978517e-6,
+            9.032854080200195
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "4WayTallWCatwalk_DoorType_A",
+      "role": "Start",
+      "triangles": 24264
+    },
+    {
+      "doorways": [
+        {
+          "name": "EDoorType_A",
+          "outward": "PosX",
+          "position": [
+            9.03226375579834,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NDoorType_A",
+          "outward": "NegZ",
+          "position": [
+            -0.00004725063263322227,
+            0.0,
+            -9.032087326049805
+          ],
+          "size": "default"
+        },
+        {
+          "name": "SDoorType_A",
+          "outward": "PosZ",
+          "position": [
+            -0.00004725063263322227,
+            1.9002894759978517e-6,
+            9.032854080200195
+          ],
+          "size": "default"
+        },
+        {
+          "name": "WDoorType_A",
+          "outward": "NegX",
+          "position": [
+            -9.032537460327148,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "4WayShort_DoorType_A",
+      "role": "Room",
+      "triangles": 11380
+    },
+    {
+      "doorways": [
+        {
+          "name": "WDoorType_A",
+          "outward": "NegX",
+          "position": [
+            -9.032537460327148,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        },
+        {
+          "name": "EDoorType_A",
+          "outward": "PosX",
+          "position": [
+            9.03226375579834,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NDoorType_A",
+          "outward": "NegZ",
+          "position": [
+            -0.00004725063263322227,
+            0.0,
+            -9.032087326049805
+          ],
+          "size": "default"
+        },
+        {
+          "name": "SDoorType_A",
+          "outward": "PosZ",
+          "position": [
+            -0.00004725063263322227,
+            1.9002894759978517e-6,
+            9.032854080200195
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "4WayTall_DoorType_A",
+      "role": "Room",
+      "triangles": 15796
+    },
+    {
+      "doorways": [
+        {
+          "name": "EDoorType_A",
+          "outward": "PosX",
+          "position": [
+            9.032400131225586,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        },
+        {
+          "name": "WDoorType_A",
+          "outward": "NegX",
+          "position": [
+            -9.032400131225586,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        },
+        {
+          "name": "SDoorType_A",
+          "outward": "PosZ",
+          "position": [
+            -0.003521242178976536,
+            1.9002894759978517e-6,
+            9.032400131225586
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "LIGHT_TEST_3WayTall_DoorType_A",
+      "role": "Room",
+      "triangles": 12251
+    },
+    {
+      "doorways": [
+        {
+          "name": "NDoorType_A.001",
+          "outward": "PosZ",
+          "position": [
+            -0.00013421774201560766,
+            1.900289362311014e-6,
+            10.240089416503906
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NDoorType_A",
+          "outward": "NegZ",
+          "position": [
+            -0.00013421774201560766,
+            0.0,
+            -10.240089416503906
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "HallwayShort_DoorType_A",
+      "role": "Hallway",
+      "triangles": 5849
+    },
+    {
+      "doorways": [
+        {
+          "name": "SDoorType_OPEN_Short",
+          "outward": "PosZ",
+          "position": [
+            -0.00013421774201560766,
+            1.900289362311014e-6,
+            10.240089416503906
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NDoorType_A",
+          "outward": "NegZ",
+          "position": [
+            -0.00013421774201560766,
+            0.0,
+            -10.240089416503906
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "HallwayShort_NDoorType_A_SDoorType_OPEN_Short",
+      "role": "Hallway",
+      "triangles": 4037
+    },
+    {
+      "doorways": [
+        {
+          "name": "NDoorType_A.001",
+          "outward": "PosZ",
+          "position": [
+            -0.00013421774201560766,
+            1.5252205685101217e-6,
+            10.240089416503906
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NDoorType_A",
+          "outward": "NegZ",
+          "position": [
+            -0.00013421774201560766,
+            0.0,
+            -10.240089416503906
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "HallwayTall_DoorType_A",
+      "role": "Hallway",
+      "triangles": 9177
+    },
+    {
+      "doorways": [
+        {
+          "name": "SDoorType_OPEN_Short",
+          "outward": "PosZ",
+          "position": [
+            -0.00013421774201560766,
+            1.900289362311014e-6,
+            10.240089416503906
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NDoorType_A",
+          "outward": "NegZ",
+          "position": [
+            -0.00013421774201560766,
+            0.0,
+            -10.240089416503906
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "HallwayTall_NDoorType_A_SDoorType_OPEN_Short",
+      "role": "Hallway",
+      "triangles": 7397
+    },
+    {
+      "doorways": [
+        {
+          "name": "SouthDoorSocket",
+          "outward": "PosZ",
+          "position": [
+            0.13647834956645966,
+            7.433238806697773e-7,
+            10.24020004272461
+          ],
+          "size": "default"
+        },
+        {
+          "name": "NorthDoorSocket",
+          "outward": "NegZ",
+          "position": [
+            0.13647834956645966,
+            -6.256850610952824e-6,
+            -10.240199089050293
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "VentLockRoom",
+      "role": "Hallway",
+      "triangles": 18604
+    },
+    {
+      "doorways": [
+        {
+          "name": "CapConnector",
+          "outward": "PosZ",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "size": "default"
+        }
+      ],
+      "piece": "DoorType_A_NO_PATH",
+      "role": "Cap",
+      "triangles": 68
+    }
+  ]
+}

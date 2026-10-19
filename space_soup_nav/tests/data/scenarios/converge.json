@@ -1,0 +1,127 @@
+{
+  "name": "converge",
+  "description": "Eight monsters enter the real 4WayShort room through all four doorways and converge on a player standing in the middle. Passing means they fill a ring around the player and the rest hold outside it, rather than piling into one point.",
+  "mesh": "blacksite/4WayShort_DoorType_A.obj",
+  "dt": 0.013888888888888888,
+  "duration_s": 15.0,
+  "agents": [
+    {
+      "start": [
+        -0.6,
+        0.0,
+        -8.0
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        0.6,
+        0.0,
+        -8.0
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        -0.6,
+        0.0,
+        8.0
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        0.6,
+        0.0,
+        8.0
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        -8.0,
+        0.0,
+        -0.6
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        -8.0,
+        0.0,
+        0.6
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        8.0,
+        0.0,
+        -0.6
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        8.0,
+        0.0,
+        0.6
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    }
+  ],
+  "players": [
+    {
+      "waypoints": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "speed": 0.0,
+      "radius": 0.3
+    }
+  ],
+  "pass": {
+    "all_arrive_within_s": null,
+    "arrive_radius": 0.5,
+    "max_stuck_s": 3.0,
+    "stuck_distance": 0.2,
+    "max_overlap": 0.05,
+    "first_contact_within_s": 4.0,
+    "reach": 1.0
+  }
+}

@@ -3,6 +3,8 @@ pub mod attach;
 pub mod audio;
 pub mod debug_protocol;
 pub mod events;
+pub mod grab_index;
+pub mod grab_target;
 pub mod locomotion;
 pub mod logic;
 pub mod netrules;
@@ -15,6 +17,9 @@ mod rigid_physics_grab;
 mod rigid_physics_query;
 mod rigid_physics_spawn;
 mod rigid_physics_door;
+pub mod rigid_physics_water;
+pub mod rigid_physics_nav;
+pub mod navigation;
 pub mod runtime;
 mod runtime_animation;
 mod runtime_dispatch;
@@ -31,6 +36,14 @@ mod runtime_tests_physics;
 mod rigid_physics_brush_tests;
 #[cfg(test)]
 mod rigid_physics_water_tests;
+#[cfg(test)]
+mod rigid_physics_mesh_collider_tests;
+#[cfg(test)]
+mod navigation_tests;
+#[cfg(test)]
+mod rigid_physics_hold_tests;
+#[cfg(test)]
+mod rigid_physics_level_tests;
 #[cfg(test)]
 mod runtime_tests_scripting;
 #[cfg(test)]
@@ -83,6 +96,8 @@ mod terrain_tests;
 mod terrain_physics_tests;
 #[cfg(test)]
 mod scatter_physics_tests;
+#[cfg(test)]
+mod terrain_collider_tests;
 pub mod script;
 mod script_fns_input;
 mod script_fns_interact;
@@ -101,6 +116,7 @@ pub use locomotion::{
 };
 pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
+pub use rigid_physics_query::{SurfaceContact, SweepHit};
 pub use rig_profile::{
     BoneAssignment, DeviceOffsetDef, HeightCalibrationDef, JointConstraintDef, RigProfileDef,
 };
