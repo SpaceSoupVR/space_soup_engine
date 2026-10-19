@@ -1,0 +1,4 @@
+# Reference data: its bytes are checked against hashes recorded when C++ Recast/Detour made the
+# golden files (tests/test_data.rs), so no line-ending rewrite may touch it -- the engine's
+# `* text=auto eol=lf` turned Recast's CRLF dungeon.obj into a different file on every clone.
+tests/data/** -text

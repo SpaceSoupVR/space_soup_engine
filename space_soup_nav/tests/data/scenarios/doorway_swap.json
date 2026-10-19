@@ -1,0 +1,148 @@
+{
+  "name": "doorway_swap",
+  "description": "Four monsters on each side of a 1.2 m doorway swap rooms at once. Only one 0.8 m wide body fits through at a time: the classic reciprocal-avoidance deadlock. Passing means a queue forms and empties, not a shoving match in the frame.",
+  "mesh": "synthetic/two_rooms_door.obj",
+  "dt": 0.013888888888888888,
+  "duration_s": 30.0,
+  "agents": [
+    {
+      "start": [
+        2.0,
+        0.0,
+        2.0
+      ],
+      "goal": {
+        "Point": [
+          10.0,
+          0.0,
+          2.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        2.0,
+        0.0,
+        4.0
+      ],
+      "goal": {
+        "Point": [
+          10.0,
+          0.0,
+          4.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        2.0,
+        0.0,
+        6.0
+      ],
+      "goal": {
+        "Point": [
+          10.0,
+          0.0,
+          6.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        3.5,
+        0.0,
+        4.0
+      ],
+      "goal": {
+        "Point": [
+          8.5,
+          0.0,
+          4.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        10.0,
+        0.0,
+        3.0
+      ],
+      "goal": {
+        "Point": [
+          2.0,
+          0.0,
+          3.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        10.0,
+        0.0,
+        5.0
+      ],
+      "goal": {
+        "Point": [
+          2.0,
+          0.0,
+          5.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        8.5,
+        0.0,
+        4.0
+      ],
+      "goal": {
+        "Point": [
+          3.5,
+          0.0,
+          4.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        10.0,
+        0.0,
+        7.0
+      ],
+      "goal": {
+        "Point": [
+          2.0,
+          0.0,
+          7.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    }
+  ],
+  "players": [],
+  "pass": {
+    "all_arrive_within_s": 25.0,
+    "arrive_radius": 0.5,
+    "max_stuck_s": 3.0,
+    "stuck_distance": 0.2,
+    "max_overlap": 0.05,
+    "first_contact_within_s": null,
+    "reach": 1.0,
+    "max_handover_s": 6.0
+  }
+}

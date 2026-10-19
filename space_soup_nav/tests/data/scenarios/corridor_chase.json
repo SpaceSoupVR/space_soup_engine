@@ -1,0 +1,72 @@
+{
+  "name": "corridor_chase",
+  "description": "Three monsters chase a player down the real HallwayShort piece from the far doorway, the player walking away.",
+  "mesh": "blacksite/HallwayShort_DoorType_A.obj",
+  "dt": 0.013888888888888888,
+  "duration_s": 15.0,
+  "agents": [
+    {
+      "start": [
+        -1.2,
+        0.0,
+        -9.0
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        0.0,
+        0.0,
+        -9.0
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    },
+    {
+      "start": [
+        1.2,
+        0.0,
+        -9.0
+      ],
+      "goal": {
+        "Player": 0
+      },
+      "radius": 0.4,
+      "max_speed": 3.5
+    }
+  ],
+  "players": [
+    {
+      "waypoints": [
+        [
+          0.0,
+          0.0,
+          4.0
+        ],
+        [
+          0.0,
+          0.0,
+          9.5
+        ]
+      ],
+      "speed": 1.4,
+      "radius": 0.3
+    }
+  ],
+  "pass": {
+    "all_arrive_within_s": null,
+    "arrive_radius": 0.5,
+    "max_stuck_s": 2.0,
+    "stuck_distance": 0.2,
+    "max_overlap": 0.05,
+    "first_contact_within_s": 7.0,
+    "reach": 1.0
+  }
+}

@@ -1,0 +1,18 @@
+# The determinism rules in DETERMINISM.md, enforced: `cargo clippy -- -D clippy::disallowed_types -D clippy::disallowed_methods`.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order differs between runs; use BTreeMap or a Vec. See DETERMINISM.md" },
+    { path = "std::collections::HashSet", reason = "iteration order differs between runs; use BTreeSet or a Vec. See DETERMINISM.md" },
+]
+disallowed-methods = [
+    { path = "f32::sin", reason = "platform libm; use libm::sinf. See DETERMINISM.md" },
+    { path = "f32::cos", reason = "platform libm; use libm::cosf. See DETERMINISM.md" },
+    { path = "f32::tan", reason = "platform libm; use libm::tanf. See DETERMINISM.md" },
+    { path = "f32::atan2", reason = "platform libm; use libm::atan2f. See DETERMINISM.md" },
+    { path = "f32::acos", reason = "platform libm; use libm::acosf. See DETERMINISM.md" },
+    { path = "f32::powf", reason = "platform libm; use libm::powf. See DETERMINISM.md" },
+    { path = "f32::exp", reason = "platform libm; use libm::expf. See DETERMINISM.md" },
+    { path = "f32::ln", reason = "platform libm; use libm::logf. See DETERMINISM.md" },
+    { path = "f32::mul_add", reason = "fused on some targets only; write a * b + c. See DETERMINISM.md" },
+    { path = "glam::Vec3::mul_add", reason = "fused on NEON, unfused on SSE2; write it out. See DETERMINISM.md" },
+    { path = "glam::Vec3::lerp", reason = "backend-dependent rounding; write a + (b - a) * t. See DETERMINISM.md" },
+]

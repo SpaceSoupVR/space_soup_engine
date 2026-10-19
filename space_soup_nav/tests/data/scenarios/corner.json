@@ -1,0 +1,67 @@
+{
+  "name": "corner",
+  "description": "Three monsters round a right-angled corner in a 2 m corridor. Passing means no one cuts the inside corner into the wall and no one stalls on it.",
+  "mesh": "synthetic/l_corridor.obj",
+  "dt": 0.013888888888888888,
+  "duration_s": 20.0,
+  "agents": [
+    {
+      "start": [
+        1.0,
+        0.0,
+        0.6
+      ],
+      "goal": {
+        "Point": [
+          8.6,
+          0.0,
+          9.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        1.0,
+        0.0,
+        1.4
+      ],
+      "goal": {
+        "Point": [
+          9.4,
+          0.0,
+          9.0
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    },
+    {
+      "start": [
+        2.5,
+        0.0,
+        1.0
+      ],
+      "goal": {
+        "Point": [
+          9.0,
+          0.0,
+          7.8
+        ]
+      },
+      "radius": 0.4,
+      "max_speed": 3.0
+    }
+  ],
+  "players": [],
+  "pass": {
+    "all_arrive_within_s": 12.0,
+    "arrive_radius": 0.5,
+    "max_stuck_s": 3.0,
+    "stuck_distance": 0.2,
+    "max_overlap": 0.05,
+    "first_contact_within_s": null,
+    "reach": 1.0
+  }
+}
