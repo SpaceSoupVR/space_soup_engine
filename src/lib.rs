@@ -89,6 +89,7 @@ pub mod schema;
 pub mod terrain;
 pub mod walk_area;
 pub mod water;
+pub mod ground_hits;
 pub mod weather;
 #[cfg(test)]
 mod terrain_tests;

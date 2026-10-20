@@ -179,6 +179,12 @@ pub struct GameRuntime {
     /// number the next one takes. See [`Self::water_entries`].
     pub(crate) water_entries: Vec<crate::water::RecentWaterEntry>,
     pub(crate) next_water_entry: u64,
+    /// What struck the ground lately, oldest first, the number the next one
+    /// takes, and the shots and blasts told since the last step. See
+    /// [`Self::ground_hits`].
+    pub(crate) ground_hits: Vec<crate::ground_hits::RecentGroundHit>,
+    pub(crate) next_ground_hit: u64,
+    pub(crate) told_ground_hits: Vec<crate::ground_hits::GroundHit>,
 }
 
 impl GameRuntime {
@@ -221,6 +227,9 @@ impl GameRuntime {
             socket_attachments: HashMap::new(),
             water_entries: Vec::new(),
             next_water_entry: 0,
+            ground_hits: Vec::new(),
+            next_ground_hit: 0,
+            told_ground_hits: Vec::new(),
         };
 
         rt.compile_scripts();
@@ -333,6 +342,8 @@ impl GameRuntime {
         self.particle_bursts = Vec::new();
         self.socket_attachments = HashMap::new();
         self.water_entries.clear();
+        self.ground_hits.clear();
+        self.told_ground_hits.clear();
         self.script_host = ScriptHost::new();
         self.compile_scripts();
         self.setup_scene_attachments();
@@ -445,6 +456,7 @@ impl GameRuntime {
 
         self.rigid_physics.step(dt, &mut self.scene, &self.rigs);
         self.note_water_entries(dt);
+        self.note_ground_hits(dt);
 
         let listener = match inputs.len() {
             1 => inputs.keys().next().map(|&p| self.world_head_transform(p)),
@@ -507,6 +519,40 @@ impl GameRuntime {
     /// the splash once, from the speed and the mass physics had for it.
     pub fn water_entries(&self) -> &[crate::water::RecentWaterEntry] {
         &self.water_entries
+    }
+
+    /// What landed on, was shot into or blew up in the ground this step joins
+    /// what did lately, as [`Self::note_water_entries`] does for the water.
+    fn note_ground_hits(&mut self, dt: f32) {
+        for h in &mut self.ground_hits {
+            h.age += dt;
+        }
+        self.ground_hits.retain(|h| h.age < crate::ground_hits::GROUND_HIT_KEPT);
+        let mut fresh = self.rigid_physics.take_ground_hits();
+        fresh.append(&mut self.told_ground_hits);
+        for hit in fresh {
+            self.ground_hits.push(crate::ground_hits::RecentGroundHit { serial: self.next_ground_hit, age: 0.0, hit });
+            self.next_ground_hit += 1;
+        }
+        while self.ground_hits.len() > crate::ground_hits::MAX_GROUND_HITS_TOLD {
+            let least = self.ground_hits.iter().enumerate().min_by(|a, b| a.1.hit.energy().total_cmp(&b.1.hit.energy())).map(|(i, _)| i).unwrap_or(0);
+            self.ground_hits.remove(least);
+        }
+    }
+
+    /// WHAT STRUCK THE GROUND in the last
+    /// [`crate::ground_hits::GROUND_HIT_KEPT`] seconds, oldest first, each
+    /// with its own number and its age: what a server puts in every snapshot
+    /// (`WireWorld::ground_hits`) so each client raises the mud splash once.
+    pub fn ground_hits(&self) -> &[crate::ground_hits::RecentGroundHit] {
+        &self.ground_hits
+    }
+
+    /// A SHOT or a BLAST struck the ground: told by what fires or sets it
+    /// off, and told on from the next step. Bodies landing are seen by
+    /// physics itself.
+    pub fn ground_hit(&mut self, hit: crate::ground_hits::GroundHit) {
+        self.told_ground_hits.push(hit);
     }
 
     pub fn scene(&self) -> &Scene {
