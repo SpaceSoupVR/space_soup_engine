@@ -300,6 +300,57 @@ pub struct TimeOfDayDef {
 
     #[serde(default = "default_one")]
     pub turbidity: f32,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clouds: Option<CloudsDef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CloudsDef {
+    pub coverage: f32,
+    pub altitude_m: f32,
+    pub thickness_m: f32,
+    pub scale_km: f32,
+    pub density: f32,
+    pub wind_deg: f32,
+    pub wind_speed: f32,
+    pub evolution: f32,
+    pub seed: u32,
+}
+
+impl Default for CloudsDef {
+    fn default() -> Self {
+        let c = space_soup_sky::clouds::CloudParams::default();
+        Self {
+            coverage: c.coverage,
+            altitude_m: c.altitude_m,
+            thickness_m: c.thickness_m,
+            scale_km: c.scale_km,
+            density: c.density,
+            wind_deg: c.wind_deg,
+            wind_speed: c.wind_speed,
+            evolution: c.evolution,
+            seed: c.seed,
+        }
+    }
+}
+
+impl CloudsDef {
+    pub fn params(&self) -> space_soup_sky::clouds::CloudParams {
+        space_soup_sky::clouds::CloudParams {
+            coverage: self.coverage,
+            altitude_m: self.altitude_m,
+            thickness_m: self.thickness_m,
+            scale_km: self.scale_km,
+            density: self.density,
+            wind_deg: self.wind_deg,
+            wind_speed: self.wind_speed,
+            evolution: self.evolution,
+            seed: self.seed,
+        }
+        .clamped()
+    }
 }
 
 fn default_start_hour() -> f32 {
@@ -337,6 +388,7 @@ impl TimeOfDayDef {
             star_density: self.star_density.max(0.0),
             light_pollution: self.light_pollution.max(0.0),
             turbidity: self.turbidity.max(0.05),
+            clouds: self.clouds.map(|c| c.params()).unwrap_or_default(),
         };
         match (self.north_deg, photographed_sun) {
             (None, Some(sun)) => p.with_sun_azimuth_of(sun),
@@ -748,5 +800,26 @@ mod breakable_editor_parity {
         let def: BreakableDef =
             serde_json::from_str(r#"{"health": 250, "stages": []}"#).expect("parse");
         assert_eq!(def.health, 250.0);
+    }
+}
+
+#[cfg(test)]
+mod cloud_def_tests {
+    use super::*;
+
+    #[test]
+    fn a_sky_without_clouds_saves_as_it_was_and_one_with_them_takes_the_defaults() {
+        let plain: TimeOfDayDef = serde_json::from_str(r#"{"start_hour": 9.0}"#).unwrap();
+        assert!(plain.clouds.is_none());
+        assert!(!serde_json::to_string(&plain).unwrap().contains("clouds"));
+        assert!(plain.params(None).clouds.is_clear());
+
+        let fair: TimeOfDayDef = serde_json::from_str(r#"{"clouds": {"coverage": 0.35}}"#).unwrap();
+        let c = fair.params(None).clouds;
+        assert_eq!(c.coverage, 0.35);
+        assert_eq!(c.altitude_m, space_soup_sky::clouds::CloudParams::default().altitude_m);
+        assert!(!c.is_clear());
+        let back: TimeOfDayDef = serde_json::from_str(&serde_json::to_string(&fair).unwrap()).unwrap();
+        assert_eq!(back, fair);
     }
 }
