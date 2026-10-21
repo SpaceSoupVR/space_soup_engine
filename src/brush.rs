@@ -176,6 +176,34 @@ pub struct BrushDef {
     pub subtract: Vec<BrushSolid>,
 }
 
+impl BrushSolid {
+    /// The solid moved by `delta`, its textures with it: each face's shift
+    /// follows, so a moved wall keeps its brickwork rather than sliding
+    /// through it (texture lock, always on, as the web editor's
+    /// `translateSolid` had it).
+    pub fn translate(&mut self, delta: Vec3) {
+        for f in &mut self.faces {
+            let (u, v) = f.axes();
+            let su = if f.scale[0] == 0.0 { 1.0 } else { f.scale[0] };
+            let sv = if f.scale[1] == 0.0 { 1.0 } else { f.scale[1] };
+            f.plane[3] += dot([f.plane[0], f.plane[1], f.plane[2]], delta);
+            f.shift[0] -= dot(delta, u) / su;
+            f.shift[1] -= dot(delta, v) / sv;
+        }
+    }
+}
+
+impl BrushDef {
+    /// Every solid and carve moved by `delta`, textures locked (see
+    /// `BrushSolid::translate`). A brush's planes are in the world, so moving
+    /// its object's `cuboid` alone moves nothing but the box that reports it.
+    pub fn translate(&mut self, delta: Vec3) {
+        for s in self.solids.iter_mut().chain(self.subtract.iter_mut()) {
+            s.translate(delta);
+        }
+    }
+}
+
 fn plane_basis(n: Vec3) -> (Vec3, Vec3) {
     let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
 
@@ -1163,5 +1191,45 @@ mod exposed_surface_tests {
             "the hall ceiling spans z {:?}; the room is -15.7..3.7",
             ceiling_z,
         );
+    }
+}
+
+#[cfg(test)]
+mod translate_tests {
+    use super::*;
+
+    /// A moved brush's faces pass through the moved points and show them the
+    /// same texture coordinates they had: the plane and the texture move
+    /// together, a rotated texture included.
+    #[test]
+    fn a_moved_brush_carries_its_planes_and_its_texture() {
+        let face = |n: Vec3, d: f64, rotation: f64| BrushFace {
+            plane: [n[0], n[1], n[2], d],
+            material: "m".into(),
+            u_axis: None,
+            v_axis: None,
+            scale: [2.0, 0.5],
+            shift: [0.25, 0.0],
+            rotation,
+            lightmap_scale: 0.125,
+            smoothing: 0,
+        };
+        let mut brush = BrushDef {
+            solids: vec![BrushSolid { faces: vec![face([1.0, 0.0, 0.0], 3.0, 0.0), face([0.0, 0.0, -1.0], 2.0, 30.0)] }],
+            subtract: vec![BrushSolid { faces: vec![face([0.0, 1.0, 0.0], 1.0, 0.0)] }],
+        };
+        let before = brush.clone();
+        let delta = [1.5, -0.25, 4.0];
+        brush.translate(delta);
+        let all = |b: &BrushDef| b.solids.iter().chain(b.subtract.iter()).flat_map(|s| s.faces.clone()).collect::<Vec<_>>();
+        for (old, new) in all(&before).iter().zip(all(&brush).iter()) {
+            // A point on the old face, and where it went.
+            let n = [old.plane[0], old.plane[1], old.plane[2]];
+            let p = scale(n, old.plane[3]);
+            let q = add(p, delta);
+            assert!(new.plane().distance(q).abs() < 1e-9, "the face did not move with the brush");
+            let (a, b) = (old.uv(p), new.uv(q));
+            assert!((a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9, "the texture slid: {a:?} -> {b:?}");
+        }
     }
 }
