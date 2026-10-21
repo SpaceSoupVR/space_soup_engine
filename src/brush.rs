@@ -636,6 +636,26 @@ impl BrushDef {
         Some(&mut list[si].faces[fi])
     }
 
+    /// Carve `index` (of `subtract`) reshaped to the box `centre` +- `half`,
+    /// through its planes about its own box (`BrushSolid::transform`), so its
+    /// walls keep their texture's size in the world. False when there is no
+    /// such carve, it has no volume, or the size asked is not positive.
+    pub fn reshape_carve(&mut self, index: usize, centre: Vec3, half: Vec3) -> bool {
+        let Some(carve) = self.subtract.get_mut(index) else { return false };
+        let Some((lo, hi)) = solid_bounds(carve) else { return false };
+        let was_half = [0, 1, 2].map(|i| (hi[i] - lo[i]) / 2.0);
+        if was_half.iter().chain(half.iter()).any(|h| *h <= 1e-6) {
+            return false;
+        }
+        let was_centre = [0, 1, 2].map(|i| (hi[i] + lo[i]) / 2.0);
+        let k = [0, 1, 2].map(|i| half[i] / was_half[i]);
+        let a = [[k[0], 0.0, 0.0], [0.0, k[1], 0.0], [0.0, 0.0, k[2]]];
+        // x' = k (x - c) + c'.
+        let t = [0, 1, 2].map(|i| centre[i] - k[i] * was_centre[i]);
+        carve.transform(a, t, was_centre, false);
+        true
+    }
+
     /// Every face of every solid in `material` (carves keep theirs: they
     /// draw nothing of their own).
     pub fn paint(&mut self, material: &str) {
@@ -1446,6 +1466,24 @@ mod transform_tests {
         assert_eq!(b.solids[0].faces[2].material, "Marble020");
         assert_eq!(b.face_at_mut([0.2, 0.5, 0.2], 1e-3).unwrap().plane, [0.0, -1.0, 0.0, -0.5]);
         assert!(b.face_at_mut([0.0, 3.0, 0.0], 1e-3).is_none(), "a point off the brush finds nothing");
+    }
+
+    #[test]
+    fn a_reshaped_carve_is_the_box_asked_for_and_cuts_its_brush() {
+        let mut b = BrushDef {
+            solids: vec![BrushSolid::cuboid([0.0, 1.5, 0.0], [3.0, 1.5, 3.0], "Bricks075A")],
+            subtract: vec![BrushSolid::cuboid([0.0, 1.5, 0.0], [2.8, 1.3, 2.8], "Marble020")],
+        };
+        assert!(b.reshape_carve(0, [1.0, 1.2, 0.0], [0.5, 1.0, 3.5]));
+        let (lo, hi) = solid_bounds(&b.subtract[0]).unwrap();
+        for (x, y) in lo.iter().zip([0.5, 0.2, -3.5]).chain(hi.iter().zip([1.5, 2.2, 3.5])) {
+            assert!((x - y).abs() < 1e-9, "{lo:?} {hi:?}");
+        }
+        // A 1 x 2 m doorway through the whole 6 m brush.
+        assert!((b.volume() - (6.0 * 3.0 * 6.0 - 1.0 * 2.0 * 6.0)).abs() < 1e-6, "{}", b.volume());
+        assert_eq!(b.subtract[0].faces[0].material, "Marble020");
+        assert!(!b.reshape_carve(1, [0.0; 3], [1.0; 3]), "no such carve");
+        assert!(!b.reshape_carve(0, [0.0; 3], [0.0, 1.0, 1.0]), "no flat carves");
     }
 
     #[test]
