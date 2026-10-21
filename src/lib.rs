@@ -57,6 +57,7 @@ mod trigger_volume_tests;
 #[cfg(test)]
 mod fracture_damage_tests;
 pub mod brush;
+pub mod terrain_burial;
 pub mod door;
 pub mod trigger_volume;
 pub mod brush_obj;
