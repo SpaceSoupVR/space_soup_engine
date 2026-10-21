@@ -163,6 +163,14 @@ fn rotate_axes(u: Vec3, v: Vec3, n: Vec3, degrees: f64) -> (Vec3, Vec3) {
     (rot(u), rot(v))
 }
 
+/// One face of a brush: of a solid, or of a carve (`subtract`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FaceRef {
+    pub carve: bool,
+    pub solid: usize,
+    pub face: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrushSolid {
     pub faces: Vec<BrushFace>,
@@ -614,26 +622,60 @@ impl BrushDef {
     /// THE FACE A POINT ON THE BRUSH'S SURFACE LIES ON: of the solids and
     /// carves holding `p` (within `eps` of every plane), the face whose
     /// plane it is nearest, if that is within `eps`. A carve's face is the
-    /// wall the carve leaves, so painting it paints what is seen there.
-    pub fn face_at_mut(&mut self, p: Vec3, eps: f64) -> Option<&mut BrushFace> {
-        let mut best: Option<(f64, bool, usize, usize)> = None;
+    /// wall the carve leaves, so editing it edits what is seen there.
+    pub fn face_ref_at(&self, p: Vec3, eps: f64) -> Option<FaceRef> {
+        let mut best: Option<(f64, FaceRef)> = None;
         for (carve, list) in [(false, &self.solids), (true, &self.subtract)] {
-            for (si, s) in list.iter().enumerate() {
+            for (solid, s) in list.iter().enumerate() {
                 let d: Vec<f64> = s.faces.iter().map(|f| f.plane().distance(p)).collect();
                 if d.iter().any(|x| *x > eps) {
                     continue;
                 }
-                for (fi, x) in d.iter().enumerate() {
+                for (face, x) in d.iter().enumerate() {
                     let x = x.abs();
                     if x <= eps && best.is_none_or(|b| x < b.0) {
-                        best = Some((x, carve, si, fi));
+                        best = Some((x, FaceRef { carve, solid, face }));
                     }
                 }
             }
         }
-        let (_, carve, si, fi) = best?;
-        let list = if carve { &mut self.subtract } else { &mut self.solids };
-        Some(&mut list[si].faces[fi])
+        best.map(|(_, r)| r)
+    }
+
+    /// `face_ref_at`'s face itself.
+    pub fn face_at_mut(&mut self, p: Vec3, eps: f64) -> Option<&mut BrushFace> {
+        let r = self.face_ref_at(p, eps)?;
+        self.face_mut(r)
+    }
+
+    pub fn face(&self, r: FaceRef) -> Option<&BrushFace> {
+        let list = if r.carve { &self.subtract } else { &self.solids };
+        list.get(r.solid)?.faces.get(r.face)
+    }
+
+    pub fn face_mut(&mut self, r: FaceRef) -> Option<&mut BrushFace> {
+        let list = if r.carve { &mut self.subtract } else { &mut self.solids };
+        list.get_mut(r.solid)?.faces.get_mut(r.face)
+    }
+
+    /// THE FACE PUSHED `by` METRES along its outward normal (pulled when
+    /// negative): its solid grows or shrinks on that side alone, as a face
+    /// drag in a brush editor. Refused (false, nothing changed) when the
+    /// solid would be left with no volume, or a face it had would vanish.
+    pub fn push_face(&mut self, r: FaceRef, by: f64) -> bool {
+        let list = if r.carve { &mut self.subtract } else { &mut self.solids };
+        let Some(solid) = list.get_mut(r.solid) else { return false };
+        if r.face >= solid.faces.len() {
+            return false;
+        }
+        let before = solid.clone();
+        solid.faces[r.face].plane[3] += by;
+        let kept = solid_polygons(solid).iter().all(|p| p.as_ref().is_some_and(|p| p.len() >= 3));
+        if !kept || solid_volume(solid) <= 1e-9 {
+            *solid = before;
+            return false;
+        }
+        true
     }
 
     /// Carve `index` (of `subtract`) reshaped to the box `centre` +- `half`,
@@ -1484,6 +1526,20 @@ mod transform_tests {
         assert_eq!(b.subtract[0].faces[0].material, "Marble020");
         assert!(!b.reshape_carve(1, [0.0; 3], [1.0; 3]), "no such carve");
         assert!(!b.reshape_carve(0, [0.0; 3], [0.0, 1.0, 1.0]), "no flat carves");
+    }
+
+    #[test]
+    fn a_pushed_face_moves_its_side_alone_and_cannot_turn_the_solid_inside_out() {
+        let mut b = BrushDef { solids: vec![BrushSolid::cuboid([0.0, 1.0, 0.0], [1.0, 1.0, 1.0], "Bricks075A")], subtract: Vec::new() };
+        let top = b.face_ref_at([0.2, 2.0, 0.3], 1e-6).unwrap();
+        assert_eq!(top, FaceRef { carve: false, solid: 0, face: 2 });
+        assert!(b.push_face(top, 0.5));
+        assert!((b.volume() - 2.0 * 2.0 * 2.5).abs() < 1e-9 && (b.bounds().unwrap().1[1] - 2.5).abs() < 1e-9);
+        assert!(b.push_face(top, -1.5));
+        assert!((b.bounds().unwrap().1[1] - 1.0).abs() < 1e-9);
+        assert!(!b.push_face(top, -1.0), "the top cannot pass the floor");
+        assert!((b.bounds().unwrap().1[1] - 1.0).abs() < 1e-9, "a refused push changes nothing");
+        assert!(!b.push_face(FaceRef { carve: true, solid: 0, face: 0 }, 1.0), "no such carve");
     }
 
     #[test]
