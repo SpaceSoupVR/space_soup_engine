@@ -317,6 +317,17 @@ pub struct CloudsDef {
     pub wind_speed: f32,
     pub evolution: f32,
     pub seed: u32,
+    /// Minutes the sky holds one state of its weather before easing into
+    /// the next (`CloudParams::weather_at`); 0 (absent) keeps `coverage`.
+    #[serde(skip_serializing_if = "is_zero_f32")]
+    pub weather_minutes: f32,
+    /// How often a closing sky turns stormy, 0..1; absent never.
+    #[serde(skip_serializing_if = "is_zero_f32")]
+    pub storms: f32,
+}
+
+fn is_zero_f32(v: &f32) -> bool {
+    *v == 0.0
 }
 
 impl Default for CloudsDef {
@@ -332,6 +343,8 @@ impl Default for CloudsDef {
             wind_speed: c.wind_speed,
             evolution: c.evolution,
             seed: c.seed,
+            weather_minutes: c.weather_minutes,
+            storms: c.storms,
         }
     }
 }
@@ -348,6 +361,8 @@ impl CloudsDef {
             wind_speed: self.wind_speed,
             evolution: self.evolution,
             seed: self.seed,
+            weather_minutes: self.weather_minutes,
+            storms: self.storms,
         }
         .clamped()
     }
