@@ -324,10 +324,22 @@ pub struct CloudsDef {
     /// How often a closing sky turns stormy, 0..1; absent never.
     #[serde(skip_serializing_if = "is_zero_f32")]
     pub storms: f32,
+    /// The clouds' clock against real time (`CloudParams::time_scale`);
+    /// absent 1, real speed.
+    #[serde(skip_serializing_if = "is_one_f32")]
+    pub time_scale: f32,
+    /// How strongly the hour drives the clouds (`CloudParams::diurnal`);
+    /// absent 1, the real day's cycle.
+    #[serde(skip_serializing_if = "is_one_f32")]
+    pub diurnal: f32,
 }
 
 fn is_zero_f32(v: &f32) -> bool {
     *v == 0.0
+}
+
+fn is_one_f32(v: &f32) -> bool {
+    *v == 1.0
 }
 
 impl Default for CloudsDef {
@@ -345,6 +357,8 @@ impl Default for CloudsDef {
             seed: c.seed,
             weather_minutes: c.weather_minutes,
             storms: c.storms,
+            time_scale: c.time_scale,
+            diurnal: c.diurnal,
         }
     }
 }
@@ -363,6 +377,9 @@ impl CloudsDef {
             seed: self.seed,
             weather_minutes: self.weather_minutes,
             storms: self.storms,
+            time_scale: self.time_scale,
+            diurnal: self.diurnal,
+            day_clock: [0.0; 3],
         }
         .clamped()
     }
