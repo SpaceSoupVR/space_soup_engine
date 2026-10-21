@@ -422,8 +422,7 @@ impl Scene {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, text)
-            .with_context(|| format!("failed to write scene {}", path.display()))?;
+        write_atomically(path, text.as_bytes()).with_context(|| format!("failed to write scene {}", path.display()))?;
         Ok(())
     }
 
@@ -821,5 +820,45 @@ mod cloud_def_tests {
         assert!(!c.is_clear());
         let back: TimeOfDayDef = serde_json::from_str(&serde_json::to_string(&fair).unwrap()).unwrap();
         assert_eq!(back, fair);
+    }
+}
+
+/// Write `bytes` to `path` whole or not at all: into a sibling temporary
+/// file, synced, then renamed over `path` (a rename within a folder is
+/// atomic). A crash or a full disk mid-save leaves the old file as it was,
+/// never a scene cut off halfway.
+pub fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.saving"));
+    let result = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+#[cfg(test)]
+mod atomic_save_tests {
+    use super::*;
+
+    #[test]
+    fn a_save_replaces_the_file_whole_and_leaves_nothing_beside_it() {
+        let dir = std::env::temp_dir().join(format!("ss_atomic_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("room.json");
+        std::fs::write(&path, "old").unwrap();
+        write_atomically(&path, b"new contents").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new contents");
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(left.len(), 1, "{left:?}");
+        // A folder that cannot be written keeps the old file.
+        assert!(write_atomically(&dir.join("missing/room.json"), b"x").is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
