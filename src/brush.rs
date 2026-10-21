@@ -202,6 +202,69 @@ impl BrushDef {
             s.translate(delta);
         }
     }
+
+    /// Every solid and carve carried through x' = `a` x + `t` (`a` rows, any
+    /// invertible map: a turn, a resize, both). See `BrushSolid::transform`.
+    pub fn transform(&mut self, a: [[f64; 3]; 3], t: Vec3, anchor: Vec3, stretch_textures: bool) {
+        for s in self.solids.iter_mut().chain(self.subtract.iter_mut()) {
+            s.transform(a, t, anchor, stretch_textures);
+        }
+    }
+}
+
+fn mat_vec(m: [[f64; 3]; 3], v: Vec3) -> Vec3 {
+    [dot(m[0], v), dot(m[1], v), dot(m[2], v)]
+}
+
+/// The transpose of the inverse (the map normals and texture axes take).
+fn inverse_transpose(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    // Rows of the cofactor matrix over the determinant are the rows of
+    // the inverse's transpose.
+    let c0 = cross(m[1], m[2]);
+    let c1 = cross(m[2], m[0]);
+    let c2 = cross(m[0], m[1]);
+    let det = dot(m[0], c0);
+    (det.abs() > 1e-12).then(|| [scale(c0, 1.0 / det), scale(c1, 1.0 / det), scale(c2, 1.0 / det)])
+}
+
+impl BrushSolid {
+    /// THE SOLID CARRIED THROUGH x' = `a` x + `t`, its textures with it.
+    /// Each plane takes the inverse transpose; each face's texture axes are
+    /// made explicit (the defaults follow the normal's largest axis, and a
+    /// turned face would jump to another). With `stretch_textures` the
+    /// texture is fixed to the solid and stretches with a resize, as a turn
+    /// carries it; without, a resize keeps the texture's size in the world,
+    /// pinned where `anchor` (the resize's fixed point) projects onto each
+    /// face, as the web editor's `resizeBrushToCuboid` did.
+    pub fn transform(&mut self, a: [[f64; 3]; 3], t: Vec3, anchor: Vec3, stretch_textures: bool) {
+        let Some(it) = inverse_transpose(a) else { return };
+        for f in &mut self.faces {
+            let pl = f.plane();
+            let (u, v) = f.axes();
+            let su = if f.scale[0] == 0.0 { 1.0 } else { f.scale[0] };
+            let sv = if f.scale[1] == 0.0 { 1.0 } else { f.scale[1] };
+            // Where the anchor meets this face, and where that goes.
+            let on = sub(anchor, scale(pl.n, pl.distance(anchor)));
+            let on2 = add(mat_vec(a, on), t);
+            let n2 = normalize(mat_vec(it, pl.n));
+            f.plane = [n2[0], n2[1], n2[2], dot(n2, on2)];
+            let (ut, vt) = (mat_vec(it, u), mat_vec(it, v));
+            let (lu, lv) = (dot(ut, ut).sqrt().max(1e-12), dot(vt, vt).sqrt().max(1e-12));
+            let (u2, v2) = (scale(ut, 1.0 / lu), scale(vt, 1.0 / lv));
+            if stretch_textures {
+                // uv(x) = x.u / s + shift, and x = a^-1 (x' - t).
+                f.shift[0] -= dot(t, ut) / su;
+                f.shift[1] -= dot(t, vt) / sv;
+                f.scale = [su / lu, sv / lv];
+            } else {
+                f.shift[0] += (dot(on, u) - dot(on2, u2)) / su;
+                f.shift[1] += (dot(on, v) - dot(on2, v2)) / sv;
+            }
+            f.u_axis = Some(u2);
+            f.v_axis = Some(v2);
+            f.rotation = 0.0;
+        }
+    }
 }
 
 fn plane_basis(n: Vec3) -> (Vec3, Vec3) {
@@ -1231,5 +1294,81 @@ mod translate_tests {
             let (a, b) = (old.uv(p), new.uv(q));
             assert!((a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9, "the texture slid: {a:?} -> {b:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod transform_tests {
+    use super::*;
+
+    fn cube() -> BrushDef {
+        let face = |n: Vec3, d: f64| BrushFace {
+            plane: [n[0], n[1], n[2], d],
+            material: "default".into(),
+            u_axis: None,
+            v_axis: None,
+            scale: [2.0, 2.0],
+            shift: [0.25, 0.5],
+            rotation: 0.0,
+            lightmap_scale: 0.125,
+            smoothing: 0,
+        };
+        let faces = vec![
+            face([1.0, 0.0, 0.0], 1.0),
+            face([-1.0, 0.0, 0.0], 1.0),
+            face([0.0, 1.0, 0.0], 1.0),
+            face([0.0, -1.0, 0.0], 1.0),
+            face([0.0, 0.0, 1.0], 1.0),
+            face([0.0, 0.0, -1.0], 1.0),
+        ];
+        BrushDef { solids: vec![BrushSolid { faces }], subtract: Vec::new() }
+    }
+
+    fn turn_y(deg: f64) -> [[f64; 3]; 3] {
+        let (s, c) = deg.to_radians().sin_cos();
+        [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+    }
+
+    #[test]
+    fn a_turned_brush_turns_its_planes_and_carries_its_texture() {
+        let mut b = cube();
+        let before = b.clone();
+        let a = turn_y(30.0);
+        let centre = [2.0, 0.0, -1.0];
+        let t = sub(centre, mat_vec(a, centre));
+        b.transform(a, t, centre, true);
+        for (f0, f1) in before.solids[0].faces.iter().zip(&b.solids[0].faces) {
+            // A point on the old face, carried, lies on the new face with the same uv.
+            let p = scale(f0.plane().n, f0.plane[3]);
+            let p = add(p, scale(f0.axes().0, 0.3));
+            let q = add(mat_vec(a, p), t);
+            assert!(f1.plane().distance(q).abs() < 1e-9, "{:?}", f1.plane);
+            let (uv0, uv1) = (f0.uv(p), f1.uv(q));
+            assert!((uv0[0] - uv1[0]).abs() < 1e-9 && (uv0[1] - uv1[1]).abs() < 1e-9, "{uv0:?} vs {uv1:?}");
+        }
+    }
+
+    #[test]
+    fn a_resized_brush_keeps_its_texture_the_same_size_in_the_world() {
+        let mut b = cube();
+        let a = [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        b.transform(a, [0.0; 3], [0.0; 3], false);
+        let faces = &b.solids[0].faces;
+        // The +x face moved out to x = 2; the floor stayed and grew.
+        assert!((faces[0].plane[3] - 2.0).abs() < 1e-9);
+        assert!((faces[2].plane[3] - 1.0).abs() < 1e-9);
+        // The top face's texture repeats every 2 m as it did, pinned at the anchor's foot.
+        let f = &faces[2];
+        let (a0, a1) = (f.uv([0.0, 1.0, 0.0]), f.uv([2.0, 1.0, 0.0]));
+        assert!(((a1[0] - a0[0]).abs() - 1.0).abs() < 1e-9, "{a0:?} {a1:?}");
+        assert!((a0[0] - cube().solids[0].faces[2].uv([0.0, 1.0, 0.0])[0]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_impossible_map_changes_nothing() {
+        let mut b = cube();
+        let before = format!("{:?}", b);
+        b.transform([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3], [0.0; 3], true);
+        assert_eq!(before, format!("{:?}", b));
     }
 }
