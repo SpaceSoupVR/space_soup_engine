@@ -1340,7 +1340,7 @@ mod exposed_surface_tests {
 
     #[test]
     fn the_shipped_hall_draws_only_surface_that_borders_empty_space() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../game/scenes/test_room.json");
+        let path = &crate::test_game_dir().join("scenes/test_room.json");
         let scene = crate::scene::Scene::load(std::path::Path::new(path)).expect("test_room loads");
         let hall = scene
             .objects

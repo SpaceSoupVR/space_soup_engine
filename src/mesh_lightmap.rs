@@ -1375,8 +1375,7 @@ mod asset_tests {
     use std::path::PathBuf;
 
     fn lamp() -> Option<PathBuf> {
-        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../game/models/lights/hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf");
+        let p = crate::test_game_dir().join("models/lights/hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf");
         p.is_file().then_some(p)
     }
 
@@ -1523,7 +1522,7 @@ mod light_blocking_tests {
     use super::*;
 
     fn model(rel: &str) -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/models/lights").join(rel)
+        crate::test_game_dir().join("models/lights").join(rel)
     }
 
     #[test]
@@ -1645,7 +1644,7 @@ mod light_blocking_tests {
 
     #[test]
     fn a_skinned_character_has_a_mean_colour() {
-        let boy = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/models/boy/boy.glb");
+        let boy = crate::test_game_dir().join("models/boy/boy.glb");
         if !boy.exists() {
             eprintln!("skipping: boy.glb not present");
             return;
@@ -1664,8 +1663,7 @@ mod layout_on_model {
     #[ignore]
     fn write_the_sconce_with_its_atlas_coordinates() {
         let Ok(dir) = std::env::var("MASK_OBJ_OUT") else { return };
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../game/models/lights/industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
+        let path = crate::test_game_dir().join("models/lights/industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
         let parts = load_mesh_parts(&path).expect("the sconce loads");
         let layout = mesh_lightmap_layout(&parts, DEFAULT_TEXEL).expect("a layout");
         let mut obj = String::new();

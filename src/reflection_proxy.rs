@@ -336,8 +336,7 @@ mod tests {
 
     #[test]
     fn a_fixtures_field_finds_its_surface() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../game/models/lights/industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
+        let path = crate::test_game_dir().join("models/lights/industrial_wall_sconce/industrial_wall_sconce_1k.gltf");
         if !path.is_file() {
             eprintln!("skipping: {} is not installed", path.display());
             return;

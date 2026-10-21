@@ -76,7 +76,7 @@ fn a_player_out_of_their_depth_can_walk_back_to_the_shore() {
 #[test]
 fn the_shipped_beach_is_waded_into_and_no_further_and_the_pond_all_the_way() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
+    let game = &crate::test_game_dir();
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);

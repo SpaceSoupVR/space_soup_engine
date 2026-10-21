@@ -476,7 +476,7 @@ fn a_body_rests_on_the_height_field_where_it_rests_on_the_mesh_and_falls_through
 #[test]
 fn a_real_levels_ground_meets_every_ray_where_its_triangle_mesh_did() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let game = std::env::var("GAME_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../game").to_string());
+    let game = crate::test_game_dir();
     let game = Path::new(&game);
     let name = std::env::var("SCENE").unwrap_or_else(|_| "test_room".into());
     let Ok(mut scene) = Scene::load(&crate::manifest::Manifest::scene_path(game, &name)) else {
