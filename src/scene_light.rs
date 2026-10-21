@@ -39,7 +39,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GlareFacesDef {
     #[serde(default = "default_true")]
     pub front: bool,
@@ -86,7 +86,7 @@ impl LightMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LightDef {
     #[serde(default)]
     pub kind: LightKind,
