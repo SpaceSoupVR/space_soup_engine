@@ -32,6 +32,7 @@ struct Measured {
     object: usize,
     solid: usize,
     face: usize,
+    part: usize,
     w: f64,
     h: f64,
     min_u: f64,
@@ -52,6 +53,10 @@ pub struct BrushChart {
     pub object: usize,
     pub solid: usize,
     pub face: usize,
+    /// Which connected piece of the face's plane this chart holds
+    /// (`fragment_parts`): pieces that do not touch never share texels.
+    #[serde(default)]
+    pub part: usize,
 
     pub x: u32,
     pub y: u32,
@@ -131,11 +136,188 @@ impl BrushLightmapLayout {
         }
     }
 
+    /// The face's first chart (its only one unless pieces of it lie apart).
     pub fn chart(&self, object: usize, solid: usize, face: usize) -> Option<&BrushChart> {
         self.charts
             .iter()
             .find(|c| c.object == object && c.solid == solid && c.face == face)
     }
+
+    /// The chart of one piece of a face (`fragment_parts`).
+    pub fn chart_part(&self, object: usize, solid: usize, face: usize, part: usize) -> Option<&BrushChart> {
+        self.charts
+            .iter()
+            .find(|c| c.object == object && c.solid == solid && c.face == face && c.part == part)
+    }
+}
+
+/// Faces of one brush on one plane, as the layout welds them: same normal,
+/// offset, texture axes and texel size.
+fn plane_key(face: &crate::brush::BrushFace) -> ([i64; 3], i64, [i64; 3], [i64; 3], i64) {
+    const Q: f64 = 1e4;
+    let q = |x: f64| (x * Q).round() as i64;
+    let qv = |v: Vec3| [q(v[0]), q(v[1]), q(v[2])];
+    let (u, v) = face.axes();
+    let pl = face.plane();
+    (qv(pl.n), q(pl.d), qv(u), qv(v), q(if face.lightmap_scale > 1e-6 { face.lightmap_scale } else { 0.25 }))
+}
+
+fn point_segment_distance(p: Vec3, a: Vec3, b: Vec3) -> f64 {
+    let ab = sub(b, a);
+    let t = (dot(sub(p, a), ab) / dot(ab, ab).max(1e-18)).clamp(0.0, 1.0);
+    let d = sub(p, add(a, mul(ab, t)));
+    dot(d, d).sqrt()
+}
+
+/// Two fragments of one plane meet: a corner of one lies on an edge of the
+/// other (the cuts that made them leave T-junctions, not shared corners).
+fn fragments_touch(a: &[Vec3], b: &[Vec3]) -> bool {
+    const TOUCH: f64 = 1e-5;
+    let bounds = |p: &[Vec3]| {
+        p.iter().fold(([f64::MAX; 3], [f64::MIN; 3]), |(lo, hi), q| {
+            ([lo[0].min(q[0]), lo[1].min(q[1]), lo[2].min(q[2])], [hi[0].max(q[0]), hi[1].max(q[1]), hi[2].max(q[2])])
+        })
+    };
+    let ((alo, ahi), (blo, bhi)) = (bounds(a), bounds(b));
+    if (0..3).any(|k| alo[k] > bhi[k] + TOUCH || blo[k] > ahi[k] + TOUCH) {
+        return false;
+    }
+    let on_edge = |p: Vec3, poly: &[Vec3]| (0..poly.len()).any(|i| point_segment_distance(p, poly[i], poly[(i + 1) % poly.len()]) < TOUCH);
+    a.iter().any(|&p| on_edge(p, b)) || b.iter().any(|&p| on_edge(p, a))
+}
+
+/// WHICH TEXELS OF EACH CHART ITS OWN SURFACE COVERS (`layout.charts`
+/// order, `w * h` row by row, at whatever scale `layout` is -- a
+/// `scaled` copy gives the masks' texels). A chart is a rectangle, and the
+/// faces welded into it need not fill it: a hall's outer wall with a
+/// hallway built against it is a frame round a hole. The hole's texels
+/// stand in open air -- the hallway's lamp-lit inside -- so a bake lit them,
+/// and the outer wall's edge texels filtered that light into a white line
+/// down the joint at night (headset, 2026-10-21). A texel is covered when a
+/// fragment of its chart (any face welded into the same rectangle) holds its
+/// centre or passes within 0.75 of a texel of it; the bake treats the rest
+/// as invalid and fills them from the covered ones.
+pub fn chart_coverage(brushes: &[&BrushDef], layout: &BrushLightmapLayout) -> Vec<Vec<bool>> {
+    let scene = crate::brush::scene_exposed_fragments(brushes);
+    let parts: Vec<Vec<Vec<Vec<usize>>>> = scene.iter().map(|(s, e)| fragment_parts(s, e)).collect();
+    // Every fragment of every face sharing a rectangle (a welded group).
+    let mut by_rect: std::collections::HashMap<(usize, u32, u32), Vec<&[Vec3]>> = std::collections::HashMap::new();
+    for c in &layout.charts {
+        let Some((_, exposed)) = scene.get(c.object) else { continue };
+        let Some(frags) = exposed.get(c.solid).and_then(|f| f.get(c.face)) else { continue };
+        let entry = by_rect.entry((c.object, c.x, c.y)).or_default();
+        for (k, f) in frags.iter().enumerate() {
+            if parts[c.object][c.solid][c.face].get(k) == Some(&c.part) {
+                entry.push(f.as_slice());
+            }
+        }
+    }
+    const REACH: f64 = 0.75;
+    layout
+        .charts
+        .iter()
+        .map(|c| {
+            let (lu, lv) = (dot(c.du, c.du), dot(c.dv, c.dv));
+            // In texel units from texel (0, 0)'s centre.
+            let to_texels = |p: Vec3| {
+                let rel = sub(p, c.origin);
+                [if lu > 0.0 { dot(rel, c.du) / lu } else { 0.0 }, if lv > 0.0 { dot(rel, c.dv) / lv } else { 0.0 }]
+            };
+            let polys: Vec<Vec<[f64; 2]>> = by_rect
+                .get(&(c.object, c.x, c.y))
+                .map(|fs| fs.iter().map(|f| f.iter().map(|p| to_texels(*p)).collect()).collect())
+                .unwrap_or_default();
+            if polys.is_empty() {
+                return vec![true; (c.w * c.h) as usize];
+            }
+            let mut out = Vec::with_capacity((c.w * c.h) as usize);
+            for ty in 0..c.h {
+                for tx in 0..c.w {
+                    let q = [tx as f64, ty as f64];
+                    out.push(polys.iter().any(|poly| inside_2d(poly, q) || distance_2d(poly, q) <= REACH));
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+fn inside_2d(poly: &[[f64; 2]], q: [f64; 2]) -> bool {
+    let mut inside = false;
+    let mut j = poly.len().wrapping_sub(1);
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[j]);
+        if (a[1] > q[1]) != (b[1] > q[1]) && q[0] < (b[0] - a[0]) * (q[1] - a[1]) / (b[1] - a[1]) + a[0] {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+fn distance_2d(poly: &[[f64; 2]], q: [f64; 2]) -> f64 {
+    (0..poly.len())
+        .map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            let (ab, aq) = ([b[0] - a[0], b[1] - a[1]], [q[0] - a[0], q[1] - a[1]]);
+            let len = ab[0] * ab[0] + ab[1] * ab[1];
+            let t = if len > 0.0 { ((aq[0] * ab[0] + aq[1] * ab[1]) / len).clamp(0.0, 1.0) } else { 0.0 };
+            let (dx, dy) = (aq[0] - ab[0] * t, aq[1] - ab[1] * t);
+            (dx * dx + dy * dy).sqrt()
+        })
+        .fold(f64::MAX, f64::min)
+}
+
+/// EACH EXPOSED FRAGMENT'S PART: the fragments of a brush on one plane that
+/// touch, through any chain of others, are one part; ones that do not are
+/// separate parts, laid out as separate charts with gutters between. A hall's
+/// outer wall and the end of a hallway built against it lie on one plane 0.3
+/// m apart; in one chart the lamp-lit end and the moonlit outside shared
+/// texels, and the filtering drew the lamp's light down the outside joint
+/// (headset, 2026-10-21). `[solid][face][fragment]`, numbered per plane.
+pub fn fragment_parts(solids: &[crate::brush::BrushSolid], exposed: &[Vec<Vec<Vec<Vec3>>>]) -> Vec<Vec<Vec<usize>>> {
+    let mut items: Vec<(([i64; 3], i64, [i64; 3], [i64; 3], i64), &[Vec3])> = Vec::new();
+    for (si, faces) in exposed.iter().enumerate() {
+        for (fi, frags) in faces.iter().enumerate() {
+            let key = plane_key(&solids[si].faces[fi]);
+            for f in frags {
+                items.push((key, f.as_slice()));
+            }
+        }
+    }
+    let mut root: Vec<usize> = (0..items.len()).collect();
+    fn find(root: &mut [usize], mut i: usize) -> usize {
+        while root[i] != i {
+            root[i] = root[root[i]];
+            i = root[i];
+        }
+        i
+    }
+    for i in 0..items.len() {
+        for j in i + 1..items.len() {
+            if items[i].0 == items[j].0 && fragments_touch(items[i].1, items[j].1) {
+                let (a, b) = (find(&mut root, i), find(&mut root, j));
+                if a != b {
+                    root[b.max(a)] = a.min(b);
+                }
+            }
+        }
+    }
+    // Number each plane's parts 0, 1, ... in the order they are first met.
+    let mut numbers: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut per_key: std::collections::HashMap<([i64; 3], i64, [i64; 3], [i64; 3], i64), usize> = std::collections::HashMap::new();
+    let mut part_of = Vec::with_capacity(items.len());
+    for i in 0..items.len() {
+        let r = find(&mut root, i);
+        let n = *numbers.entry(r).or_insert_with(|| {
+            let next = per_key.entry(items[i].0).or_insert(0);
+            *next += 1;
+            *next - 1
+        });
+        part_of.push(n);
+    }
+    let mut it = part_of.into_iter();
+    exposed.iter().map(|faces| faces.iter().map(|frags| frags.iter().map(|_| it.next().unwrap_or(0)).collect()).collect()).collect()
 }
 
 pub fn brush_lightmap_layout(brush: &BrushDef) -> BrushLightmapLayout {
@@ -145,46 +327,59 @@ pub fn brush_lightmap_layout(brush: &BrushDef) -> BrushLightmapLayout {
 pub fn scene_brush_lightmap_layout(brushes: &[&BrushDef]) -> BrushLightmapLayout {
 
     let mut measured = Vec::new();
-    for (oi, brush) in brushes.iter().enumerate() {
-    let solids = brush.evaluate();
+    // Charts of the surface the level shows: each brush trimmed by the
+    // others as well as itself (`brush::scene_exposed_fragments`).
+    for (oi, (solids, exposed)) in crate::brush::scene_exposed_fragments(brushes).iter().enumerate() {
+        // A face's fragments that do not touch get charts of their own, so
+        // one plane split by another brush does not share texels across it.
+        let parts = fragment_parts(solids, exposed);
+        for (si, solid) in solids.iter().enumerate() {
+            for (fi, all) in exposed[si].iter().enumerate() {
+                let mut numbers: Vec<usize> = parts[si][fi].clone();
+                numbers.sort_unstable();
+                numbers.dedup();
+                for part in numbers {
+                    let poly: Vec<crate::brush::Vec3> = all
+                        .iter()
+                        .zip(&parts[si][fi])
+                        .filter(|(_, p)| **p == part)
+                        .flat_map(|(f, _)| f.iter().copied())
+                        .collect();
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    let face = &solid.faces[fi];
+                    let (u, v) = face.axes();
+                    let (mut min_u, mut max_u) = (f64::MAX, f64::MIN);
+                    let (mut min_v, mut max_v) = (f64::MAX, f64::MIN);
+                    for p in &poly {
+                        let (pu, pv) = (dot(*p, u), dot(*p, v));
+                        min_u = min_u.min(pu);
+                        max_u = max_u.max(pu);
+                        min_v = min_v.min(pv);
+                        max_v = max_v.max(pv);
+                    }
+                    let texel = if face.lightmap_scale > 1e-6 { face.lightmap_scale } else { 0.25 };
+                    measured.push(Measured {
+                        object: oi,
+                        solid: si,
+                        face: fi,
+                        part,
+                        w: (max_u - min_u).max(0.0),
+                        h: (max_v - min_v).max(0.0),
+                        min_u,
+                        min_v,
+                        u,
+                        v,
+                        normal: face.plane().n,
+                        plane_d: face.plane().d,
+                        texel,
 
-    let exposed = crate::brush::exposed_fragments(&solids);
-    for (si, solid) in solids.iter().enumerate() {
-        for (fi, frags) in exposed[si].iter().enumerate() {
-            let poly: Vec<crate::brush::Vec3> = frags.iter().flatten().copied().collect();
-            if frags.is_empty() || poly.len() < 3 {
-                continue;
+                        group: 0,
+                    });
+                }
             }
-            let face = &solid.faces[fi];
-            let (u, v) = face.axes();
-            let (mut min_u, mut max_u) = (f64::MAX, f64::MIN);
-            let (mut min_v, mut max_v) = (f64::MAX, f64::MIN);
-            for p in &poly {
-                let (pu, pv) = (dot(*p, u), dot(*p, v));
-                min_u = min_u.min(pu);
-                max_u = max_u.max(pu);
-                min_v = min_v.min(pv);
-                max_v = max_v.max(pv);
-            }
-            let texel = if face.lightmap_scale > 1e-6 { face.lightmap_scale } else { 0.25 };
-            measured.push(Measured {
-                object: oi,
-                solid: si,
-                face: fi,
-                w: (max_u - min_u).max(0.0),
-                h: (max_v - min_v).max(0.0),
-                min_u,
-                min_v,
-                u,
-                v,
-                normal: face.plane().n,
-                plane_d: face.plane().d,
-                texel,
-
-                group: 0,
-            });
         }
-    }
     }
     weld_coplanar(&mut measured);
     if measured.is_empty() {
@@ -234,6 +429,7 @@ fn chart_at(m: &Measured, x: u32, y: u32, w: u32, h: u32) -> BrushChart {
         object: m.object,
         solid: m.solid,
         face: m.face,
+        part: m.part,
         x,
         y,
         w,
@@ -256,12 +452,12 @@ fn weld_coplanar(measured: &mut [Measured]) {
         keys.push((qv(m.normal), q(m.plane_d), qv(m.u), qv(m.v), q(m.texel), i));
     }
     let mut groups: std::collections::HashMap<
-        ([i64; 3], i64, [i64; 3], [i64; 3], i64, usize),
+        ([i64; 3], i64, [i64; 3], [i64; 3], i64, usize, usize),
         usize,
     > = std::collections::HashMap::new();
     for (k0, k1, k2, k3, k4, i) in keys {
 
-        let key = (k0, k1, k2, k3, k4, measured[i].object);
+        let key = (k0, k1, k2, k3, k4, measured[i].object, measured[i].part);
         let next = groups.len();
         let g = *groups.entry(key).or_insert(next);
         measured[i].group = g;
@@ -349,6 +545,7 @@ fn try_pack(measured: &[Measured], density_scale: f64) -> Option<BrushLightmapLa
             object: m.object,
             solid: m.solid,
             face: m.face,
+            part: m.part,
             x: cx,
             y: cy,
             w: *w,
@@ -560,6 +757,85 @@ mod tests {
     fn the_layout_is_stable_across_calls() {
 
         assert_eq!(brush_lightmap_layout(&room()), brush_lightmap_layout(&room()));
+    }
+
+    #[test]
+    fn the_hallway_end_and_the_halls_outer_wall_get_separate_charts() {
+        // The brick hall's x = 10 wall faces -x both inside the hallway (its
+        // end wall, lamp-lit) and outside it (moonlit). With the strip under
+        // the hallway's walls trimmed away the two do not touch, and must not
+        // share texels.
+        let path = &crate::test_game_dir().join("scenes/test_room.json");
+        let scene = crate::scene::Scene::load(std::path::Path::new(path)).expect("test_room loads");
+        let defs: Vec<&BrushDef> = scene.objects.iter().filter_map(|o| o.brush.as_ref()).collect();
+        let hall = scene.objects.iter().filter(|o| o.brush.is_some()).position(|o| o.id == "brick_hall").expect("brick_hall");
+        let layout = scene_brush_lightmap_layout(&defs);
+        let evaluated = crate::brush::scene_exposed_fragments(&defs);
+        let (solids, exposed) = &evaluated[hall];
+        let parts = fragment_parts(solids, exposed);
+        let (mut inside, mut outside) = (Vec::new(), Vec::new());
+        for (si, solid) in solids.iter().enumerate() {
+            for (fi, face) in solid.faces.iter().enumerate() {
+                let pl = face.plane();
+                if pl.n[0] > -0.9 || (pl.d.abs() - 10.0).abs() > 1e-6 {
+                    continue;
+                }
+                for (k, frag) in exposed[si][fi].iter().enumerate() {
+                    // The hallway's room is y 0..2.6, z -4.2..-1.8.
+                    let in_hallway = frag.iter().all(|p| (-1e-6..=2.6 + 1e-6).contains(&p[1]) && (-4.2 - 1e-6..=-1.8 + 1e-6).contains(&p[2]));
+                    let chart = layout.chart_part(hall, si, fi, parts[si][fi][k]).expect("a chart");
+                    let at = (chart.x, chart.y);
+                    if in_hallway {
+                        inside.push(at);
+                    } else {
+                        outside.push(at);
+                    }
+                }
+            }
+        }
+        assert!(!inside.is_empty() && !outside.is_empty(), "inside {inside:?} outside {outside:?}");
+        for c in &inside {
+            assert!(!outside.contains(c), "the hallway end shares chart {c:?} with the outside wall");
+        }
+    }
+
+    #[test]
+    fn the_hole_a_hallway_leaves_in_the_halls_outer_wall_chart_is_uncovered() {
+        let path = &crate::test_game_dir().join("scenes/test_room.json");
+        let scene = crate::scene::Scene::load(std::path::Path::new(path)).expect("test_room loads");
+        let defs: Vec<&BrushDef> = scene.objects.iter().filter_map(|o| o.brush.as_ref()).collect();
+        let hall = scene.objects.iter().filter(|o| o.brush.is_some()).position(|o| o.id == "brick_hall").expect("brick_hall");
+        let layout = scene_brush_lightmap_layout(&defs);
+        let coverage = chart_coverage(&defs, &layout);
+        assert_eq!(coverage.len(), layout.charts.len());
+        // The outside wall's chart on the x = 10 plane: the one reaching past the hallway.
+        let (mut hole, mut hole_covered, mut wall, mut lost) = (0, 0, 0, 0);
+        for (c, cov) in layout.charts.iter().zip(&coverage) {
+            assert_eq!(cov.len(), (c.w * c.h) as usize);
+            let reaches_out = c.texel_world(0, 0)[2].min(c.texel_world(c.w - 1, c.h - 1)[2]) < -5.0;
+            if c.object != hall || c.normal[0] > -0.9 || (c.origin[0] - 10.0).abs() > 1e-6 || !reaches_out {
+                continue;
+            }
+            for ty in 0..c.h {
+                for tx in 0..c.w {
+                    let p = c.texel_world(tx, ty);
+                    let covered = cov[(ty * c.w + tx) as usize];
+                    // Well inside the hallway's footprint (y -0.3..2.9, z -4.5..-1.5).
+                    if p[1] > 0.0 && p[1] < 2.6 && p[2] > -4.2 && p[2] < -1.8 {
+                        hole += 1;
+                        hole_covered += covered as usize;
+                    }
+                    // The open wall, well clear of the hallway.
+                    if p[2] < -5.0 || p[2] > -1.0 || p[1] > 3.2 {
+                        wall += 1;
+                        lost += !covered as usize;
+                    }
+                }
+            }
+        }
+        assert!(hole > 0, "the outer wall's chart holds no texels in the hallway's hole");
+        assert_eq!(hole_covered, 0, "{hole_covered} of {hole} texels in the hallway's hole count as the outer wall's surface");
+        assert!(wall > 0 && lost == 0, "{lost} of {wall} open-wall texels lost their coverage");
     }
 
     #[test]

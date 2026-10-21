@@ -479,7 +479,17 @@ fn subtract_cover(poly: &[Vec3], face: Plane, cover: &BrushSolid) -> Vec<Vec<Vec
 }
 
 pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
+    exposed_fragments_among(solids, &[])
+}
+
+/// `exposed_fragments`, each face trimmed also where a solid of ANOTHER
+/// brush (`others`) covers it or presses against it. Two brushes that touch
+/// are then one building: a hall's outer wall stops where a hallway built
+/// against it begins, instead of running on under the hallway's walls, and
+/// the hallway's wall ends pressed against the hall are gone.
+pub fn exposed_fragments_among(solids: &[BrushSolid], others: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
     let bounds: Vec<Option<(Vec3, Vec3)>> = solids.iter().map(solid_bounds).collect();
+    let other_bounds: Vec<Option<(Vec3, Vec3)>> = others.iter().map(solid_bounds).collect();
     let overlaps = |a: (Vec3, Vec3), b: (Vec3, Vec3)| {
         (0..3).all(|k| a.0[k] <= b.1[k] + EPS && b.0[k] <= a.1[k] + EPS)
     };
@@ -494,11 +504,15 @@ pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
                     let Some(poly) = poly else { return Vec::new() };
                     let face = solid.faces[fi].plane();
                     let mut frags = vec![poly];
-                    for (oj, other) in solids.iter().enumerate() {
-                        if oj == si {
-                            continue;
-                        }
-                        let (Some(a), Some(b)) = (bounds[si], bounds[oj]) else { continue };
+                    let covers = solids
+                        .iter()
+                        .zip(&bounds)
+                        .enumerate()
+                        .filter(|(oj, _)| *oj != si)
+                        .map(|(_, c)| c)
+                        .chain(others.iter().zip(&other_bounds));
+                    for (other, b) in covers {
+                        let (Some(a), Some(b)) = (bounds[si], *b) else { continue };
                         if !overlaps(a, b) {
                             continue;
                         }
@@ -513,6 +527,40 @@ pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
                     frags
                 })
                 .collect()
+        })
+        .collect()
+}
+
+/// THE LEVEL'S BRUSHES AS ONE BUILDING (2026-10-21): each brush evaluated,
+/// and its exposed surface trimmed by every other brush's solids as well as
+/// its own (`exposed_fragments_among`). Separate brush objects used to keep
+/// every face another object covered -- a hall's outer wall ran on under a
+/// hallway built against it, a strip lit by the hallway's lamps under 0.3 m
+/// of wall, and the lightmap filtered that light out along the joint as a
+/// bright line at night (headset, 2026-10-21).
+pub fn scene_exposed_fragments(brushes: &[&BrushDef]) -> Vec<(Vec<BrushSolid>, Vec<Vec<Vec<Vec<Vec3>>>>)> {
+    let evaluated: Vec<Vec<BrushSolid>> = brushes.iter().map(|b| b.evaluate()).collect();
+    let extent = |solids: &[BrushSolid]| {
+        solids.iter().filter_map(solid_bounds).fold(None, |acc: Option<(Vec3, Vec3)>, (lo, hi)| {
+            Some(match acc {
+                Some((a, b)) => ([a[0].min(lo[0]), a[1].min(lo[1]), a[2].min(lo[2])], [b[0].max(hi[0]), b[1].max(hi[1]), b[2].max(hi[2])]),
+                None => (lo, hi),
+            })
+        })
+    };
+    let extents: Vec<Option<(Vec3, Vec3)>> = evaluated.iter().map(|s| extent(s)).collect();
+    let touch = |a: Option<(Vec3, Vec3)>, b: Option<(Vec3, Vec3)>| match (a, b) {
+        (Some(a), Some(b)) => (0..3).all(|k| a.0[k] <= b.1[k] + EPS && b.0[k] <= a.1[k] + EPS),
+        _ => false,
+    };
+    (0..evaluated.len())
+        .map(|i| {
+            let others: Vec<BrushSolid> = (0..evaluated.len())
+                .filter(|&j| j != i && touch(extents[i], extents[j]))
+                .flat_map(|j| evaluated[j].iter().cloned())
+                .collect();
+            let exposed = exposed_fragments_among(&evaluated[i], &others);
+            (evaluated[i].clone(), exposed)
         })
         .collect()
 }
@@ -778,15 +826,36 @@ pub fn brush_polygons_in_atlas(
     layout: &crate::brush_lightmap::BrushLightmapLayout,
     object: usize,
 ) -> Vec<BrushPolygon> {
-    let mut out = Vec::new();
     let solids = brush.evaluate();
-
     let exposed = exposed_fragments(&solids);
+    polygons_of_exposed(&solids, &exposed, layout, object)
+}
+
+/// Every brush of a level as drawn, baked and laid out: `brush_polygons_in_atlas`
+/// for each, with the faces other brushes cover trimmed away
+/// (`scene_exposed_fragments`). Index `i` is the i-th brush, as the lightmap
+/// layout numbers them (`scene_brush_lightmap_layout`, same list).
+pub fn scene_brush_polygons_in_atlas(brushes: &[&BrushDef], layout: &crate::brush_lightmap::BrushLightmapLayout) -> Vec<Vec<BrushPolygon>> {
+    scene_exposed_fragments(brushes)
+        .iter()
+        .enumerate()
+        .map(|(i, (solids, exposed))| polygons_of_exposed(solids, exposed, layout, i))
+        .collect()
+}
+
+fn polygons_of_exposed(
+    solids: &[BrushSolid],
+    exposed: &[Vec<Vec<Vec<Vec3>>>],
+    layout: &crate::brush_lightmap::BrushLightmapLayout,
+    object: usize,
+) -> Vec<BrushPolygon> {
+    let mut out = Vec::new();
+    let parts = crate::brush_lightmap::fragment_parts(solids, exposed);
     for (si, solid) in solids.iter().enumerate() {
-        for (i, poly) in exposed[si]
+        for (i, k, poly) in exposed[si]
             .iter()
             .enumerate()
-            .flat_map(|(i, frags)| frags.iter().map(move |f| (i, f.clone())))
+            .flat_map(|(i, frags)| frags.iter().enumerate().map(move |(k, f)| (i, k, f.clone())))
         {
             let face = &solid.faces[i];
             let n = face.plane().n;
@@ -803,7 +872,7 @@ pub fn brush_polygons_in_atlas(
                 tangent: [u_axis[0] as f32, u_axis[1] as f32, u_axis[2] as f32, handed],
                 ..Default::default()
             };
-            let chart = layout.chart(object, si, i);
+            let chart = layout.chart_part(object, si, i, parts[si][i][k]);
             for q in &ordered {
                 p.positions.push([q[0] as f32, q[1] as f32, q[2] as f32]);
                 let uv = face.uv(*q);
@@ -1336,6 +1405,57 @@ mod exposed_surface_tests {
         let top = frags.iter().flatten().map(|p| p[1]).fold(f64::MIN, f64::max);
 
         assert!((top - 3.1).abs() < 1e-6, "inner wall face reaches y = {top}, not 3.1");
+    }
+
+    #[test]
+    fn a_brush_built_against_another_trims_it_and_is_trimmed() {
+        // A hall, and a hallway box pressed against its outer x = 10 wall.
+        let block = |min, max| BrushDef { solids: vec![block_solid(min, max, "default")], subtract: Vec::new() };
+        let hall = block([10.0, 0.0, -8.0], [18.0, 3.0, 4.0]);
+        let hallway = block([3.0, 0.0, -4.5], [10.0, 2.9, -1.5]);
+        let scene = scene_exposed_fragments(&[&hall, &hallway]);
+        let all: Vec<BrushSolid> = scene.iter().flat_map(|(s, _)| s.iter().cloned()).collect();
+        let mut wall_area = 0.0;
+        for (oi, (solids, exposed)) in scene.iter().enumerate() {
+            for (si, solid) in solids.iter().enumerate() {
+                for (fi, face) in solid.faces.iter().enumerate() {
+                    let n = face.plane().n;
+                    for frag in &exposed[si][fi] {
+                        let (front, _) = front_and_back(frag, n);
+                        assert!(!inside_any(&all, front), "brush {oi} face {fi} faces into the other brush");
+                        if oi == 0 && n[0] < -0.9 {
+                            wall_area += polygon_area(frag, n);
+                        }
+                    }
+                }
+            }
+        }
+        let expected = 12.0 * 3.0 - 3.0 * 2.9;
+        assert!((wall_area - expected).abs() < 1e-6, "hall's x = 10 wall shows {wall_area} m2, not {expected}");
+    }
+
+    #[test]
+    fn the_shipped_level_draws_no_face_into_another_brush() {
+        let path = &crate::test_game_dir().join("scenes/test_room.json");
+        let scene = crate::scene::Scene::load(std::path::Path::new(path)).expect("test_room loads");
+        let defs: Vec<&BrushDef> = scene.objects.iter().filter_map(|o| o.brush.as_ref()).collect();
+        let evaluated = scene_exposed_fragments(&defs);
+        let all: Vec<BrushSolid> = evaluated.iter().flat_map(|(s, _)| s.iter().cloned()).collect();
+        let mut into = Vec::new();
+        for (oi, (solids, exposed)) in evaluated.iter().enumerate() {
+            for (si, solid) in solids.iter().enumerate() {
+                for (fi, face) in solid.faces.iter().enumerate() {
+                    let n = face.plane().n;
+                    for frag in &exposed[si][fi] {
+                        let (front, _) = front_and_back(frag, n);
+                        if inside_any(&all, front) {
+                            into.push((oi, si, fi, front));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(into.is_empty(), "{} drawn fragments face into a brush: {:?}", into.len(), &into[..into.len().min(6)]);
     }
 
     #[test]
