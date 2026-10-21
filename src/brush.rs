@@ -611,6 +611,31 @@ impl BrushDef {
         self.evaluate().iter().map(solid_volume).sum()
     }
 
+    /// THE FACE A POINT ON THE BRUSH'S SURFACE LIES ON: of the solids and
+    /// carves holding `p` (within `eps` of every plane), the face whose
+    /// plane it is nearest, if that is within `eps`. A carve's face is the
+    /// wall the carve leaves, so painting it paints what is seen there.
+    pub fn face_at_mut(&mut self, p: Vec3, eps: f64) -> Option<&mut BrushFace> {
+        let mut best: Option<(f64, bool, usize, usize)> = None;
+        for (carve, list) in [(false, &self.solids), (true, &self.subtract)] {
+            for (si, s) in list.iter().enumerate() {
+                let d: Vec<f64> = s.faces.iter().map(|f| f.plane().distance(p)).collect();
+                if d.iter().any(|x| *x > eps) {
+                    continue;
+                }
+                for (fi, x) in d.iter().enumerate() {
+                    let x = x.abs();
+                    if x <= eps && best.is_none_or(|b| x < b.0) {
+                        best = Some((x, carve, si, fi));
+                    }
+                }
+            }
+        }
+        let (_, carve, si, fi) = best?;
+        let list = if carve { &mut self.subtract } else { &mut self.solids };
+        Some(&mut list[si].faces[fi])
+    }
+
     /// Every face of every solid in `material` (carves keep theirs: they
     /// draw nothing of their own).
     pub fn paint(&mut self, material: &str) {
@@ -1408,6 +1433,19 @@ mod transform_tests {
         assert_eq!(b.materials(), vec!["Bricks075A".to_string()]);
         b.paint("Marble020");
         assert_eq!(b.materials(), vec!["Marble020".to_string()]);
+    }
+
+    #[test]
+    fn a_point_on_a_face_finds_that_face() {
+        let mut b = BrushDef {
+            solids: vec![BrushSolid::cuboid([0.0, 1.0, 0.0], [2.0, 1.0, 2.0], "Bricks075A")],
+            subtract: vec![BrushSolid::cuboid([0.0, 1.0, 0.0], [1.0, 0.5, 1.0], "Rock063")],
+        };
+        // The top of the outer box, and the inside of the carve's floor.
+        b.face_at_mut([1.5, 2.0, 0.3], 1e-3).unwrap().material = "Marble020".into();
+        assert_eq!(b.solids[0].faces[2].material, "Marble020");
+        assert_eq!(b.face_at_mut([0.2, 0.5, 0.2], 1e-3).unwrap().plane, [0.0, -1.0, 0.0, -0.5]);
+        assert!(b.face_at_mut([0.0, 3.0, 0.0], 1e-3).is_none(), "a point off the brush finds nothing");
     }
 
     #[test]
