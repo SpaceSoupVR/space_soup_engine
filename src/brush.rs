@@ -177,6 +177,31 @@ pub struct BrushDef {
 }
 
 impl BrushSolid {
+    /// An axis-aligned box about `centre`, `half` its half extents, every
+    /// face in `material` at the default texture scale (the web editor's
+    /// new-brush box).
+    pub fn cuboid(centre: Vec3, half: Vec3, material: &str) -> Self {
+        let faces = (0..6)
+            .map(|i| {
+                let (axis, sign) = (i / 2, if i % 2 == 0 { 1.0 } else { -1.0 });
+                let mut n = [0.0; 3];
+                n[axis] = sign;
+                BrushFace {
+                    plane: [n[0], n[1], n[2], sign * centre[axis] + half[axis]],
+                    material: material.to_string(),
+                    u_axis: None,
+                    v_axis: None,
+                    scale: default_scale(),
+                    shift: [0.0; 2],
+                    rotation: 0.0,
+                    lightmap_scale: default_lightmap(),
+                    smoothing: 0,
+                }
+            })
+            .collect();
+        BrushSolid { faces }
+    }
+
     /// The solid moved by `delta`, its textures with it: each face's shift
     /// follows, so a moved wall keeps its brickwork rather than sliding
     /// through it (texture lock, always on, as the web editor's
@@ -584,6 +609,14 @@ impl BrushDef {
 
     pub fn volume(&self) -> f64 {
         self.evaluate().iter().map(solid_volume).sum()
+    }
+
+    /// Every face of every solid in `material` (carves keep theirs: they
+    /// draw nothing of their own).
+    pub fn paint(&mut self, material: &str) {
+        for f in self.solids.iter_mut().flat_map(|s| s.faces.iter_mut()) {
+            f.material = material.to_string();
+        }
     }
 
     pub fn materials(&self) -> Vec<String> {
@@ -1362,6 +1395,19 @@ mod transform_tests {
         let (a0, a1) = (f.uv([0.0, 1.0, 0.0]), f.uv([2.0, 1.0, 0.0]));
         assert!(((a1[0] - a0[0]).abs() - 1.0).abs() < 1e-9, "{a0:?} {a1:?}");
         assert!((a0[0] - cube().solids[0].faces[2].uv([0.0, 1.0, 0.0])[0]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_new_box_brush_is_the_box_it_was_asked_for() {
+        let mut b = BrushDef { solids: vec![BrushSolid::cuboid([1.0, 2.0, -3.0], [0.5, 1.0, 2.0], "Bricks075A")], subtract: Vec::new() };
+        let (lo, hi) = b.bounds().unwrap();
+        for (x, y) in lo.iter().zip([0.5, 1.0, -5.0]).chain(hi.iter().zip([1.5, 3.0, -1.0])) {
+            assert!((x - y).abs() < 1e-9, "{lo:?} {hi:?}");
+        }
+        assert!((b.volume() - 8.0).abs() < 1e-6);
+        assert_eq!(b.materials(), vec!["Bricks075A".to_string()]);
+        b.paint("Marble020");
+        assert_eq!(b.materials(), vec!["Marble020".to_string()]);
     }
 
     #[test]
