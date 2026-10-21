@@ -140,7 +140,7 @@ fn is_effect_seed_zero(v: &u32) -> bool {
     *v == 0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectDef {
     #[serde(default)]
     pub kind: EffectKindDef,
