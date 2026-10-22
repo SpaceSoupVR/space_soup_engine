@@ -332,6 +332,15 @@ pub struct CloudsDef {
     /// absent 1, the real day's cycle.
     #[serde(skip_serializing_if = "is_one_f32")]
     pub diurnal: f32,
+    /// How much of each kind of cloud the weather brings
+    /// (`CloudParams::kinds`): [stratocumulus, cumulus, altocumulus,
+    /// cirrus]; absent 1 each.
+    #[serde(skip_serializing_if = "all_one_f32")]
+    pub kinds: [f32; 4],
+}
+
+fn all_one_f32(v: &[f32; 4]) -> bool {
+    v.iter().all(|k| *k == 1.0)
 }
 
 fn is_zero_f32(v: &f32) -> bool {
@@ -359,6 +368,7 @@ impl Default for CloudsDef {
             storms: c.storms,
             time_scale: c.time_scale,
             diurnal: c.diurnal,
+            kinds: c.kinds,
         }
     }
 }
@@ -379,6 +389,7 @@ impl CloudsDef {
             storms: self.storms,
             time_scale: self.time_scale,
             diurnal: self.diurnal,
+            kinds: self.kinds,
             day_clock: [0.0; 3],
         }
         .clamped()
