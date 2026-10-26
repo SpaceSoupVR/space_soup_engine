@@ -102,6 +102,7 @@ impl LocomotionSettings {
     }
 
     /// [`Self::load`] from the manifest's JSON.
+    #[must_use]
     pub fn from_manifest(manifest: &serde_json::Value, scene: &str) -> Self {
         let mut out = Self::default();
         for layer in [manifest.get("locomotion"), manifest.get("locomotion_scenes").and_then(|s| s.get(scene))].into_iter().flatten() {
@@ -141,6 +142,7 @@ impl Default for Locomotion {
 }
 
 impl Locomotion {
+    #[must_use]
     pub fn new(mode: LocomotionMode) -> Self {
         Self {
             mode,
@@ -161,6 +163,7 @@ impl Locomotion {
         self.running = !self.running;
     }
 
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running
     }
@@ -170,6 +173,7 @@ impl Locomotion {
         self.is_teleport_aiming = false;
     }
 
+    #[must_use]
     pub fn is_teleport_aiming(&self) -> bool {
         self.is_teleport_aiming
     }
@@ -264,6 +268,7 @@ impl Locomotion {
         }
     }
 
+    #[must_use]
     pub fn apply_to_head(&self, tracked_position: Vec3, tracked_rotation: Quat) -> (Vec3, Quat) {
         let yaw_rot = Quat::from_rotation_y(self.player_yaw);
         let position = self.player_offset + yaw_rot * tracked_position;
@@ -271,6 +276,7 @@ impl Locomotion {
         (position, rotation)
     }
 
+    #[must_use]
     pub fn collision_start(&self, head: Option<Vec3>) -> CollisionStart {
         let head_rel = head
             .map_or(Vec3::ZERO, |h| Vec3::new(h.x - self.player_offset.x, 0.0, h.z - self.player_offset.z));

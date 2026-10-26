@@ -76,15 +76,18 @@ fn each_cell((lo, hi): (Cell, Cell), mut f: impl FnMut(Cell)) {
 }
 
 impl GrabGrid {
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// How many times an entry has been filed under cells: see `refiled`.
+    #[must_use]
     pub fn refiled(&self) -> u64 {
         self.refiled
     }
@@ -216,6 +219,7 @@ impl GrabGrid {
     }
 
     /// How many entries a query at `point` with `reach` reads: what it costs.
+    #[must_use]
     pub fn read_by(&self, point: Vec3, reach: f32) -> usize {
         let mut n = self.big.len();
         each_cell((cell_of(point - Vec3::splat(reach)), cell_of(point + Vec3::splat(reach))), |c| {

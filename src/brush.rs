@@ -58,15 +58,18 @@ pub struct Plane {
 }
 
 impl Plane {
+    #[must_use]
     pub fn new(n: Vec3, d: f64) -> Self {
         Plane { n: normalize(n), d }
     }
 
     #[inline]
+    #[must_use]
     pub fn distance(&self, p: Vec3) -> f64 {
         dot(self.n, p) - self.d
     }
 
+    #[must_use]
     pub fn flipped(&self) -> Self {
         Plane {
             n: scale(self.n, -1.0),
@@ -109,6 +112,7 @@ fn default_lightmap() -> f64 {
 }
 
 impl BrushFace {
+    #[must_use]
     pub fn plane(&self) -> Plane {
         Plane {
             n: [self.plane[0], self.plane[1], self.plane[2]],
@@ -116,6 +120,7 @@ impl BrushFace {
         }
     }
 
+    #[must_use]
     pub fn axes(&self) -> (Vec3, Vec3) {
         let (du, dv) = default_axes(self.plane().n);
         let u = self.u_axis.unwrap_or(du);
@@ -123,6 +128,7 @@ impl BrushFace {
         rotate_axes(u, v, self.plane().n, self.rotation)
     }
 
+    #[must_use]
     pub fn uv(&self, p: Vec3) -> [f64; 2] {
         let (u, v) = self.axes();
         let su = if self.scale[0] == 0.0 { 1.0 } else { self.scale[0] };
@@ -134,6 +140,7 @@ impl BrushFace {
     }
 }
 
+#[must_use]
 pub fn default_axes(n: Vec3) -> (Vec3, Vec3) {
     let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
     if ay >= ax && ay >= az {
@@ -201,6 +208,7 @@ fn seed_polygon(pl: Plane) -> Vec<Vec3> {
     ]
 }
 
+#[must_use]
 pub fn clip_polygon(poly: &[Vec3], pl: Plane) -> Vec<Vec3> {
     if poly.is_empty() {
         return Vec::new();
@@ -245,6 +253,7 @@ fn dedupe(poly: Vec<Vec3>) -> Vec<Vec3> {
     out
 }
 
+#[must_use]
 pub fn solid_polygons(solid: &BrushSolid) -> Vec<Option<Vec<Vec3>>> {
     (0..solid.faces.len())
         .map(|i| {
@@ -265,10 +274,12 @@ pub fn solid_polygons(solid: &BrushSolid) -> Vec<Option<Vec<Vec3>>> {
         .collect()
 }
 
+#[must_use]
 pub fn is_valid_solid(solid: &BrushSolid) -> bool {
     solid.faces.len() >= 4 && solid_polygons(solid).iter().flatten().count() >= 4
 }
 
+#[must_use]
 pub fn solid_bounds(solid: &BrushSolid) -> Option<(Vec3, Vec3)> {
     let mut min: Option<Vec3> = None;
     let mut max: Vec3 = [0.0; 3];
@@ -295,6 +306,7 @@ pub fn solid_bounds(solid: &BrushSolid) -> Option<(Vec3, Vec3)> {
     min.map(|lo| (lo, max))
 }
 
+#[must_use]
 pub fn solid_volume(solid: &BrushSolid) -> f64 {
     let polys = solid_polygons(solid);
     let mut total = 0.0;
@@ -310,6 +322,7 @@ pub fn solid_volume(solid: &BrushSolid) -> f64 {
     total.abs()
 }
 
+#[must_use]
 pub fn contains_point(solid: &BrushSolid, p: Vec3, tolerance: f64) -> bool {
     solid.faces.iter().all(|f| f.plane().distance(p) <= tolerance)
 }
@@ -408,6 +421,7 @@ fn face_inheriting(pl: Plane, from: Option<&BrushFace>) -> BrushFace {
     }
 }
 
+#[must_use]
 pub fn split_solid(solid: &BrushSolid, cut: Plane) -> (Option<BrushSolid>, Option<BrushSolid>) {
     let mut best: Option<&BrushFace> = None;
     let mut best_alignment = f64::NEG_INFINITY;
@@ -432,6 +446,7 @@ pub fn split_solid(solid: &BrushSolid, cut: Plane) -> (Option<BrushSolid>, Optio
     )
 }
 
+#[must_use]
 pub fn subtract_solid(target: &BrushSolid, tool: &BrushSolid) -> Vec<BrushSolid> {
     if !is_valid_solid(target) {
         return Vec::new();
@@ -466,6 +481,7 @@ pub fn subtract_solid(target: &BrushSolid, tool: &BrushSolid) -> Vec<BrushSolid>
 
 impl BrushDef {
 
+    #[must_use]
     pub fn evaluate(&self) -> Vec<BrushSolid> {
         if self.solids.is_empty() {
             return Vec::new();
@@ -495,6 +511,7 @@ impl BrushDef {
         self.evaluate().iter().map(solid_volume).sum()
     }
 
+    #[must_use]
     pub fn materials(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for s in &self.solids {
@@ -507,6 +524,7 @@ impl BrushDef {
         out
     }
 
+    #[must_use]
     pub fn bounds(&self) -> Option<(Vec3, Vec3)> {
         let mut acc: Option<(Vec3, Vec3)> = None;
         for s in &self.solids {
@@ -538,6 +556,7 @@ pub struct BrushMeshGroup {
     pub indices: Vec<u32>,
 }
 
+#[must_use]
 pub fn polygon_winding(poly: &[Vec3], n: Vec3) -> f64 {
     let mut sum = [0.0, 0.0, 0.0];
     for i in 0..poly.len() {
@@ -546,6 +565,7 @@ pub fn polygon_winding(poly: &[Vec3], n: Vec3) -> f64 {
     dot(sum, n)
 }
 
+#[must_use]
 pub fn brush_mesh(brush: &BrushDef) -> Vec<BrushMeshGroup> {
     let layout = crate::brush_lightmap::brush_lightmap_layout(brush);
     brush_mesh_in_atlas(brush, &layout, 0)
@@ -562,6 +582,7 @@ pub struct BrushPolygon {
     pub uv2: Vec<[f32; 2]>,
 }
 
+#[must_use]
 pub fn brush_polygons_in_atlas(
     brush: &BrushDef,
     layout: &crate::brush_lightmap::BrushLightmapLayout,
@@ -608,6 +629,7 @@ pub fn brush_polygons_in_atlas(
     out
 }
 
+#[must_use]
 pub fn brush_mesh_in_atlas(
     brush: &BrushDef,
     layout: &crate::brush_lightmap::BrushLightmapLayout,
@@ -739,6 +761,7 @@ mod tangent_tests {
     }
 }
 
+#[must_use]
 pub fn brush_checksum(brush: &BrushDef) -> u32 {
     let mut h: u32 = 2166136261;
     let mut mix = |x: f64| {
@@ -760,6 +783,7 @@ pub fn brush_checksum(brush: &BrushDef) -> u32 {
     h
 }
 
+#[must_use]
 pub fn block_solid(min: Vec3, max: Vec3, material: &str) -> BrushSolid {
     const NORMALS: [Vec3; 6] = [
         [1.0, 0.0, 0.0],

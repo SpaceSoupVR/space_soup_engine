@@ -78,6 +78,7 @@ const HOLE: u8 = 127;
 
 impl PhysicsWorld {
     /// Every static collider's triangles, world space: what a navmesh is baked from.
+    #[must_use]
     pub fn static_collision_triangles(&self) -> CollisionTriangles {
         let mut out = CollisionTriangles::default();
         let scene = self.scene.as_ptr();

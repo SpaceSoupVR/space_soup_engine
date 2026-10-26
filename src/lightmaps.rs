@@ -47,6 +47,7 @@ pub struct LightmapIndex {
     pub entries: Vec<LightmapEntry>,
 }
 
+#[must_use]
 pub fn lightmap_dir(game_dir: &Path, scene_name: &str) -> PathBuf {
     game_dir.join("scenes").join(format!("{scene_name}.lightmaps"))
 }
@@ -55,22 +56,26 @@ pub const SCENE_BRUSH_DIRECTION_ID: &str = "__brushes_dir__";
 
 pub const SCENE_BRUSH_SUN_MASK_ID: &str = "__brushes_sun__";
 
+#[must_use]
 pub fn scene_brush_stationary_id(layer: usize) -> String {
     format!("__brushes_stationary_{layer}__")
 }
 
 pub const SCENE_TERRAIN_SKY_ID: &str = "__terrain_sky__";
 
+#[must_use]
 pub fn scene_terrain_stationary_id(layer: usize) -> String {
     format!("__terrain_stationary_{layer}__")
 }
 
+#[must_use]
 pub fn mesh_stationary_id(object_id: &str, layer: usize) -> String {
     format!("{object_id}{MESH_STATIONARY_SEPARATOR}{layer}")
 }
 
 const MESH_STATIONARY_SEPARATOR: &str = "#stationary_";
 
+#[must_use]
 pub fn mesh_stationary_of(id: &str) -> Option<(&str, usize)> {
     let (object, layer) = id.rsplit_once(MESH_STATIONARY_SEPARATOR)?;
     Some((object, layer.parse().ok()?))
@@ -102,6 +107,7 @@ pub struct LoadedLightmap {
     pub linear: Option<Vec<f32>>,
 }
 
+#[must_use]
 pub fn load_scene_lightmaps(game_dir: &Path, scene_name: &str) -> Vec<LoadedLightmap> {
     let dir = lightmap_dir(game_dir, scene_name);
     let Ok(raw) = std::fs::read_to_string(dir.join("index.json")) else {
@@ -177,6 +183,7 @@ pub fn write_scene_lightmaps(
     Ok(dir)
 }
 
+#[must_use]
 pub fn by_object(maps: Vec<LoadedLightmap>) -> HashMap<String, LoadedLightmap> {
     maps.into_iter().map(|m| (m.object_id.clone(), m)).collect()
 }
@@ -202,15 +209,18 @@ fn warn_if_stale(game_dir: &Path, scene_name: &str, lightmap_dir: &Path) {
     }
 }
 
+#[must_use]
 pub fn srgb_to_linear(s: f32) -> f32 {
     if s <= 0.040_45 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
 }
 
+#[must_use]
 pub fn linear_to_srgb(l: f32) -> f32 {
     let l = l.clamp(0.0, 1.0);
     if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 }
 }
 
+#[must_use]
 pub fn f16_bits_to_f32(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
     let exp = i32::from((h >> 10) & 0x1f);
@@ -222,6 +232,7 @@ pub fn f16_bits_to_f32(h: u16) -> f32 {
     }
 }
 
+#[must_use]
 pub fn f32_to_f16_bits(v: f32) -> u16 {
     if v.is_nan() {
         return 0x7e00;
@@ -244,6 +255,7 @@ pub fn f32_to_f16_bits(v: f32) -> u16 {
     sign | (((e + 15) as u16) << 10) | m as u16
 }
 
+#[must_use]
 pub fn decode_png_rgba(bytes: &[u8], encoding: LightmapEncoding) -> Option<(Vec<u8>, Option<Vec<f32>>, u32, u32)> {
     let dynamic = image::load_from_memory(bytes).ok()?;
     let (w, h) = (dynamic.width(), dynamic.height());

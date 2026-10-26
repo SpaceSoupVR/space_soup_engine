@@ -9,6 +9,7 @@ pub enum Hand {
 }
 
 impl Hand {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Hand::Left => "left",
@@ -16,6 +17,7 @@ impl Hand {
         }
     }
 
+    #[must_use]
     pub fn other(self) -> Hand {
         match self {
             Hand::Left => Hand::Right,
@@ -72,6 +74,7 @@ pub struct InputAxes {
 }
 
 impl InputAxes {
+    #[must_use]
     pub fn trigger(&self, hand: Hand) -> f32 {
         match hand {
             Hand::Left => self.l_trigger,
@@ -79,6 +82,7 @@ impl InputAxes {
         }
     }
 
+    #[must_use]
     pub fn grip(&self, hand: Hand) -> f32 {
         match hand {
             Hand::Left => self.l_grip,
@@ -86,6 +90,7 @@ impl InputAxes {
         }
     }
 
+    #[must_use]
     pub fn stick(&self, hand: Hand) -> [f32; 2] {
         match hand {
             Hand::Left => self.l_stick,

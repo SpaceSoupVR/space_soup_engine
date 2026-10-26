@@ -32,10 +32,12 @@ pub struct StationaryLamp {
 
 impl StationaryLamp {
 
+    #[must_use]
     pub fn id(&self) -> String {
         format!("{}#{}", self.object_id, self.light_index)
     }
 
+    #[must_use]
     pub fn reaches(&self, p: Vec3, slack: f32) -> bool {
         let to = p - self.position;
         let d2 = to.length_squared();
@@ -53,6 +55,7 @@ impl StationaryLamp {
     }
 }
 
+#[must_use]
 pub fn stationary_lamps(objects: &[GameObject]) -> Vec<StationaryLamp> {
     let mut out = Vec::new();
     for o in objects {
@@ -122,6 +125,7 @@ pub fn assign_channels(lamps: &[StationaryLamp], layout: &BrushLightmapLayout) -
     channel
 }
 
+#[must_use]
 pub fn scene_stationary_channels(objects: &[GameObject]) -> Vec<(StationaryLamp, Option<u8>)> {
     let lamps = stationary_lamps(objects);
     if lamps.is_empty() {
@@ -134,10 +138,12 @@ pub fn scene_stationary_channels(objects: &[GameObject]) -> Vec<(StationaryLamp,
     lamps.into_iter().zip(channels).collect()
 }
 
+#[must_use]
 pub fn mask_layers(channels: &[Option<u8>]) -> usize {
     channels.iter().flatten().map(|&c| c as usize / STATIONARY_LAMPS_PER_LAYER + 1).max().unwrap_or(0)
 }
 
+#[must_use]
 pub fn channel_slot(c: u8) -> (usize, usize) {
     let c = c as usize;
     (c / STATIONARY_LAMPS_PER_LAYER, (c % STATIONARY_LAMPS_PER_LAYER) * 2)

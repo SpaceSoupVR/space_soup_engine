@@ -108,16 +108,19 @@ pub const NO_COVER: f32 = -1.0e4;
 
 impl WeatherDef {
 
+    #[must_use]
     pub fn extent(&self) -> (f32, f32, f32, f32) {
         let [a, b, c, d] = self.bounds;
         (a.min(c), b.min(d), a.max(c), b.max(d))
     }
 
+    #[must_use]
     pub fn contains(&self, x: f32, z: f32) -> bool {
         let (x0, z0, x1, z1) = self.extent();
         x >= x0 && x <= x1 && z >= z0 && z <= z1
     }
 
+    #[must_use]
     pub fn edge_fade(&self, x: f32, z: f32) -> f32 {
         let (x0, z0, x1, z1) = self.extent();
         let e = self.edge.max(1e-3);
@@ -128,6 +131,7 @@ impl WeatherDef {
         s((x - x0).min(x1 - x)) * s((z - z0).min(z1 - z))
     }
 
+    #[must_use]
     pub fn temperature(&self) -> f32 {
         self.temperature.unwrap_or(match self.kind {
             PrecipitationKind::Rain => 8.0,
@@ -135,6 +139,7 @@ impl WeatherDef {
         })
     }
 
+    #[must_use]
     pub fn intensity_at(&self, t: f64) -> f32 {
         let i = self.intensity.max(0.0);
         let [on, off] = self.cycle;
@@ -164,6 +169,7 @@ pub struct WeatherState {
 
 impl WeatherState {
 
+    #[must_use]
     pub fn start(def: &WeatherDef) -> Self {
         let s = def.start;
         Self {
@@ -211,6 +217,7 @@ impl WeatherState {
         self.snow = self.snow.clamp(0.0, def.max_snow_depth.max(0.0));
     }
 
+    #[must_use]
     pub fn at(def: &WeatherDef, t: f64) -> Self {
         let mut s = Self::start(def);
         let dt = if t > 6.0 * 3600.0 { 10.0 } else { 1.0 };
@@ -264,6 +271,7 @@ pub const THIRST_SLOPE_DEG: (f32, f32) = (8.0, 25.0);
 /// (where water would stand) or on flat ground, up to [`THIRST_MOST`] on a
 /// slope of `THIRST_SLOPE_DEG.1` or on a crown standing `relief` over the
 /// ground round it. A soaked area is soaked everywhere.
+#[must_use]
 pub fn thirst(slope_deg: f32, proud: f32, relief: f32, in_hollow: bool) -> f32 {
     if in_hollow {
         return 0.0;
@@ -314,6 +322,7 @@ impl Ord for Low {
     }
 }
 
+#[must_use]
 pub fn spill_levels(h: &[f32], nx: usize, nz: usize) -> Vec<f32> {
     let mut spill = h.to_vec();
     let mut seen = vec![false; h.len()];
@@ -352,6 +361,7 @@ pub fn spill_levels(h: &[f32], nx: usize, nz: usize) -> Vec<f32> {
     spill
 }
 
+#[must_use]
 pub fn hollow_floors(h: &[f32], spill: &[f32], nx: usize, nz: usize) -> Vec<f32> {
     let wet = |i: usize| spill[i] - h[i] > 1e-5;
     let mut floor = vec![f32::INFINITY; h.len()];
@@ -467,6 +477,7 @@ impl WeatherGround {
     /// hollow there holds more than the least a puddle is drawn at. What
     /// decides whether ground there needs the standing water's shader at all
     /// (`space_soup::renderer::weather::WeatherKinds`).
+    #[must_use]
     pub fn can_pool(&self, def: &WeatherDef, lo: [f32; 2], hi: [f32; 2]) -> bool {
         if def.max_puddle_depth <= 0.0 {
             return false;
@@ -489,6 +500,7 @@ impl WeatherGround {
 
     /// How much of its area's wetness the texel holding world x/z goes
     /// without ([`thirst`]); `None` outside.
+    #[must_use]
     pub fn thirst_at(&self, x: f32, z: f32) -> Option<f32> {
         self.texel(x, z).map(|i| self.thirst[i])
     }
@@ -514,10 +526,12 @@ impl WeatherGround {
         self.cell
     }
 
+    #[must_use]
     pub fn cover_at(&self, x: f32, z: f32) -> Option<f32> {
         self.texel(x, z).map(|i| self.cover[i])
     }
 
+    #[must_use]
     pub fn exposure(&self, p: [f32; 3]) -> f32 {
         match self.cover_at(p[0], p[2]) {
             Some(c) => ((p[1] - c + 0.5) / 0.4).clamp(0.0, 1.0),
@@ -525,6 +539,7 @@ impl WeatherGround {
         }
     }
 
+    #[must_use]
     pub fn puddle_depth(&self, i: usize, fill: f32, max_depth: f32) -> f32 {
         let floor = self.floor[i];
         if !floor.is_finite() {
@@ -535,6 +550,7 @@ impl WeatherGround {
     }
 }
 
+#[must_use]
 pub fn surface(def: &WeatherDef, ground: &WeatherGround, state: &WeatherState) -> Vec<[f32; 4]> {
     let max_wet = def.max_wetness.clamp(0.0, 1.0);
     let max_puddle = def.max_puddle_depth.max(0.0);
@@ -595,6 +611,7 @@ impl WeatherField {
         (Self { areas }, dropped)
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.areas.is_empty()
     }
@@ -611,6 +628,7 @@ impl WeatherField {
         }
     }
 
+    #[must_use]
     pub fn falling_on(&self, p: [f32; 3]) -> (f32, f32) {
         let (mut rain, mut snow) = (0.0f32, 0.0f32);
         for (def, ground, state) in &self.areas {
@@ -627,6 +645,7 @@ impl WeatherField {
     }
 }
 
+#[must_use]
 pub fn body_wetness_step(wet: f32, rain: f32, snow: f32, dt: f32) -> f32 {
     let gain = (rain + 0.15 * snow) / 60.0;
     let next = if gain > 0.0 { wet + gain * dt } else { wet - dt / 600.0 };

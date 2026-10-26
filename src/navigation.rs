@@ -38,6 +38,7 @@ pub const AGENT: &str = "human";
 const FLOOR_MM: DVec3 = DVec3::new(600.0, 2500.0, 600.0);
 
 /// The human class's bake settings, at `cell_size` metres a cell.
+#[must_use]
 pub fn human_settings(cell_size: f32) -> Settings {
     Settings {
         cell_size,
@@ -59,6 +60,7 @@ pub fn human_settings(cell_size: f32) -> Settings {
 }
 
 /// The finest cell (whole millimetres, at least 0.1 m) at which a scene this wide fits one bake.
+#[must_use]
 pub fn cell_size_for(geometry: &CollisionTriangles) -> f32 {
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for v in &geometry.vertices {
@@ -75,6 +77,7 @@ pub fn cell_size_for(geometry: &CollisionTriangles) -> f32 {
 
 /// The geometry's fingerprint: every triangle's corners to the millimetre, in order (FNV-1a, so
 /// the same on every machine and Rust version).
+#[must_use]
 pub fn fingerprint(geometry: &CollisionTriangles) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |x: i64| {
@@ -116,6 +119,7 @@ pub struct SceneNav {
 }
 
 /// Where scene `scene`'s navmesh and its info are kept under `game_dir`.
+#[must_use]
 pub fn files(game_dir: &Path, scene: &str) -> (PathBuf, PathBuf) {
     let dir = game_dir.join("navmesh/scenes");
     (dir.join(format!("{scene}.{AGENT}.ssnav")), dir.join(format!("{scene}.{AGENT}.json")))
@@ -179,12 +183,14 @@ impl SceneNav {
     }
 
     /// The nearest point on the floor to `at`, if there is floor near it (metres).
+    #[must_use]
     pub fn nearest(&self, at: Vec3) -> Option<Vec3> {
         self.world.nearest_poly(at.as_dvec3() * 1000.0, FLOOR_MM).map(|n| (n.point / 1000.0).as_vec3())
     }
 
     /// A walkable path from `from` to `to` (metres), corners and all, or `None` if either is off
     /// the floor or nothing joins them.
+    #[must_use]
     pub fn find_path(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         let path = find_path(&self.world, from.as_dvec3() * 1000.0, to.as_dvec3() * 1000.0, FLOOR_MM).filter(|p| p.complete)?;
         Some(path.waypoints.iter().map(|w| (w.pos() / 1000.0).as_vec3()).collect())

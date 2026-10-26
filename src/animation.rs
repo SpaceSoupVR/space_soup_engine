@@ -10,6 +10,7 @@ pub struct AnimationPlayer {
 }
 
 impl AnimationPlayer {
+    #[must_use]
     pub fn new(anim: &Animation) -> Self {
         Self {
             anim_name: anim.name.clone(),
@@ -43,6 +44,7 @@ pub struct Sample {
     pub color: Option<Color3>,
 }
 
+#[must_use]
 pub fn sample(anim: &Animation, t: f32) -> Sample {
     if anim.keyframes.is_empty() {
         return Sample::default();

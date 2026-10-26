@@ -15,6 +15,7 @@ pub struct StageChange {
 
 impl StageChange {
 
+    #[must_use]
     pub fn breached(&self) -> bool {
         !self.solid
     }
@@ -26,10 +27,12 @@ pub struct DamageLedger {
 }
 
 impl DamageLedger {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn damage_for(&self, object_id: &str) -> f32 {
         self.taken.get(object_id).copied().unwrap_or(0.0)
     }
@@ -58,6 +61,7 @@ impl DamageLedger {
         })
     }
 
+    #[must_use]
     pub fn hidden_parts_for<'a>(&self, object: &'a GameObject) -> &'a [String] {
         match &object.breakable {
             Some(b) => b.hidden_parts_at(self.damage_for(&object.id), &object.hidden_parts),
@@ -65,6 +69,7 @@ impl DamageLedger {
         }
     }
 
+    #[must_use]
     pub fn is_removed(&self, object: &GameObject) -> bool {
         match &object.breakable {
             Some(b) => b
@@ -74,6 +79,7 @@ impl DamageLedger {
         }
     }
 
+    #[must_use]
     pub fn is_solid(&self, object: &GameObject) -> bool {
         match &object.breakable {
             Some(b) => b.is_solid_at(self.damage_for(&object.id)),
@@ -89,6 +95,7 @@ impl DamageLedger {
         self.taken.iter().map(|(id, d)| (id.as_str(), *d))
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.taken.is_empty()
     }
@@ -112,6 +119,7 @@ pub struct ImpactTarget {
     pub share: f32,
 }
 
+#[must_use]
 pub fn impact_targets(objects: &[GameObject], point: Vec3, radius: f32) -> Vec<ImpactTarget> {
     let mut out = Vec::new();
     for (index, object) in objects.iter().enumerate() {

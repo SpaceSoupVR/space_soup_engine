@@ -12,14 +12,17 @@ pub struct Room {
 }
 
 impl Room {
+    #[must_use]
     pub fn contains(&self, p: Vec3) -> bool {
         p.cmpge(self.min).all() && p.cmple(self.max).all()
     }
 
+    #[must_use]
     pub fn centre(&self) -> Vec3 {
         (self.min + self.max) * 0.5
     }
 
+    #[must_use]
     pub fn volume(&self) -> f32 {
         let d = (self.max - self.min).abs();
         d.x * d.y * d.z
@@ -40,6 +43,7 @@ pub struct RoomGraph {
 
 impl RoomGraph {
 
+    #[must_use]
     pub fn new(rooms: Vec<Room>) -> Self {
         let mut neighbours = vec![Vec::new(); rooms.len()];
         for i in 0..rooms.len() {
@@ -53,10 +57,12 @@ impl RoomGraph {
         Self { rooms, neighbours }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rooms.is_empty()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.rooms.len()
     }
@@ -65,6 +71,7 @@ impl RoomGraph {
         self.neighbours.get(room).map(std::vec::Vec::as_slice).unwrap_or(&[])
     }
 
+    #[must_use]
     pub fn room_at(&self, p: Vec3) -> Option<usize> {
         self.rooms
             .iter()
@@ -297,6 +304,7 @@ fn v3(p: crate::brush::Vec3) -> Vec3 {
     Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32)
 }
 
+#[must_use]
 pub fn rooms_from_scene(
     brushes: &[(&str, &crate::brush::BrushDef)],
 ) -> (Vec<Room>, Vec<(usize, usize)>) {
@@ -364,6 +372,7 @@ pub fn rooms_from_scene(
 const WALL_SAMPLE_STEP: f32 = 0.1;
 const WALL_SAMPLE_OFFSET: f32 = 0.01;
 
+#[must_use]
 pub fn closed_room_boxes(
     brushes: &[(&str, &crate::brush::BrushDef)],
     doorways: &[(Vec3, Vec3)],
@@ -432,11 +441,13 @@ pub fn closed_room_boxes(
     closed
 }
 
+#[must_use]
 pub fn doorway_touches(pmin: Vec3, pmax: Vec3, min: Vec3, max: Vec3) -> bool {
     let slack = Vec3::splat(ADJACENCY_SLACK);
     (min - slack).cmple(pmax).all() && (max + slack).cmpge(pmin).all()
 }
 
+#[must_use]
 pub fn doorways_from_scene(brushes: &[(&str, &crate::brush::BrushDef)]) -> Vec<(Vec3, Vec3)> {
     let mut out = Vec::new();
     for (_, brush) in brushes {
@@ -454,6 +465,7 @@ pub fn doorways_from_scene(brushes: &[(&str, &crate::brush::BrushDef)]) -> Vec<(
 
 impl RoomGraph {
 
+    #[must_use]
     pub fn from_derived(rooms: Vec<Room>, portals: &[(usize, usize)]) -> Self {
         let mut g = Self::new(rooms);
         for &(a, b) in portals {

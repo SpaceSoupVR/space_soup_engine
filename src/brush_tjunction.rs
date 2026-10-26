@@ -62,6 +62,7 @@ fn points_inside_edge(index: &[[f32; 3]], a: [f32; 3], b: [f32; 3]) -> Vec<(f32,
     found
 }
 
+#[must_use]
 pub fn count_t_junctions(polys: &[BrushPolygon]) -> usize {
     let index = vertex_index(polys);
     polys
@@ -75,6 +76,7 @@ pub fn count_t_junctions(polys: &[BrushPolygon]) -> usize {
         .sum()
 }
 
+#[must_use]
 pub fn fix_t_junctions(polys: &[BrushPolygon]) -> Vec<(BrushPolygon, bool)> {
     let index = vertex_index(polys);
     polys
@@ -114,6 +116,7 @@ pub struct Triangulated {
     pub indices: Vec<u32>,
 }
 
+#[must_use]
 pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
     let n = poly.positions.len();
     let mut out = Triangulated::default();

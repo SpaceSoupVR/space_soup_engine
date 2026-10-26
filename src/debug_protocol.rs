@@ -8,15 +8,18 @@ pub struct Pose {
 }
 
 impl Pose {
+    #[must_use]
     pub fn new(position: Vec3, rotation: Quat) -> Self {
         Self {
             position: position.into(),
             rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
         }
     }
+    #[must_use]
     pub fn position(&self) -> Vec3 {
         Vec3::from(self.position)
     }
+    #[must_use]
     pub fn rotation(&self) -> Quat {
         let r = self.rotation;
         let q = Quat::from_xyzw(r[0], r[1], r[2], r[3]);
@@ -114,6 +117,7 @@ pub mod receiver {
     }
 
     impl PacketReader {
+        #[must_use]
         pub fn new(stream: TcpStream) -> Self {
             Self {
                 reader: BufReader::new(stream),

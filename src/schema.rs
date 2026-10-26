@@ -45,6 +45,7 @@ pub struct SchemaDescriptor {
 }
 
 impl SchemaDescriptor {
+    #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("schema descriptor serializes")
     }
@@ -84,6 +85,7 @@ macro_rules! field {
     };
 }
 
+#[must_use]
 pub fn game_object_field_order() -> Vec<&'static str> {
     vec![
         "id",
@@ -129,6 +131,7 @@ pub fn game_object_field_order() -> Vec<&'static str> {
     ]
 }
 
+#[must_use]
 pub fn game_object_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         field_order: game_object_field_order(),

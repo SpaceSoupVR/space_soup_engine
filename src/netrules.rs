@@ -14,6 +14,7 @@ pub enum Precision {
 }
 
 impl Precision {
+    #[must_use]
     pub fn decimals(self) -> Option<i32> {
         match self {
             Precision::Full => None,
@@ -22,6 +23,7 @@ impl Precision {
         }
     }
 
+    #[must_use]
     pub fn round(self, v: f32) -> f32 {
         match self.decimals() {
             Some(d) => {
@@ -168,6 +170,7 @@ pub struct CustomRule {
 }
 
 impl CustomRule {
+    #[must_use]
     pub fn new(message: Message) -> Self {
         CustomRule { name: "New rule".into(), enabled: true, message, only_if: Vec::new(), then: Vec::new() }
     }
@@ -185,6 +188,7 @@ pub struct Context {
 }
 
 impl Cond {
+    #[must_use]
     pub fn holds(&self, c: &Context) -> bool {
         match self {
             Cond::StandingStill => c.standing_still,
@@ -256,12 +260,14 @@ impl Default for NetRules {
     }
 }
 
+#[must_use]
 pub fn rules_path(game_dir: &Path) -> PathBuf {
     game_dir.join("netrules.json")
 }
 
 impl NetRules {
 
+    #[must_use]
     pub fn resolve(&self, message: Message, ctx: &Context) -> Resolved {
         let mut out = Resolved::default();
         for r in self.rules.iter().filter(|r| r.enabled && r.message == message && r.only_if.iter().all(|c| c.holds(ctx))) {
@@ -283,6 +289,7 @@ impl NetRules {
         out
     }
 
+    #[must_use]
     pub fn with_rule_applied(&self, rule: &CustomRule) -> NetRules {
         let mut r = self.clone();
         r.rules.clear();
@@ -321,6 +328,7 @@ impl NetRules {
         r
     }
 
+    #[must_use]
     pub fn load(game_dir: &Path) -> Self {
         std::fs::read_to_string(rules_path(game_dir)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
     }

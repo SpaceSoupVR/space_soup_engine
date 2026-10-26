@@ -67,6 +67,7 @@ pub struct BrushChart {
 
 impl BrushChart {
 
+    #[must_use]
     pub fn texel_world(&self, tx: u32, ty: u32) -> Vec3 {
         add(
             self.origin,
@@ -74,6 +75,7 @@ impl BrushChart {
         )
     }
 
+    #[must_use]
     pub fn uv2(&self, p: Vec3, atlas_w: u32, atlas_h: u32) -> [f32; 2] {
         let rel = sub(p, self.origin);
         let lu = dot(self.du, self.du);
@@ -107,6 +109,7 @@ pub const STATIONARY_MASK_DISTANCE_TEXELS: f32 = 4.0;
 
 impl BrushLightmapLayout {
 
+    #[must_use]
     pub fn scaled(&self, s: u32) -> Self {
         let f = f64::from(s);
         let back = 0.5 / f - 0.5;
@@ -131,6 +134,7 @@ impl BrushLightmapLayout {
         }
     }
 
+    #[must_use]
     pub fn chart(&self, object: usize, solid: usize, face: usize) -> Option<&BrushChart> {
         self.charts
             .iter()
@@ -138,10 +142,12 @@ impl BrushLightmapLayout {
     }
 }
 
+#[must_use]
 pub fn brush_lightmap_layout(brush: &BrushDef) -> BrushLightmapLayout {
     scene_brush_lightmap_layout(&[brush])
 }
 
+#[must_use]
 pub fn scene_brush_lightmap_layout(brushes: &[&BrushDef]) -> BrushLightmapLayout {
 
     let mut measured = Vec::new();
@@ -722,6 +728,7 @@ mod welding_tests {
     }
 }
 
+#[must_use]
 pub fn point_on_face(poly: &[Vec3], normal: Vec3, p: Vec3, tolerance: f64) -> bool {
     if poly.len() < 3 {
         return false;
@@ -749,6 +756,7 @@ pub fn point_on_face(poly: &[Vec3], normal: Vec3, p: Vec3, tolerance: f64) -> bo
     most_positive <= tolerance || most_negative >= -tolerance
 }
 
+#[must_use]
 pub fn clamp_to_face(poly: &[Vec3], p: Vec3) -> Vec3 {
     if poly.len() < 3 {
         return p;

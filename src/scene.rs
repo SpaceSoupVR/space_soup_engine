@@ -162,6 +162,7 @@ pub struct PropRef {
 
 impl GameObject {
 
+    #[must_use]
     pub fn is_solid_brush(&self) -> bool {
         self.brush.is_some()
             && self
@@ -169,18 +170,22 @@ impl GameObject {
                 .unwrap_or(self.trigger_volume.is_none() && !self.is_trigger)
     }
 
+    #[must_use]
     pub fn find_animation(&self, name: &str) -> Option<&Animation> {
         self.animations.iter().find(|a| a.name == name)
     }
 
+    #[must_use]
     pub fn grip_point(&self, name: &str) -> Option<&GripPointDef> {
         self.grip_points.iter().find(|p| p.name == name)
     }
 
+    #[must_use]
     pub fn socket(&self, name: &str) -> Option<&SocketDef> {
         self.sockets.iter().find(|s| s.name == name)
     }
 
+    #[must_use]
     pub fn grip_pose(&self, hand: Hand) -> Option<&GripPoseDef> {
         match hand {
             Hand::Left => self.grip_pose_left.as_ref(),
@@ -326,6 +331,7 @@ impl Default for TimeOfDayDef {
 
 impl TimeOfDayDef {
 
+    #[must_use]
     pub fn params(&self, photographed_sun: Option<[f32; 3]>) -> space_soup_sky::time_of_day::TimeOfDayParams {
         let p = space_soup_sky::time_of_day::TimeOfDayParams {
             start_hour: self.start_hour,
@@ -454,6 +460,7 @@ impl Scene {
         }
     }
 
+    #[must_use]
     pub fn find_object(&self, id: &str) -> Option<&GameObject> {
         self.objects.iter().find(|o| o.id == id)
     }
@@ -553,6 +560,7 @@ fn default_true() -> bool {
 
 impl BreakableDef {
 
+    #[must_use]
     pub fn stage_for(&self, damage: f32) -> Option<&DamageStage> {
         if self.health <= 0.0 {
 
@@ -565,11 +573,13 @@ impl BreakableDef {
             .max_by(|a, b| a.at.total_cmp(&b.at))
     }
 
+    #[must_use]
     pub fn is_solid_at(&self, damage: f32) -> bool {
         self.stage_for(damage)
             .is_none_or(|s| s.solid && !s.removed)
     }
 
+    #[must_use]
     pub fn hidden_parts_at<'a>(&'a self, damage: f32, authored: &'a [String]) -> &'a [String] {
         match self.stage_for(damage) {
             Some(stage) => &stage.hidden_parts,

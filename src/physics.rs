@@ -8,6 +8,7 @@ pub struct Aabb {
 }
 
 impl Aabb {
+    #[must_use]
     pub fn from_center_half(center: Vec3, half: Vec3) -> Self {
         Self {
             min: center - half,
@@ -15,6 +16,7 @@ impl Aabb {
         }
     }
 
+    #[must_use]
     pub fn overlaps(&self, other: &Aabb) -> bool {
         self.min.x <= other.max.x
             && self.max.x >= other.min.x
@@ -37,6 +39,7 @@ pub enum CollisionEvent {
 }
 
 impl CollisionTracker {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -84,11 +87,13 @@ fn safe_div(v: f32) -> f32 {
     }
 }
 
+#[must_use]
 pub fn point_in_obb(p: Vec3, center: Vec3, half_size: Vec3, rotation: Quat) -> bool {
     let local = rotation.conjugate() * (p - center);
     local.x.abs() <= half_size.x && local.y.abs() <= half_size.y && local.z.abs() <= half_size.z
 }
 
+#[must_use]
 pub fn ray_intersect_obb(
     origin: Vec3,
     dir: Vec3,

@@ -15,6 +15,7 @@ pub struct Attachment {
 }
 
 impl Attachment {
+    #[must_use]
     pub fn rigid(joint: JointId) -> Self {
         Self {
             joint,
@@ -25,6 +26,7 @@ impl Attachment {
         }
     }
 
+    #[must_use]
     pub fn with_offset(joint: JointId, offset_pos: Vec3, offset_rot: Quat) -> Self {
         Self {
             joint,
@@ -35,6 +37,7 @@ impl Attachment {
         }
     }
 
+    #[must_use]
     pub fn with_grip_point(joint: JointId, offset_pos: Vec3, offset_rot: Quat, point: String) -> Self {
         Self {
             joint,
@@ -45,6 +48,7 @@ impl Attachment {
         }
     }
 
+    #[must_use]
     pub fn resolve(&self, rig: &PlayerRig) -> Option<Transform> {
         let joint_tf = rig.get(self.joint)?;
         if self.rigid && self.offset_pos == Vec3::ZERO && self.offset_rot == Quat::IDENTITY {
@@ -62,6 +66,7 @@ pub struct AttachmentTable {
 }
 
 impl AttachmentTable {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -128,20 +133,24 @@ impl AttachmentTable {
         }
     }
 
+    #[must_use]
     pub fn is_attached(&self, object_id: &str) -> bool {
         self.primary.contains_key(object_id)
     }
 
+    #[must_use]
     pub fn is_primary(&self, object_id: &str, player: PlayerId, joint: JointId) -> bool {
         self.primary.get(object_id) == Some(&(player, joint))
     }
 
+    #[must_use]
     pub fn held_by_player(&self, object_id: &str, player: PlayerId) -> bool {
         self.attachments
             .keys()
             .any(|(id, p, _)| id == object_id && *p == player)
     }
 
+    #[must_use]
     pub fn object_for_joint(&self, player: PlayerId, joint: JointId) -> Option<&str> {
         self.attachments
             .iter()
@@ -149,6 +158,7 @@ impl AttachmentTable {
             .map(|((id, _, _), _)| id.as_str())
     }
 
+    #[must_use]
     pub fn grip_point_at_joint(&self, player: PlayerId, joint: JointId) -> Option<(&str, &str)> {
         self.attachments
             .iter()
@@ -156,6 +166,7 @@ impl AttachmentTable {
             .and_then(|((id, _, _), att)| att.point.as_deref().map(|p| (id.as_str(), p)))
     }
 
+    #[must_use]
     pub fn point_held_by_other(
         &self,
         object_id: &str,
@@ -170,6 +181,7 @@ impl AttachmentTable {
         })
     }
 
+    #[must_use]
     pub fn resolve_all_with_visibility(
         &self,
         rigs: &HashMap<PlayerId, PlayerRig>,

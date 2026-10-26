@@ -163,12 +163,14 @@ impl PhysicsWorld {
     }
 
     /// Whether a latching door's bolt is home. None for a door with no latch.
+    #[must_use]
     pub fn door_bolted(&self, id: &str) -> Option<bool> {
         self.door_latches.get(id).filter(|l| l.latch.bolts).map(|l| l.bolted)
     }
 
     /// Whether a hand is at a door's handle, or holding it: the lever is
     /// down. None for a door with no handle.
+    #[must_use]
     pub fn door_handle_worked(&self, id: &str, rigs: &HashMap<PlayerId, PlayerRig>) -> Option<bool> {
         let latch = self.door_latches.get(id)?;
         let (geom, state) = (self.doors.get(id)?, self.dynamic.get(id)?);
@@ -289,6 +291,7 @@ impl PhysicsWorld {
         self.doors.iter().map(|(k, v)| (k.as_str(), v))
     }
 
+    #[must_use]
     pub fn door_angle(&self, id: &str) -> Option<f32> {
         let geom = self.doors.get(id)?;
         if geom.fixed() {

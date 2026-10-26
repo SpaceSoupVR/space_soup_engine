@@ -46,34 +46,40 @@ fn px(v: Vec3) -> physx_sys::PxVec3 {
 
 impl PhysicsWorld {
     /// What the last step cost and saw.
+    #[must_use]
     pub fn step_stats(&self) -> StepStats {
         self.stats
     }
 
     /// How many dynamic bodies this world holds, doors included.
+    #[must_use]
     pub fn body_count(&self) -> usize {
         self.dynamic.len()
     }
 
     /// Whether a dynamic body is asleep (nothing if it is not one).
+    #[must_use]
     pub fn is_asleep(&self, id: &str) -> Option<bool> {
         let state = self.dynamic.get(id)?;
         Some(unsafe { physx_sys::PxRigidDynamic_isSleeping(state.ptr as *const physx_sys::PxRigidDynamic) })
     }
 
     /// A dynamic body's linear velocity, m/s.
+    #[must_use]
     pub fn velocity_of(&self, id: &str) -> Option<Vec3> {
         let state = self.dynamic.get(id)?;
         Some(v3(unsafe { physx_sys::PxRigidBody_getLinearVelocity(state.ptr as *const physx_sys::PxRigidBody) }))
     }
 
     /// A dynamic body's centre and rotation as physics has them now.
+    #[must_use]
     pub fn pose_of(&self, id: &str) -> Option<(Vec3, glam::Quat)> {
         let state = self.dynamic.get(id)?;
         Some(from_px_transform(&unsafe { (*state.ptr).get_global_pose() }))
     }
 
     /// A dynamic body's mass, kilograms.
+    #[must_use]
     pub fn mass_of(&self, id: &str) -> Option<f32> {
         let state = self.dynamic.get(id)?;
         Some(unsafe { (*state.ptr).get_mass() })

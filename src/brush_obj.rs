@@ -229,6 +229,7 @@ fn write_object(
     stats.vertices += running;
 }
 
+#[must_use]
 pub fn export_scene(scene: &Scene, opts: &ObjExportOptions) -> ObjExport {
     let mut obj = String::new();
     let mut stats = ObjExportStats::default();
@@ -257,6 +258,7 @@ pub fn export_scene(scene: &Scene, opts: &ObjExportOptions) -> ObjExport {
     ObjExport { obj, mtl, stats }
 }
 
+#[must_use]
 pub fn export_brush(name: &str, brush: &BrushDef, opts: &ObjExportOptions) -> ObjExport {
     let mut obj = String::new();
     let mut stats = ObjExportStats::default();

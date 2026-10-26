@@ -64,6 +64,7 @@ pub enum ScatterOverride {
 }
 
 impl ScatterOverride {
+    #[must_use]
     pub fn key(&self) -> ScatterKey {
         match self {
             Self::Transform { key, .. } | Self::Removed { key } | Self::Prototype { key, .. } => *key,
@@ -97,6 +98,7 @@ pub struct ScatterInstance {
 }
 
 #[inline]
+#[must_use]
 pub fn mix32(mut h: u32) -> u32 {
     h ^= h >> 16;
     h = h.wrapping_mul(0x7feb_352d);
@@ -113,6 +115,7 @@ fn draw(seed: u32, stroke: u32, slot: u32, channel: u32) -> f32 {
     (h >> 8) as f32 / ((1u32 << 24) as f32)
 }
 
+#[must_use]
 pub fn slot_count(stroke: &ScatterStroke) -> u32 {
     let area = std::f32::consts::PI * stroke.radius * stroke.radius;
     (area * stroke.density.max(0.0)).round().max(0.0) as u32

@@ -28,10 +28,12 @@ impl Manifest {
         Ok(())
     }
 
+    #[must_use]
     pub fn scene_path(game_dir: &Path, scene_name: &str) -> PathBuf {
         game_dir.join("scenes").join(format!("{scene_name}.json"))
     }
 
+    #[must_use]
     pub fn entry_scene_path(&self, game_dir: &Path) -> PathBuf {
         Self::scene_path(game_dir, &self.entry_scene)
     }

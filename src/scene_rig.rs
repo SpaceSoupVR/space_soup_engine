@@ -35,6 +35,7 @@ pub struct GripPoseDef {
 
 impl GripPoseDef {
 
+    #[must_use]
     pub fn hand_pose(&self) -> avatar_ik::HandPose {
         avatar_ik::HandPose::from_curl(
             avatar_ik::HandCurl::from_finger_curl(&self.finger_curl, 0.0),
@@ -102,6 +103,7 @@ pub struct GripPointDef {
 
 impl GripPointDef {
 
+    #[must_use]
     pub fn hand_pose(&self) -> avatar_ik::HandPose {
         match &self.finger_pose {
             Some(p) => p.clamped(),
@@ -112,6 +114,7 @@ impl GripPointDef {
         }
     }
 
+    #[must_use]
     pub fn base(
         &self,
         obj_pos: Vec3,
@@ -124,6 +127,7 @@ impl GripPointDef {
         }
     }
 
+    #[must_use]
     pub fn anchor_world(
         &self,
         obj_pos: Vec3,
@@ -134,6 +138,7 @@ impl GripPointDef {
         (bp + br * Vec3::from(self.local_pos), br * Quat::from_array(self.local_rot))
     }
 
+    #[must_use]
     pub fn hand_world(
         &self,
         obj_pos: Vec3,

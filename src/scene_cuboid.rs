@@ -68,6 +68,7 @@ impl Default for CuboidDef {
     }
 }
 
+#[must_use]
 pub fn distance_to_oriented_box(center: Vec3, rotation: Quat, half_size: Vec3, point: Vec3) -> f32 {
     let local = rotation.inverse() * (point - center);
     local.distance(local.clamp(-half_size, half_size))

@@ -10,12 +10,14 @@ pub const CARD_ENCODING_WITHOUT_ALBEDO: &str = "sqrt16+depth16+normal16";
 
 pub const CARD_MISS: f32 = 2.0;
 
+#[must_use]
 pub fn card_axes(face: usize) -> (usize, usize, usize, f32) {
     let a = (face / 2).min(2);
     let sign = if face.is_multiple_of(2) { 1.0 } else { -1.0 };
     (a, (a + 1) % 3, (a + 2) % 3, sign)
 }
 
+#[must_use]
 pub fn card_view(face: usize) -> Vec3 {
     let (a, _, _, sign) = card_axes(face);
     let mut d = Vec3::ZERO;
@@ -23,6 +25,7 @@ pub fn card_view(face: usize) -> Vec3 {
     d
 }
 
+#[must_use]
 pub fn card_point(face: usize, u: f32, v: f32, t: f32, half: Vec3) -> Vec3 {
     let (a, b, c, sign) = card_axes(face);
     let mut p = Vec3::ZERO;
@@ -32,18 +35,21 @@ pub fn card_point(face: usize, u: f32, v: f32, t: f32, half: Vec3) -> Vec3 {
     p
 }
 
+#[must_use]
 pub fn card_coords(face: usize, p: Vec3, half: Vec3) -> (f32, f32, f32) {
     let (a, b, c, sign) = card_axes(face);
     let h = half.max(Vec3::splat(1e-6));
     (p[b] / (2.0 * h[b]) + 0.5, p[c] / (2.0 * h[c]) + 0.5, 0.5 * (1.0 - sign * p[a] / h[a]))
 }
 
+#[must_use]
 pub fn encode_texel(rgb: Vec3, t: Option<f32>, range: f32) -> [u16; 4] {
     let unit = |v: f32| ((v / range.max(1e-6)).clamp(0.0, 1.0).sqrt() * 65535.0).round() as u16;
     let depth = t.map_or(0, |t| 1 + (t.clamp(0.0, 1.0) * 65534.0).round() as u16);
     [unit(rgb.x), unit(rgb.y), unit(rgb.z), depth]
 }
 
+#[must_use]
 pub fn encode_normal(n: Option<Vec3>) -> [u16; 4] {
     match n {
         Some(n) => {
@@ -54,6 +60,7 @@ pub fn encode_normal(n: Option<Vec3>) -> [u16; 4] {
     }
 }
 
+#[must_use]
 pub fn decode_normal(texel: [u16; 4]) -> [f32; 3] {
     if texel[3] == 0 {
         return [0.0; 3];
@@ -62,6 +69,7 @@ pub fn decode_normal(texel: [u16; 4]) -> [f32; 3] {
     [c(texel[0]), c(texel[1]), c(texel[2])]
 }
 
+#[must_use]
 pub fn encode_albedo(a: Option<Vec3>) -> [u16; 4] {
     match a {
         Some(a) => {
@@ -72,6 +80,7 @@ pub fn encode_albedo(a: Option<Vec3>) -> [u16; 4] {
     }
 }
 
+#[must_use]
 pub fn decode_albedo(texel: [u16; 4]) -> [f32; 3] {
     if texel[3] == 0 {
         return [0.0; 3];
@@ -79,6 +88,7 @@ pub fn decode_albedo(texel: [u16; 4]) -> [f32; 3] {
     [texel[0], texel[1], texel[2]].map(|v| f32::from(v) / 65535.0)
 }
 
+#[must_use]
 pub fn decode_texel(texel: [u16; 4], range: f32) -> [f32; 4] {
     let linear = |v: u16| {
         let c = f32::from(v) / 65535.0;
@@ -95,6 +105,7 @@ pub const GLARE_COLS: usize = 36;
 
 pub const GLARE_BULB_ROWS: usize = 180;
 
+#[must_use]
 pub fn glare_direction(row: usize, col: usize, rows: usize, cols: usize) -> Vec3 {
     let theta = (row as f32 + 0.5) / rows.max(1) as f32 * std::f32::consts::PI;
     let phi = (col as f32 + 0.5) / cols.max(1) as f32 * std::f32::consts::TAU;
@@ -132,6 +143,7 @@ pub struct GlareAir {
 
 impl GlareAir {
 
+    #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "min": self.min.to_array(),
@@ -184,6 +196,7 @@ pub struct GlareBulbRows {
 
 impl GlareTable {
 
+    #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         let flat = |v: &[Vec3]| v.iter().flat_map(glam::Vec3::to_array).collect::<Vec<f32>>();
         let mut out = serde_json::json!({
@@ -262,6 +275,7 @@ pub struct LoadedCards {
     pub glare: Option<GlareTable>,
 }
 
+#[must_use]
 pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<LoadedCards> {
     let dir = crate::reflection_probe::probe_dir(game_dir, scene_name);
     let Ok(raw) = std::fs::read_to_string(dir.join("index.json")) else { return Vec::new() };

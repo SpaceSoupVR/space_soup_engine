@@ -98,10 +98,12 @@ impl Default for RigProfileDef {
 }
 
 impl RigProfileDef {
+    #[must_use]
     pub fn dir(game_dir: &Path) -> PathBuf {
         game_dir.join("rig_profiles")
     }
 
+    #[must_use]
     pub fn path(game_dir: &Path, name: &str) -> PathBuf {
         Self::dir(game_dir).join(format!("{name}.json"))
     }
@@ -140,6 +142,7 @@ impl RigProfileDef {
         Ok(names)
     }
 
+    #[must_use]
     pub fn legacy_from_avatar_rig_json(game_dir: &Path) -> Self {
         let ik = avatar_ik::load_rig_config(&game_dir.join("avatar_rig.json"));
         Self { name: "default".into(), ik, ..Self::default() }

@@ -178,6 +178,7 @@ impl Default for ScriptHost {
 }
 
 impl ScriptHost {
+    #[must_use]
     pub fn new() -> Self {
         let context: SharedContext = Arc::new(Mutex::new(ScriptContext::default()));
         let engine = build_engine(context.clone());

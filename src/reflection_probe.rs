@@ -25,11 +25,13 @@ fn default_probe_resolution() -> u32 {
 }
 
 impl ReflectionProbeDef {
+    #[must_use]
     pub fn clamped_resolution(&self) -> u32 {
         self.resolution.clamp(4, MAX_PROBE_RESOLUTION)
     }
 }
 
+#[must_use]
 pub fn box_project(
     reflect_dir: Vec3,
     frag: Vec3,
@@ -80,6 +82,7 @@ pub fn probe_for_point<T>(point: Vec3, probes: &[(T, Vec3, Vec3)]) -> Option<&T>
         .map(|(t, _, _)| t)
 }
 
+#[must_use]
 pub fn face_direction(face: usize, u: f32, v: f32) -> Vec3 {
 
     let a = 2.0 * u - 1.0;
@@ -95,6 +98,7 @@ pub fn face_direction(face: usize, u: f32, v: f32) -> Vec3 {
     d.normalize()
 }
 
+#[must_use]
 pub fn probe_dir(game_dir: &std::path::Path, scene_name: &str) -> std::path::PathBuf {
     game_dir.join("scenes").join(format!("{scene_name}.probes"))
 }
@@ -336,6 +340,7 @@ pub struct ProbeEntry {
     pub irradiance: Option<[[f32; 3]; 9]>,
 }
 
+#[must_use]
 pub fn parse_probe_irradiance(v: &serde_json::Value) -> Option<[[f32; 3]; 9]> {
     let a = v.as_array()?;
     if a.len() != 27 {
@@ -359,6 +364,7 @@ pub struct LoadedPortal {
     pub high: String,
 }
 
+#[must_use]
 pub fn load_scene_portals(game_dir: &std::path::Path, scene_name: &str) -> Vec<LoadedPortal> {
     let dir = probe_dir(game_dir, scene_name);
     let Ok(raw) = std::fs::read_to_string(dir.join("index.json")) else { return Vec::new() };
@@ -382,6 +388,7 @@ pub fn load_scene_portals(game_dir: &std::path::Path, scene_name: &str) -> Vec<L
         .collect()
 }
 
+#[must_use]
 pub fn decode_probe(entry: &ProbeEntry) -> Option<(u32, Vec<u8>)> {
     let img = image::open(&entry.path).ok()?;
     let rgba = img.to_rgba16();
@@ -395,6 +402,7 @@ pub fn decode_probe(entry: &ProbeEntry) -> Option<(u32, Vec<u8>)> {
 
 pub const PROBE_DEPTH_ENCODING: &str = "plane16";
 
+#[must_use]
 pub fn decode_probe_depth(entry: &ProbeEntry, res: u32) -> Option<Vec<u16>> {
     let (path, far) = entry.depth.as_ref()?;
     let img = image::open(path).ok()?.to_rgba16();
@@ -419,6 +427,7 @@ pub fn decode_probe_depth(entry: &ProbeEntry, res: u32) -> Option<Vec<u16>> {
     Some(out)
 }
 
+#[must_use]
 pub fn load_scene_probes(game_dir: &std::path::Path, scene_name: &str) -> Vec<LoadedProbe> {
     load_scene_probe_index(game_dir, scene_name)
         .into_iter()
@@ -439,6 +448,7 @@ pub fn load_scene_probes(game_dir: &std::path::Path, scene_name: &str) -> Vec<Lo
         .collect()
 }
 
+#[must_use]
 pub fn load_scene_buildings(game_dir: &std::path::Path, scene_name: &str) -> Vec<ProbeEntry> {
     let dir = probe_dir(game_dir, scene_name);
     let Ok(raw) = std::fs::read_to_string(dir.join("index.json")) else { return Vec::new() };

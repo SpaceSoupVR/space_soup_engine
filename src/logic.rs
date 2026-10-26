@@ -40,6 +40,7 @@ pub struct ScoreRow {
 
 impl ScoreRow {
 
+    #[must_use]
     pub fn kd(&self) -> f32 {
         if self.deaths == 0 { self.kills as f32 } else { self.kills as f32 / self.deaths as f32 }
     }
@@ -84,6 +85,7 @@ fn default_true() -> bool {
 
 impl NpcRule {
 
+    #[must_use]
     pub fn damage(&self, weapon: &str, zone: Zone) -> Option<f32> {
         let w = self.hits.iter().find(|h| h.weapon == weapon)?;
         let shots = match zone {
@@ -135,6 +137,7 @@ fn default_swarm_spread() -> f32 {
 
 impl Swarm {
 
+    #[must_use]
     pub fn damage(&self, weapon: &str, zone: Zone) -> Option<f32> {
         NpcRule { object: String::new(), health: self.health, hits: self.hits.clone(), on_death: Vec::new() }.damage(weapon, zone)
     }
@@ -166,11 +169,13 @@ pub struct LogicDef {
     pub swarms: Vec<Swarm>,
 }
 
+#[must_use]
 pub fn logic_path(game_dir: &Path, scene: &str) -> PathBuf {
     game_dir.join("logic").join(format!("{scene}.logic.json"))
 }
 
 impl LogicDef {
+    #[must_use]
     pub fn new(scene: &str) -> Self {
         LogicDef { scene: scene.into(), ..Default::default() }
     }
@@ -180,6 +185,7 @@ impl LogicDef {
         serde_json::from_str(&text).map_err(|e| e.to_string())
     }
 
+    #[must_use]
     pub fn next_team(&self, current: &str) -> Option<&TeamDef> {
         if self.teams.is_empty() {
             return None;
@@ -188,6 +194,7 @@ impl LogicDef {
         self.teams.get(i)
     }
 
+    #[must_use]
     pub fn team_for_new_player<'a>(&'a self, counts: &HashMap<String, usize>) -> Option<&'a TeamDef> {
         self.teams.iter().min_by_key(|t| counts.get(&t.name).copied().unwrap_or(0))
     }
@@ -202,6 +209,7 @@ impl LogicDef {
         Ok(path)
     }
 
+    #[must_use]
     pub fn on_menu_action(&self, menu: &str, action: &str) -> Vec<Action> {
         self.menu_rules
             .iter()
@@ -210,6 +218,7 @@ impl LogicDef {
             .collect()
     }
 
+    #[must_use]
     pub fn npc(&self, object: &str) -> Option<&NpcRule> {
         self.npcs.iter().find(|n| n.object == object)
     }
@@ -250,6 +259,7 @@ impl NpcHealth {
         }
     }
 
+    #[must_use]
     pub fn is_dead(&self, object: &str) -> bool {
         self.left.get(object).is_some_and(|h| *h <= 0.0)
     }

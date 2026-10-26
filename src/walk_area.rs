@@ -17,6 +17,7 @@ pub struct WalkAreaDef {
     pub bumps: Vec<[f32; 4]>,
 }
 
+#[must_use]
 pub fn bump_falloff(dist: f32, radius: f32) -> f32 {
     if radius <= 1e-4 || dist >= radius {
         return 0.0;
@@ -134,6 +135,7 @@ pub fn build(
     WalkAreaMesh { floor, floor_indices, nx, nz, fence }
 }
 
+#[must_use]
 pub fn physics_triangles(mesh: &WalkAreaMesh) -> (Vec<Vec3>, Vec<u32>) {
     let mut points = mesh.floor.clone();
     let mut indices = mesh.floor_indices.clone();

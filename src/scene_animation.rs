@@ -15,6 +15,7 @@ pub enum Easing {
 
 
 impl Easing {
+    #[must_use]
     pub fn apply(self, t: f32) -> f32 {
         let t = t.clamp(0.0, 1.0);
         match self {

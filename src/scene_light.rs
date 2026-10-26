@@ -78,6 +78,7 @@ pub enum LightMode {
 
 impl LightMode {
 
+    #[must_use]
     pub fn is_live(self) -> bool {
         self != LightMode::Baked
     }
@@ -190,11 +191,13 @@ pub struct ResolvedLightPose {
 
 impl ResolvedLightPose {
 
+    #[must_use]
     pub fn direction(&self) -> glam::Vec3 {
         (self.rotation * glam::Vec3::NEG_Z).normalize_or_zero()
     }
 }
 
+#[must_use]
 pub fn resolve_light_pose(
     light: &LightDef,
     object_pos: glam::Vec3,
@@ -216,6 +219,7 @@ pub fn resolve_light_pose(
 
 pub const LAMP_RADIUS: f32 = 0.05;
 
+#[must_use]
 pub fn emissive_drive(light: &LightDef) -> f32 {
     if !light.enabled {
         return 0.0;

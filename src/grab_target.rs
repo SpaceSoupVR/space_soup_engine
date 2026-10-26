@@ -90,6 +90,7 @@ impl Offer {
     /// A box offered to a hand at `grip` aiming along `aim` (unit): its
     /// surface distance `distance` (as `distance_to_oriented_box` gives it)
     /// and the angle to its bounding sphere.
+    #[must_use]
     pub fn of_box(id: &str, kind: TakeKind, grip: Vec3, aim: Vec3, centre: Vec3, half: Vec3, distance: f32) -> Self {
         Self { id: id.to_string(), glow: id.to_string(), kind, distance, angle: angle_to_sphere(grip, aim, centre, half.length()), reach: None }
     }
@@ -98,6 +99,7 @@ impl Offer {
 /// Radians between `aim` (unit) from `from` and the nearest edge of a sphere
 /// at `centre` of `radius`: zero when the aim passes through it or `from` is
 /// inside it.
+#[must_use]
 pub fn angle_to_sphere(from: Vec3, aim: Vec3, centre: Vec3, radius: f32) -> f32 {
     let to = centre - from;
     let d = to.length();
@@ -111,6 +113,7 @@ pub fn angle_to_sphere(from: Vec3, aim: Vec3, centre: Vec3, radius: f32) -> f32 
 /// What taking `offer` costs a hand, metres (lower is better), or none if it
 /// is out of reach; `slack` 1 for a newcomer, [`KEEP_SLACK`] (with
 /// [`KEEP_DEG`] more of cone) for the thing the hand already has.
+#[must_use]
 pub fn cost(offer: &Offer, keep: bool) -> Option<f32> {
     let (slack, more) = if keep { (KEEP_SLACK, KEEP_DEG.to_radians()) } else { (1.0, 0.0) };
     let d = offer.distance.max(0.0);
@@ -188,6 +191,7 @@ impl GrabTargets {
     }
 
     /// What a hand will take, `0` left, `1` right.
+    #[must_use]
     pub fn choice(&self, hand: usize) -> Option<&Choice> {
         self.hands.get(hand)?.as_ref()
     }
@@ -238,12 +242,14 @@ impl GlowFade {
         out
     }
 
+    #[must_use]
     pub fn is_idle(&self) -> bool {
         self.lit.is_empty()
     }
 }
 
 /// A hand's aim from its aim pose's rotation: along its -z.
+#[must_use]
 pub fn aim_of(rotation: Quat) -> Vec3 {
     (rotation * Vec3::NEG_Z).normalize_or_zero()
 }

@@ -33,6 +33,7 @@ pub const FIELD_SAMPLES: u32 = 48;
 
 const FIELD_REACH_SAMPLES: f32 = 4.0;
 
+#[must_use]
 pub fn model_field(path: &Path, scale: Vec3, samples: u32) -> Option<ProxyField> {
     let (mlo, mhi) = model_bounds(path)?;
     let parts = crate::mesh_lightmap::load_mesh_parts(path)?;
@@ -132,6 +133,7 @@ fn is_drawn_geometry(o: &GameObject) -> bool {
         && (o.brush.is_some() || o.mesh.is_some())
 }
 
+#[must_use]
 pub fn model_bounds(path: &Path) -> Option<(Vec3, Vec3)> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let doc = &gltf.document;
@@ -192,6 +194,7 @@ fn room_reached(lo: Vec3, hi: Vec3, rooms: &[(Vec3, Vec3)]) -> Option<usize> {
 
 pub const DOOR_ROOM_REACH: f32 = 0.4;
 
+#[must_use]
 pub fn door_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec3)]) -> Vec<ReflectionProxy> {
     let mut out = Vec::new();
     for (index, o) in objects.iter().enumerate() {
@@ -216,6 +219,7 @@ pub fn door_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec
     out
 }
 
+#[must_use]
 pub fn reflection_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec3, Vec3)]) -> Vec<ReflectionProxy> {
     let mut out = Vec::new();
     let mut bounds_cache: HashMap<String, Option<(Vec3, Vec3)>> = HashMap::new();
@@ -264,6 +268,7 @@ pub fn reflection_proxies(game_dir: &Path, objects: &[GameObject], rooms: &[(Vec
 
 pub const MAX_SHAPED_MODELS: usize = 8;
 
+#[must_use]
 pub fn shaped_models(proxies: &[ReflectionProxy], objects: &[GameObject]) -> Vec<Option<u32>> {
     let mut keys: Vec<(String, [u32; 3])> = Vec::new();
     proxies
@@ -286,6 +291,7 @@ pub fn shaped_models(proxies: &[ReflectionProxy], objects: &[GameObject]) -> Vec
         .collect()
 }
 
+#[must_use]
 pub fn portal_wall_extent(objects: &[GameObject], min: Vec3, max: Vec3, axis: usize) -> Option<(f32, f32)> {
     const RIM: f32 = 0.05;
     let mut out: Option<(f32, f32)> = None;

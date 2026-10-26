@@ -56,10 +56,12 @@ pub struct MeshChart {
 
 impl MeshChart {
 
+    #[must_use]
     pub fn texel_local(&self, tx: f32, ty: f32) -> [f32; 3] {
         add(self.origin, add(mul(self.du, tx), mul(self.dv, ty)))
     }
 
+    #[must_use]
     pub fn uv2(&self, corner: usize, atlas_w: u32, atlas_h: u32) -> [f32; 2] {
         let c = self.corners[corner];
 
@@ -69,6 +71,7 @@ impl MeshChart {
         ]
     }
 
+    #[must_use]
     pub fn barycentric(&self, tx: u32, ty: u32) -> [f32; 3] {
         let p = [tx as f32, ty as f32];
         let [a, b, c] = self.corners;
@@ -111,6 +114,7 @@ pub struct PartRange {
 
 impl MeshLightmapLayout {
 
+    #[must_use]
     pub fn chart(&self, node: usize, primitive: usize, tri: usize) -> Option<&MeshChart> {
         let r = self
             .parts
@@ -143,6 +147,7 @@ pub struct MeshPart {
     pub authored: Option<[u32; 2]>,
 }
 
+#[must_use]
 pub fn mesh_lightmap_layout(parts: &[MeshPart], texel: f32) -> Option<MeshLightmapLayout> {
     let mut order: Vec<&MeshPart> = parts.iter().filter(|p| p.indices.len() >= 3).collect();
     order.sort_by_key(|p| (p.node, p.primitive));
@@ -270,6 +275,7 @@ struct Measured {
     corners_m: [[f32; 2]; 3],
 }
 
+#[must_use]
 pub fn pack_triangles(
     positions: &[[f32; 3]],
     indices: &[u32],
@@ -429,6 +435,7 @@ fn try_pack(measured: &[Measured], texel: f32, density_scale: f32) -> Option<Mes
     Some(MeshLightmapLayout { width, height, charts, parts: Vec::new(), density_scale })
 }
 
+#[must_use]
 pub fn load_mesh_parts(path: &std::path::Path) -> Option<Vec<MeshPart>> {
 
     let gltf = gltf::Gltf::open(path).ok()?;
@@ -468,6 +475,7 @@ fn authored_atlases(path: &std::path::Path) -> std::collections::HashMap<usize, 
     out
 }
 
+#[must_use]
 pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec3; 3]>> {
     fixture_light_geometry(path).map(|g| g.blocking)
 }
@@ -486,6 +494,7 @@ pub fn light_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec
 /// the baked cave): it carries no copy of the ground -- the terrain draws the
 /// ground round it -- and a uv past one half there is the right half of its
 /// atlas, not a mark. Read as one, half the rock let the light through.
+#[must_use]
 pub fn ground_model_blocking_triangles(path: &std::path::Path) -> Option<Vec<[glam::Vec3; 3]>> {
     let (doc, buffers, _) = gltf::import(path).ok()?;
     let authored = authored_atlases(path);
@@ -547,6 +556,7 @@ pub struct FixtureLightGeometry {
 
 const PAINTED_BULB_SHARE: f32 = 0.1;
 
+#[must_use]
 pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeometry> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let base = path.parent();
@@ -608,6 +618,7 @@ fn material_passes_light(json: &serde_json::Value, material: Option<usize>) -> (
     (transmissive || glows_whole, glows_whole)
 }
 
+#[must_use]
 pub fn model_albedo(path: &std::path::Path) -> Option<glam::Vec3> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let buffers = gltf::import_buffers(&gltf.document, path.parent(), gltf.blob.clone()).ok()?;
@@ -674,6 +685,7 @@ pub struct GlowMap {
 
 impl GlowMap {
 
+    #[must_use]
     pub fn at(&self, triangle: usize, u: f32, v: f32) -> glam::Vec3 {
         let Some(t) = self.uvs.get(triangle) else { return glam::Vec3::ZERO };
         if self.width == 0 || self.height == 0 {
@@ -685,6 +697,7 @@ impl GlowMap {
         self.sample([s, r])
     }
 
+    #[must_use]
     pub fn sample(&self, uv: [f32; 2]) -> glam::Vec3 {
         if self.width == 0 || self.height == 0 {
             return glam::Vec3::ZERO;
@@ -704,6 +717,7 @@ impl GlowMap {
     }
 }
 
+#[must_use]
 pub fn model_albedo_parts(path: &std::path::Path) -> Option<Vec<AlbedoPart>> {
     let gltf = gltf::Gltf::open(path).ok()?;
     let buffers = gltf::import_buffers(&gltf.document, path.parent(), gltf.blob.clone()).ok()?;
@@ -869,6 +883,7 @@ fn gltf_json_bytes(path: &std::path::Path) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+#[must_use]
 pub fn mesh_parts(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Option<Vec<MeshPart>> {
     if doc.skins().len() > 0 || doc.animations().len() > 0 {
         return None;
@@ -972,6 +987,7 @@ fn transform_vector(m: [[f32; 4]; 4], p: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+#[must_use]
 pub fn corner_uv2(layout: &MeshLightmapLayout) -> Vec<((usize, usize), Vec<[f32; 2]>)> {
     layout
         .parts
@@ -989,6 +1005,7 @@ pub fn corner_uv2(layout: &MeshLightmapLayout) -> Vec<((usize, usize), Vec<[f32;
         .collect()
 }
 
+#[must_use]
 pub fn lightmap_uv_for_asset(
     path: &std::path::Path,
 ) -> Option<Vec<((usize, usize), Vec<[f32; 2]>)>> {

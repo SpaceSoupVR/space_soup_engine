@@ -39,6 +39,7 @@ pub(crate) const DEFAULT_DENSITY: f32 = 500.0;
 
 /// The mass physics gives a box of `half_size` with none authored: what a
 /// client that is told only a body's size takes it to weigh.
+#[must_use]
 pub fn default_mass(half_size: Vec3) -> f32 {
     calculated_mass(half_size, DEFAULT_DENSITY)
 }
@@ -153,6 +154,7 @@ impl TerrainCollider {
     /// mesh; anything else, or nothing, the height field. What
     /// [`PhysicsWorld::new`] starts with; `set_terrain_collider` overrides it
     /// for one world.
+    #[must_use]
     pub fn from_env() -> Self {
         match std::env::var("SS_TERRAIN_COLLIDER").as_deref() {
             Ok("mesh" | "trimesh" | "triangle_mesh") => Self::TriangleMesh,
@@ -367,6 +369,7 @@ pub(crate) fn create_hand_anchor(
 }
 
 impl PhysicsWorld {
+    #[must_use]
     pub fn new() -> Self {
         let mut foundation: PxFoundation = PhysicsFoundation::default();
         let scene = new_px_scene(&mut foundation);
@@ -408,6 +411,7 @@ impl PhysicsWorld {
         self.terrain_collider = kind;
     }
 
+    #[must_use]
     pub fn terrain_collider(&self) -> TerrainCollider {
         self.terrain_collider
     }
@@ -425,6 +429,7 @@ impl PhysicsWorld {
     /// The height under which a dynamic body is taken to have fallen out of
     /// the level and is put back where it started: under the level's own
     /// floor, wherever that is (`level_floor`).
+    #[must_use]
     pub fn kill_height(&self) -> f32 {
         self.kill_y
     }
@@ -455,6 +460,7 @@ impl PhysicsWorld {
     /// nothing solid stops it first, and the water's depth there. What a
     /// firearm asks before it raises a bullet's splash
     /// (`effects::Splash::projectile`).
+    #[must_use]
     pub fn water_hit(&self, origin: Vec3, dir: Vec3, max_distance: f32) -> Option<(Vec3, f32)> {
         let dir = dir.try_normalize()?;
         if dir.y >= -1e-5 {

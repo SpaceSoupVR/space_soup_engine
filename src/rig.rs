@@ -64,10 +64,12 @@ impl FingerJoint {
         FingerJoint::LittleTip,
     ];
 
+    #[must_use]
     pub fn from_index(i: usize) -> Option<FingerJoint> {
         Self::ALL.get(i).copied()
     }
 
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             FingerJoint::Palm => "palm",
@@ -99,6 +101,7 @@ impl FingerJoint {
         }
     }
 
+    #[must_use]
     pub fn from_name(s: &str) -> Option<FingerJoint> {
         Self::ALL.iter().copied().find(|j| j.name() == s)
     }
@@ -113,6 +116,7 @@ pub enum JointId {
 }
 
 impl JointId {
+    #[must_use]
     pub fn from_name(s: &str) -> Option<JointId> {
         match s {
             "head" => return Some(JointId::Head),
@@ -149,10 +153,12 @@ impl Default for Transform {
 }
 
 impl Transform {
+    #[must_use]
     pub fn new(position: Vec3, rotation: Quat) -> Self {
         Self { position, rotation }
     }
 
+    #[must_use]
     pub fn apply_offset(&self, offset_pos: Vec3, offset_rot: Quat) -> Transform {
         Transform {
             position: self.position + self.rotation * offset_pos,
@@ -193,6 +199,7 @@ pub struct PlayerRig {
 }
 
 impl PlayerRig {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -206,6 +213,7 @@ impl PlayerRig {
     /// (4-8 cm at 36 frames a second): ahead of the eyes walking BACKWARD,
     /// so looking down showed more of the body than stands under them
     /// (headset, 2026-10-14).
+    #[must_use]
     pub fn carried(&self, from: (Vec3, f32), to: (Vec3, f32)) -> PlayerRig {
         let turn = Quat::from_rotation_y(to.1) * Quat::from_rotation_y(from.1).inverse();
         let mut out = self.clone();
@@ -216,22 +224,27 @@ impl PlayerRig {
         out
     }
 
+    #[must_use]
     pub fn get(&self, id: JointId) -> Option<Transform> {
         self.joints.get(&id).copied()
     }
 
+    #[must_use]
     pub fn head(&self) -> Transform {
         self.get(JointId::Head).unwrap_or_default()
     }
 
+    #[must_use]
     pub fn hand_grip(&self, hand: Hand) -> Transform {
         self.get(JointId::HandGrip(hand)).unwrap_or_default()
     }
 
+    #[must_use]
     pub fn hand_aim(&self, hand: Hand) -> Transform {
         self.get(JointId::HandAim(hand)).unwrap_or_default()
     }
 
+    #[must_use]
     pub fn finger(&self, hand: Hand, joint: FingerJoint) -> Transform {
         self.get(JointId::Finger(hand, joint)).unwrap_or_default()
     }

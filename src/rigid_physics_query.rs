@@ -55,10 +55,12 @@ fn actor_is_fixed(actor: *const physx_sys::PxRigidActor) -> bool {
 }
 
 impl PhysicsWorld {
+    #[must_use]
     pub fn raycast_down(&self, origin: Vec3, max_distance: f32) -> Option<(Vec3, Vec3)> {
         self.raycast(origin, Vec3::NEG_Y, max_distance)
     }
 
+    #[must_use]
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_distance: f32) -> Option<(Vec3, Vec3)> {
         let origin_px = physx_sys::PxVec3 {
             x: origin.x,
@@ -101,6 +103,7 @@ impl PhysicsWorld {
     /// a hand travels 8 cm a frame, more than a few-centimetre band is deep, so sampling only
     /// where the hand IS lets it pass through a floor between two frames. Sweeping from where it
     /// was cannot miss a surface it crossed.
+    #[must_use]
     pub fn sphere_sweep(&self, origin: Vec3, radius: f32, dir: Vec3, max_distance: f32) -> Option<SweepHit> {
         if radius <= 0.0 || max_distance <= 0.0 {
             return None;
@@ -149,6 +152,7 @@ impl PhysicsWorld {
     /// and no normal to read, because there is no single way out. `fixed` is true for world
     /// geometry (static actors) and false for anything that moves: a hand must not push off a
     /// prop it could carry.
+    #[must_use]
     pub fn sphere_contacts(&self, center: Vec3, radius: f32) -> Vec<SurfaceContact> {
         const MAX_HITS: usize = 32;
         if radius <= 0.0 {
@@ -236,10 +240,12 @@ impl PhysicsWorld {
         true
     }
 
+    #[must_use]
     pub fn has_collider(&self, id: &str) -> bool {
         self.statics.contains_key(id) || self.dynamic.contains_key(id)
     }
 
+    #[must_use]
     pub fn has_static(&self, id: &str) -> bool {
         self.statics.contains_key(id)
     }

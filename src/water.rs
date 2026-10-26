@@ -75,16 +75,19 @@ fn is_one(v: &f32) -> bool { *v == 1.0 }
 
 impl WaterDef {
 
+    #[must_use]
     pub fn extent(&self) -> (f32, f32, f32, f32) {
         let [a, b, c, d] = self.bounds;
         (a.min(c), b.min(d), a.max(c), b.max(d))
     }
 
+    #[must_use]
     pub fn contains(&self, x: f32, z: f32) -> bool {
         let (x0, z0, x1, z1) = self.extent();
         x >= x0 && x <= x1 && z >= z0 && z <= z1
     }
 
+    #[must_use]
     pub fn depth_over(&self, ground_y: f32) -> f32 {
         (self.height - ground_y).max(0.0)
     }
@@ -260,15 +263,18 @@ impl WaterFootprint {
     }
 
     /// The still surface's height, where this water stands at all.
+    #[must_use]
     pub fn surface_height(&self) -> Option<f32> {
         (self.wet.iter().any(|&w| w) || self.skirt > 0.0).then_some(self.height)
     }
 
     /// The deepest of this water a walk goes into, metres.
+    #[must_use]
     pub fn wade_depth(&self) -> f32 {
         self.wade
     }
 
+    #[must_use]
     pub fn surface_at(&self, x: f32, z: f32) -> Option<f32> {
         let (x0, z0, x1, z1) = self.extent;
         if x < x0 || z < z0 || x > x1 || z > z1 {
@@ -327,6 +333,7 @@ impl WaterEntry {
     /// speed squared. What a splash is as big as, what a going-in again is
     /// measured against ([`WaterState`]) and what decides which entries are
     /// told of when there are too many ([`keep_most_energetic`]).
+    #[must_use]
     pub fn energy(&self) -> f32 {
         0.5 * self.mass.max(0.0) * self.velocity.length_squared()
     }
@@ -365,6 +372,7 @@ pub struct WaterState {
 
 impl WaterState {
     /// Whether it was in the water when last seen.
+    #[must_use]
     pub fn is_in(&self) -> bool {
         self.is_in
     }
@@ -472,6 +480,7 @@ impl WaterWatch {
 
 /// The half extents, along the world's axes, of the box round a box of
 /// `half_size` turned by `rotation`.
+#[must_use]
 pub fn world_half_extents(half_size: glam::Vec3, rotation: glam::Quat) -> glam::Vec3 {
     let m = glam::Mat3::from_quat(rotation);
     let h = half_size.abs();

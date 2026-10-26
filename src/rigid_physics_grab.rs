@@ -386,6 +386,7 @@ impl PhysicsWorld {
 
     /// Whether this object is a dynamic body that is not a door: what a free
     /// grab can take.
+    #[must_use]
     pub fn is_dynamic(&self, object_id: &str) -> bool {
         self.dynamic.contains_key(object_id) && !self.doors.contains_key(object_id)
     }
@@ -407,6 +408,7 @@ impl PhysicsWorld {
     }
 
     /// Whether any hand holds this body by a physics grab.
+    #[must_use]
     pub fn is_held(&self, object_id: &str) -> bool {
         self.grabs.keys().any(|(_, id, _)| id == object_id)
     }
@@ -467,6 +469,7 @@ impl PhysicsWorld {
         }
     }
 
+    #[must_use]
     pub fn held_by(&self, player: PlayerId, hand: Hand) -> Option<(&str, &str)> {
         self.grabs
             .iter()

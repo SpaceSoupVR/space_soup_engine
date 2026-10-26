@@ -71,7 +71,6 @@ fn stand_at(rt: &mut GameRuntime, at: Vec3) {
 fn var(rt: &GameRuntime, name: &str) -> Option<String> {
     rt.script_host
         .var_string(name)
-        .map(|s| s.clone())
 }
 
 fn door_blocks(rt: &GameRuntime) -> bool {

@@ -62,6 +62,7 @@ fn cone_attenuation(forward: Vec3, to_listener: Vec3, cone_angle_deg: f32) -> f3
 }
 
 impl SoundEngine {
+    #[must_use]
     pub fn new() -> Self {
         let mut manager =
             match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()) {

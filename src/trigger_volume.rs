@@ -66,6 +66,7 @@ pub enum VolumeShape {
 
 impl VolumeShape {
 
+    #[must_use]
     pub fn of(object: &GameObject) -> Self {
         if let Some(def) = &object.brush {
             let solids = def.evaluate();
@@ -80,6 +81,7 @@ impl VolumeShape {
         }
     }
 
+    #[must_use]
     pub fn contains(&self, p: Vec3) -> bool {
         match self {
             Self::Obb {

@@ -2,10 +2,12 @@ use std::path::{Path, PathBuf};
 
 use crate::lightmaps::{decode_png_rgba, LightmapEncoding, LightmapEntry, LightmapIndex, LightmapTarget, LIGHTMAP_FORMAT_VERSION};
 
+#[must_use]
 pub fn daylight_dir(game_dir: &Path, scene_name: &str) -> PathBuf {
     game_dir.join("scenes").join(format!("{scene_name}.daylight"))
 }
 
+#[must_use]
 pub fn daylight_probe_dir(game_dir: &Path, scene_name: &str) -> PathBuf {
     crate::reflection_probe::probe_dir(&daylight_dir(game_dir, scene_name), scene_name)
 }
@@ -39,6 +41,7 @@ pub fn write_brush_layers(game_dir: &Path, scene_name: &str, images: &[(String, 
     Ok(dir)
 }
 
+#[must_use]
 pub fn load_brush_layers(game_dir: &Path, scene_name: &str) -> Option<BrushLayers> {
     let dir = daylight_dir(game_dir, scene_name);
     let index: LightmapIndex = serde_json::from_str(&std::fs::read_to_string(dir.join("index.json")).ok()?).ok()?;

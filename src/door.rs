@@ -111,6 +111,7 @@ impl Default for DoorDef {
 
 impl DoorDef {
 
+    #[must_use]
     pub fn range(&self) -> (f32, f32) {
         let (a, b) = (self.open_min_deg, self.open_max_deg);
         let (lo, hi) = (a.min(b).to_radians(), a.max(b).to_radians());
@@ -154,6 +155,7 @@ pub const STOP_CREEP: f32 = 0.25;
 
 /// `spin` (rad/s, positive toward `hi`) of a leaf at `angle` between its
 /// stops, held within the soft stops' envelope. See [`STOP_RATE`].
+#[must_use]
 pub fn soft_stop(angle: f32, spin: f32, lo: f32, hi: f32) -> f32 {
     if spin > 0.0 {
         spin.min((hi - angle).max(0.0) * STOP_RATE + STOP_CREEP)
@@ -179,6 +181,7 @@ pub struct DoorLatch {
 }
 
 impl DoorLatch {
+    #[must_use]
     pub fn of(def: &DoorDef) -> Option<Self> {
         let h = def.handle?;
         Some(Self { handle: Vec3::new(h[0], h[1], 0.0), bolts: def.latch })
@@ -188,6 +191,7 @@ impl DoorLatch {
     /// centre and rotation are `pose`, of half thickness `half_z`: zero
     /// anywhere along the handle's spindle through the leaf and out to where
     /// a hand holds it on either face.
+    #[must_use]
     pub fn distance(&self, pose: (Vec3, Quat), half_z: f32, hand: Vec3) -> f32 {
         let local = pose.1.inverse() * (hand - pose.0);
         let beyond = (local.z.abs() - (half_z + HANDLE_STANDOFF)).max(0.0);
@@ -201,6 +205,7 @@ impl DoorLatch {
 
     /// Where a hand holds the handle, in the leaf's frame: on the face the
     /// hand at `hand` (world) is on.
+    #[must_use]
     pub fn hold_point(&self, pose: (Vec3, Quat), half_z: f32, hand: Vec3) -> Vec3 {
         let local = pose.1.inverse() * (hand - pose.0);
         let side = if local.z >= 0.0 { 1.0 } else { -1.0 };
@@ -209,6 +214,7 @@ impl DoorLatch {
 
     /// THE BOLT, a step on: `bolted` as it was; the leaf `angle` from closed
     /// and turning at `spin`; `worked` whether a hand is at the handle.
+    #[must_use]
     pub fn bolt(&self, bolted: bool, angle: f32, spin: f32, worked: bool) -> bool {
         if !self.bolts || worked {
             return false;
@@ -220,6 +226,7 @@ impl DoorLatch {
 /// The force a hand holding a door's handle pulls it with, newtons, toward
 /// the hand: `offset` from the handle's hold point to the hand, `closing` the
 /// handle's own velocity (both world). See [`DOOR_PULL_STIFFNESS`].
+#[must_use]
 pub fn door_pull_force(offset: Vec3, closing: Vec3) -> Vec3 {
     (offset * DOOR_PULL_STIFFNESS - closing * DOOR_PULL_DAMPING).clamp_length_max(DOOR_PULL_MAX)
 }
@@ -245,6 +252,7 @@ pub struct DoorGeom {
 }
 
 impl DoorGeom {
+    #[must_use]
     pub fn new(closed_pos: Vec3, closed_rot: Quat, half: Vec3, def: &DoorDef) -> Self {
         let x = match def.hinge {
             HingeSide::Left => -half.x + def.pin_inset,
@@ -254,30 +262,36 @@ impl DoorGeom {
         Self { closed_pos, closed_rot, half, hinge_local: Vec3::new(x, 0.0, def.pin_offset), lo, hi }
     }
 
+    #[must_use]
     pub fn of(obj: &crate::scene::GameObject) -> Option<Self> {
         let def = obj.door.as_ref()?;
         Some(Self::new(obj.cuboid.position, obj.cuboid.rotation, obj.cuboid.half_size, def))
     }
 
+    #[must_use]
     pub fn hinge(&self) -> Vec3 {
         self.closed_pos + self.closed_rot * self.hinge_local
     }
 
+    #[must_use]
     pub fn axis(&self) -> Vec3 {
         self.closed_rot * Vec3::Y
     }
 
+    #[must_use]
     pub fn pose_at(&self, angle: f32) -> (Vec3, Quat) {
         let rot = self.closed_rot * Quat::from_rotation_y(angle);
         (self.hinge() - rot * self.hinge_local, rot)
     }
 
+    #[must_use]
     pub fn angle_of(&self, rot: Quat) -> f32 {
         let q = self.closed_rot.inverse() * rot;
         let q = if q.w < 0.0 { -q } else { q };
         2.0 * q.y.atan2(q.w)
     }
 
+    #[must_use]
     pub fn corners_at(&self, angle: f32) -> [Vec3; 8] {
         let (c, r) = self.pose_at(angle);
         let h = self.half;
@@ -294,19 +308,23 @@ impl DoorGeom {
     /// Whether this leaf is bolted where it hangs: a range of nothing (the
     /// inactive leaf of a pair, held by its flush bolts). It is a wall that
     /// looks like a door, and the physics makes it one (`spawn_door`).
+    #[must_use]
     pub fn fixed(&self) -> bool {
         self.hi - self.lo < 1e-4
     }
 
     /// Whether a leaf at `angle` seals its doorway (`SHUT_DEG`).
+    #[must_use]
     pub fn shut(angle: f32) -> bool {
         angle.abs() < SHUT_DEG.to_radians()
     }
 
+    #[must_use]
     pub fn open_fraction(angle: f32) -> f32 {
         (angle.abs() / std::f32::consts::FRAC_PI_2).clamp(0.0, 1.0)
     }
 
+    #[must_use]
     pub fn hinge_inertia(&self, mass: f32) -> f32 {
         let (w, t) = (2.0 * self.half.x, 2.0 * self.half.z);
         mass * (w * w + t * t) / 3.0
@@ -316,6 +334,7 @@ impl DoorGeom {
         Quat::from_rotation_y(angle) * (-self.hinge_local).normalize_or_zero()
     }
 
+    #[must_use]
     pub fn clear_spheres(&self, angle: f32, spheres: &[(Vec3, f32)]) -> f32 {
         let along = Vec3::new(-self.hinge_local.x, 0.0, 0.0);
         let width = self.half.x + along.x.abs();
@@ -349,6 +368,7 @@ impl DoorGeom {
         a
     }
 
+    #[must_use]
     pub fn body_contact(&self, angle: f32, body: Vec3, y_range: (f32, f32), radius: f32) -> Option<(Vec3, Vec3, f32)> {
         let (centre, rot) = self.pose_at(angle);
         let (lo, hi) = (centre.y - self.half.y, centre.y + self.half.y);
@@ -398,6 +418,7 @@ pub const BODY_PUSH_RADIUS: f32 = 0.32;
 
 pub const BODY_PUSH_SPAN: (f32, f32) = (1.3, 0.25);
 
+#[must_use]
 pub fn body_push_force(depth: f32, closing: f32) -> f32 {
     (BODY_PUSH_STIFFNESS * depth + BODY_PUSH_DAMPING * closing).clamp(0.0, BODY_PUSH_MAX)
 }
@@ -416,6 +437,7 @@ pub struct HingeLoad {
 }
 
 impl HingeLoad {
+    #[must_use]
     pub fn of(geom: &DoorGeom, def: &DoorDef) -> Self {
         Self { inertia: geom.hinge_inertia(def.mass.max(0.5)).max(1e-3), closer: def.closer.max(0.0), friction: def.friction.max(0.0) }
     }
@@ -432,6 +454,7 @@ impl DoorGeom {
     /// along that path through the step, so the leaf is turned just clear of
     /// each (`clear_spheres`) and takes the hand's own speed -- slowed by the
     /// hinge's friction, drawn home by its closer, and held by its stops.
+    #[must_use]
     pub fn step_hinge(&self, s: HingeState, load: &HingeLoad, heads: &[Vec3], hands: &[(Vec3, Vec3, f32)], dt: f32) -> HingeState {
         self.step_hinge_held(s, load, heads, hands, &[], dt)
     }
@@ -442,6 +465,7 @@ impl DoorGeom {
     /// drawn to the hand by the spring the server's physics uses
     /// (`door_pull_force`, `PhysicsWorld::grab_door`), so the leaf the
     /// headset draws under a hand swings as the server's will.
+    #[must_use]
     pub fn step_hinge_held(
         &self,
         mut s: HingeState,

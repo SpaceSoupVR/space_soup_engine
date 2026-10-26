@@ -42,6 +42,7 @@ pub const DEFAULT_TEXTURE_DIR: &str = "textures/terrain";
 
 impl TerrainDef {
 
+    #[must_use]
     pub fn texture_dir(&self, game_dir: &std::path::Path) -> std::path::PathBuf {
         game_dir.join(self.textures.as_deref().unwrap_or(DEFAULT_TEXTURE_DIR))
     }
@@ -454,6 +455,7 @@ impl SplatMap {
         Ok(Self { weights, resolution })
     }
 
+    #[must_use]
     pub fn solid(resolution: [u32; 2], layer: usize) -> Self {
         let count = resolution[0] as usize * resolution[1] as usize;
         let mut weights = vec![0u8; count * SPLAT_LAYERS];
@@ -463,14 +465,17 @@ impl SplatMap {
         Self { weights, resolution }
     }
 
+    #[must_use]
     pub fn resolution(&self) -> [u32; 2] {
         self.resolution
     }
 
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.weights
     }
 
+    #[must_use]
     pub fn at_index(&self, ix: u32, iz: u32) -> [u8; SPLAT_LAYERS] {
         let ix = ix.min(self.resolution[0] - 1) as usize;
         let iz = iz.min(self.resolution[1] - 1) as usize;
@@ -480,6 +485,7 @@ impl SplatMap {
         out
     }
 
+    #[must_use]
     pub fn sample_uv(&self, u: f32, v: f32) -> [u8; SPLAT_LAYERS] {
         let fx = (u.clamp(0.0, 1.0) * (self.resolution[0] - 1) as f32).round();
         let fz = (v.clamp(0.0, 1.0) * (self.resolution[1] - 1) as f32).round();
@@ -568,6 +574,7 @@ impl SplatMap {
     /// The layer with the most weight at a normalised position, and its weight.
     ///
     /// The query gameplay actually wants: "what am I standing on".
+    #[must_use]
     pub fn dominant_uv(&self, u: f32, v: f32) -> (usize, u8) {
         let w = self.sample_uv(u, v);
         let mut best = 0usize;
@@ -1046,23 +1053,28 @@ impl HoleMask {
         Self::new(bytes.iter().map(|b| *b != 0).collect(), resolution)
     }
 
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.open.iter().map(|o| u8::from(*o)).collect()
     }
 
+    #[must_use]
     pub fn solid(resolution: [u32; 2]) -> Self {
         let count = resolution[0] as usize * resolution[1] as usize;
         Self { open: vec![false; count], resolution }
     }
 
+    #[must_use]
     pub fn resolution(&self) -> [u32; 2] {
         self.resolution
     }
 
+    #[must_use]
     pub fn any_open(&self) -> bool {
         self.open.iter().any(|o| *o)
     }
 
+    #[must_use]
     pub fn is_open_uv(&self, u: f32, v: f32) -> bool {
         let ix = (u.clamp(0.0, 1.0) * self.resolution[0] as f32).floor() as u32;
         let iz = (v.clamp(0.0, 1.0) * self.resolution[1] as f32).floor() as u32;
@@ -1089,6 +1101,7 @@ pub struct HoleDef {
 }
 
 /// Where a scene's terrain patch lives, given its hole mask's path: beside it.
+#[must_use]
 pub fn ground_patch_path(holes_path: &str) -> std::path::PathBuf {
     std::path::Path::new(holes_path).with_extension("patch")
 }
@@ -1190,22 +1203,26 @@ fn iz_at(zs: &[u32], row: u32) -> u32 {
 
 impl Heightfield {
 
+    #[must_use]
     pub fn with_holes(mut self, holes: Option<HoleMask>) -> Self {
         self.holes = holes;
         self
     }
 
+    #[must_use]
     pub fn holes(&self) -> Option<&HoleMask> {
         self.holes.as_ref()
     }
 
     /// Attach the ground a cave put back in its holes. Consumed by `patch`, so
     /// it is drawn and collided with together.
+    #[must_use]
     pub fn with_ground_patch(mut self, patch: Option<GroundPatch>) -> Self {
         self.ground_patch = patch.filter(|p| !p.indices.is_empty());
         self
     }
 
+    #[must_use]
     pub fn ground_patch(&self) -> Option<&GroundPatch> {
         self.ground_patch.as_ref()
     }
@@ -1225,33 +1242,39 @@ impl Heightfield {
     }
 
     /// Samples along x and z.
+    #[must_use]
     pub fn resolution(&self) -> [u32; 2] {
         self.resolution
     }
 
     /// Metres covered along x and z.
+    #[must_use]
     pub fn size(&self) -> [f32; 2] {
         self.size
     }
 
     /// The heights the lowest and the highest sample value stand for, above
     /// `origin().y`.
+    #[must_use]
     pub fn height_range(&self) -> [f32; 2] {
         self.height_range
     }
 
     /// The world position of sample (0, 0) at height 0.
+    #[must_use]
     pub fn origin(&self) -> Vec3 {
         self.origin
     }
 
     /// Metres between samples along x and z.
+    #[must_use]
     pub fn cell_size(&self) -> [f32; 2] {
         let (dx, dz) = self.step_metres();
         [dx, dz]
     }
 
     /// The samples as stored: row-major, x fastest, `resolution()[0]` a row.
+    #[must_use]
     pub fn raw_samples(&self) -> &[u16] {
         &self.samples
     }
@@ -1279,6 +1302,7 @@ impl Heightfield {
     /// and the last row or column is left out. Physics' height field leaves
     /// out the same cells, so it is the ground that is drawn (and that was
     /// cooked) to the last cell rather than nearly.
+    #[must_use]
     pub fn meshed_cells(&self) -> [u32; 2] {
         let (_, x1, _, z1) = self.sample_span(self.bounds());
         [x1, z1]
@@ -1299,6 +1323,7 @@ impl Heightfield {
     /// sample -- has no ground: exactly the cells `patch(_, 1)` leaves out,
     /// by the mesher's own test. For physics' height field, whose holes have
     /// to be the drawn ones.
+    #[must_use]
     pub fn cell_is_open(&self, ix: u32, iz: u32) -> bool {
         self.quad_is_open(ix, ix + 1, iz, iz + 1)
     }
@@ -1307,6 +1332,7 @@ impl Heightfield {
     /// its own sample (and runs to sample `ix + 1, iz + 1`), rather than the
     /// one between the other two corners: exactly the split `patch(_, 1)`
     /// draws there, by the mesher's own rule.
+    #[must_use]
     pub fn cell_splits_through_first_sample(&self, ix: u32, iz: u32) -> bool {
         !splits_b_to_c(self.sample(ix, iz), self.sample(ix + 1, iz), self.sample(ix, iz + 1), self.sample(ix + 1, iz + 1))
     }
@@ -1316,6 +1342,7 @@ impl Heightfield {
     /// Public because gameplay needs it for the same reason the mesher does: a
     /// spawn point, a foot placement or a grenade bounce resolved against ground
     /// that is not there would drop an actor into a cave ceiling.
+    #[must_use]
     pub fn is_hole_at(&self, x: f32, z: f32) -> bool {
         let Some(mask) = &self.holes else { return false };
         let u = (x - self.origin.x) / self.size[0].max(1e-6);
