@@ -245,7 +245,7 @@ impl PhysicsWorld {
             let half = crate::water::world_half_extents(state.half, rot);
             let surface = self.water.iter().filter_map(|w| w.surface_at(pos.x, pos.z)).reduce(f32::max);
             if let Some(mut e) = state.water.see(Some(now), pos, half, Vec3::new(v.x(), v.y(), v.z()), mass, surface) {
-                e.id = id.clone();
+                e.id.clone_from(id);
                 entries.push(e);
             }
             stats.in_water += usize::from(state.water.is_in());

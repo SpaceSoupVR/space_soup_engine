@@ -1,0 +1,80 @@
+# SSNebula configuration for space_soup_engine.
+#
+# This crate is geometry, physics (PhysX FFI) and a public scripting/scene API
+# that other repos depend on. The lints turned off below are structural ones whose
+# fixes would rename or move public items, or rewrite math written in the usual
+# single-letter notation. They are exemptions, not findings that were fixed.
+
+[lints]
+# Free functions are the shape of the math/FFI helper modules and of the public API.
+floating_function = "allow"
+# Raw PhysX calls: each unsafe block wraps one physx_sys call on a handle the caller owns.
+unsafe_without_safety = "allow"
+# Remaining unwrap/expect guard invariants established a few lines earlier.
+unwrap_used = "allow"
+# Public layout: GameObject, AgentClass, setters on a shared &self handle, as_str on a Copy enum.
+type_suffix = "allow"
+setter_receiver = "allow"
+conversion_receiver = "allow"
+split_impl = "allow"
+# `use physx::prelude::*` is how physx is meant to be used.
+wildcard_import = "allow"
+# Load diagnostics for baked scene data go to stderr by design.
+print_in_library = "allow"
+# Integration tests share `tests/common/mod.rs`, the cargo convention.
+vague_module = "allow"
+over_documented = "allow"
+long_function = "allow"
+deep_nesting = "allow"
+too_many_parameters = "allow"
+wide_type = "allow"
+long_file = "allow"
+comment_essay = "allow"
+
+# Remaining vague names are public fields/functions other repos use (`object`, `var`, `result`,
+# `fnv1a64`, `mesh_fnv1a64`, `data`) and numbered math locals (`lerp_point2`/`lerp_point3`); no
+# per-item exemption exists, and renaming the public ones would break dependents.
+vague_name = "allow"
+
+[names]
+# Geometry and linear algebra notation: points, planes, vectors, colours, edges.
+short_allowed = ["x", "y", "z", "w", "i", "j", "k", "n", "t", "u", "v", "a", "b", "c", "d", "e", "f", "g", "h", "l", "m", "o", "p", "q", "r", "s"]
+
+[clippy]
+allow = [
+    # Serde `skip_serializing_if` predicates must take `&T`.
+    "clippy::trivially_copy_pass_by_ref",
+    # Test fixtures and hash constants (FNV primes, seeds, checksums) read better as one literal.
+    "clippy::unreadable_literal",
+    "clippy::approx_constant",
+    # Local consts/fns sit next to their only use.
+    "clippy::items_after_statements",
+    "clippy::type_complexity",
+    # `..Default::default()` keeps struct literals stable when upstream adds fields.
+    "clippy::needless_update",
+    "clippy::field_reassign_with_default",
+    # Net-rule and input structs are public wire/config types with one flag per field.
+    "clippy::struct_excessive_bools",
+    "clippy::struct_field_names",
+    "clippy::needless_range_loop",
+    "clippy::format_push_string",
+    "clippy::naive_bytecount",
+    "clippy::unused_self",
+    "clippy::needless_pass_by_value",
+    "clippy::unnecessary_wraps",
+    "clippy::assertions_on_constants",
+    "clippy::module_name_repetitions",
+    "clippy::must_use_candidate",
+    "clippy::missing_errors_doc",
+    "clippy::missing_panics_doc",
+    "clippy::too_many_lines",
+    "clippy::too_many_arguments",
+    "clippy::wildcard_imports",
+    "clippy::cast_precision_loss",
+    "clippy::cast_possible_truncation",
+    "clippy::cast_sign_loss",
+    "clippy::cast_possible_wrap",
+    "clippy::many_single_char_names",
+    "clippy::similar_names",
+    "clippy::float_cmp",
+]

@@ -340,7 +340,7 @@ fn scatter_follows_a_real_heightfield() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "emits the jitter reference table; run on demand"]
 fn emit_jitter_reference() {
     let layer = jitter_reference_layer();
     println!("[");

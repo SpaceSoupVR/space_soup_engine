@@ -862,7 +862,7 @@ mod splat_tests {
         /// The numbers behind the three tests, for a write-up:
         /// `cargo test steep_shapes::census -- --ignored --nocapture`.
         #[test]
-        #[ignore]
+        #[ignore = "prints a census of the terrain fixtures; run on demand"]
         fn census() {
             for shape in ALL {
                 for drawn in [false, true] {

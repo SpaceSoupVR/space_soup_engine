@@ -68,7 +68,7 @@ impl RoomGraph {
     }
 
     pub fn neighbours(&self, room: usize) -> &[usize] {
-        self.neighbours.get(room).map(std::vec::Vec::as_slice).unwrap_or(&[])
+        self.neighbours.get(room).map_or(&[][..], std::vec::Vec::as_slice)
     }
 
     #[must_use]
@@ -326,7 +326,7 @@ pub fn rooms_from_scene(
     }
 
     let mut parent: Vec<usize> = (0..rooms.len()).collect();
-    fn find(parent: &mut Vec<usize>, mut i: usize) -> usize {
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
         while parent[i] != i {
             parent[i] = parent[parent[i]];
             i = parent[i];

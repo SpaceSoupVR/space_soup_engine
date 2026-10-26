@@ -27,7 +27,7 @@ fn main() {
     };
     if let Some(i) = args.iter().position(|a| a == "--textures") {
         if let Some(path) = args.get(i + 1) {
-            opts.texture_root = path.clone();
+            opts.texture_root.clone_from(path);
         }
     }
 

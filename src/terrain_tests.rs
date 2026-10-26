@@ -16,10 +16,6 @@ fn ramp() -> Heightfield {
     Heightfield::new(samples, [3, 3], [20.0, 20.0], [0.0, 10.0], Vec3::ZERO).unwrap()
 }
 
-fn flat_at(height: u16) -> Heightfield {
-    Heightfield::new(vec![height; 4], [2, 2], [10.0, 10.0], [0.0, 100.0], Vec3::ZERO).unwrap()
-}
-
 #[test]
 fn rejects_a_sample_count_that_does_not_match_the_resolution() {
 

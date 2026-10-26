@@ -330,10 +330,6 @@ impl DoorGeom {
         mass * (w * w + t * t) / 3.0
     }
 
-    fn along(&self, angle: f32) -> Vec3 {
-        Quat::from_rotation_y(angle) * (-self.hinge_local).normalize_or_zero()
-    }
-
     #[must_use]
     pub fn clear_spheres(&self, angle: f32, spheres: &[(Vec3, f32)]) -> f32 {
         let along = Vec3::new(-self.hinge_local.x, 0.0, 0.0);

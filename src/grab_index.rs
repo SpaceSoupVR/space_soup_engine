@@ -186,7 +186,9 @@ impl GrabGrid {
         };
         each_cell((cell_of(point - Vec3::splat(reach)), cell_of(point + Vec3::splat(reach))), |c| {
             if let Some(list) = self.cells.get(&c) {
-                list.iter().for_each(|&i| consider(i));
+                for &i in list {
+                consider(i);
+            }
             }
         });
         self.big.iter().for_each(|&i| consider(i));
@@ -212,7 +214,9 @@ impl GrabGrid {
         };
         each_cell((cell_of(point - Vec3::splat(reach)), cell_of(point + Vec3::splat(reach))), |c| {
             if let Some(list) = self.cells.get(&c) {
-                list.iter().for_each(|&i| consider(i));
+                for &i in list {
+                consider(i);
+            }
             }
         });
         self.big.iter().for_each(|&i| consider(i));

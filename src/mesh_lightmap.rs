@@ -948,12 +948,10 @@ pub fn mesh_parts(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Optio
         [0.0, 0.0, 0.0, 1.0],
     ];
     let mut out = Vec::new();
-    for scene in doc.scenes() {
+    if let Some(scene) = doc.scenes().next() {
         for node in scene.nodes() {
             walk(node, identity, buffers, &mut out);
         }
-
-        break;
     }
     if out.is_empty() {
         return None;
@@ -1674,7 +1672,7 @@ mod layout_on_model {
     use super::*;
 
     #[test]
-    #[ignore]
+    #[ignore = "writes a reference OBJ to disk; run on demand"]
     fn write_the_sconce_with_its_atlas_coordinates() {
         let Ok(dir) = std::env::var("MASK_OBJ_OUT") else { return };
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

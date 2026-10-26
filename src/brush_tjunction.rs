@@ -123,9 +123,9 @@ pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
     if n < 3 {
         return out;
     }
-    out.positions = poly.positions.clone();
-    out.uvs = poly.uvs.clone();
-    out.uv2 = poly.uv2.clone();
+    out.positions.clone_from(&poly.positions);
+    out.uvs.clone_from(&poly.uvs);
+    out.uv2.clone_from(&poly.uv2);
     if !repaired {
         for k in 1..n - 1 {
             out.indices.extend([0, k as u32, k as u32 + 1]);

@@ -530,7 +530,7 @@ impl GameRuntime {
             self.run_part_trigger_action(&object_id, action);
         }
 
-        self.prev_part_blends = input.part_blends.clone();
+        self.prev_part_blends.clone_from(&input.part_blends);
     }
 
     fn run_part_trigger_action(&mut self, object_id: &str, action: crate::scene_animation::PartTriggerAction) {

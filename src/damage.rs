@@ -39,7 +39,7 @@ impl DamageLedger {
 
     pub fn apply(&mut self, entity: &GameObject, amount: f32) -> Option<StageChange> {
         let breakable = entity.breakable.as_ref()?;
-        if !(amount > 0.0) {
+        if amount.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return None;
         }
 

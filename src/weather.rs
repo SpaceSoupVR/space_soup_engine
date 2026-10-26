@@ -883,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "timing probe; run on demand"]
     fn time_an_areas_map() {
         let d: WeatherDef = serde_json::from_str(r#"{"bounds": [-10, -45, 18, -19]}"#).unwrap();
         let t = std::time::Instant::now();
