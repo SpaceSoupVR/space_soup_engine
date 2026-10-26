@@ -4,7 +4,7 @@ use space_soup_protocol::PlayerId;
 
 use crate::attach::Attachment;
 use crate::rig::JointId;
-use crate::runtime::{GameRuntime, ParticleBurst};
+use crate::runtime::{GameRuntime, HapticRequest, ParticleBurst, MAX_HAPTIC_SECONDS};
 use crate::scene::Color3;
 use crate::script::EngineCommand;
 
@@ -182,6 +182,20 @@ impl GameRuntime {
                 }
                 EngineCommand::StopSound { id } => {
                     self.sound_stop_requests.insert(id);
+                }
+                EngineCommand::Vibrate { hand, strength, seconds, player } => {
+                    // Clamped here as well as on the headset, so whatever host
+                    // drains these sees the same sane range.
+                    if !strength.is_finite() || !seconds.is_finite() {
+                        warn!("vibrate: strength and seconds must be numbers");
+                        continue;
+                    }
+                    self.pending_haptics.push(HapticRequest {
+                        player,
+                        hand,
+                        strength: strength.clamp(0.0, 1.0),
+                        seconds: seconds.clamp(0.0, MAX_HAPTIC_SECONDS),
+                    });
                 }
                 EngineCommand::SetLightIntensity { id, intensity } => {
                     if let Some(o) = self.scene.find_object_mut(&id) {

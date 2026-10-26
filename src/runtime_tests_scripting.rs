@@ -392,6 +392,95 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
     }
 
     #[test]
+    fn script_vibrate_and_part_trigger_vibrate_queue_haptic_requests_for_the_host() {
+        use crate::events::HapticHand;
+        use crate::runtime::HapticRequest;
+
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("space_soup_engine_vibrate_test");
+        let scenes_dir = dir.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"test","version":"0.1.0","entry_scene":"test","scenes":["test"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scenes_dir.join("test.json"),
+            r#"{
+                "name": "test",
+                "objects": [
+                    {
+                        "id": "gun",
+                        "cuboid": { "position": [1.0, 2.0, 3.0], "half_size": [0.2, 0.1, 0.5] },
+                        "script": "fn on_press(button) { if button == \"trigger\" { vibrate(\"right\", 0.8, 0.1); } if button == \"typo\" { vibrate(\"rihgt\", 1.0, 0.1); } }",
+                        "part_animations": [
+                            { "clip": "mag_seat", "driver": "HoldGrip",
+                              "triggers": [ { "at": 0.9,
+                                              "action": { "Vibrate": { "hand": "both",
+                                                                       "strength": 3.0,
+                                                                       "seconds": 0.05 } } } ] }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut rt = GameRuntime::load(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let dt = 1.0 / 60.0;
+        let player = PlayerId::new();
+        let rig = PlayerRig::default();
+
+        let press = |button: &str| {
+            let mut input = InputFrame::default();
+            input.button_presses.push(crate::events::ButtonPress {
+                button: button.to_string(),
+                object_id: Some("gun".to_string()),
+                ..Default::default()
+            });
+            input
+        };
+
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("trigger"))));
+        assert_eq!(
+            rt.drain_haptics(),
+            vec![HapticRequest { player, hand: HapticHand::Right, strength: 0.8, seconds: 0.1 }],
+            "vibrate(\"right\", 0.8, 0.1) should queue exactly one request with those values"
+        );
+        assert!(rt.drain_haptics().is_empty(), "draining takes the requests, it does not copy them");
+
+        // A misspelled hand is reported and dropped rather than guessed at.
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("typo"))));
+        assert!(rt.drain_haptics().is_empty());
+
+        // Undrained requests do not pile up across frames on a host that ignores them.
+        rt.update(dt, &one_player(player, frame(rig.clone(), press("trigger"))));
+        rt.update(dt, &one_player(player, frame(rig.clone(), InputFrame::default())));
+        assert!(rt.drain_haptics().is_empty(), "the next update should discard untaken requests");
+
+        // The animation-event action, with an out-of-range strength clamped to 1.
+        let at_blend = |b: f32| {
+            let mut i = InputFrame::default();
+            let mut clips = std::collections::HashMap::new();
+            clips.insert("mag_seat".to_string(), b);
+            i.part_blends.insert("gun".to_string(), clips);
+            i
+        };
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.5))));
+        assert!(rt.drain_haptics().is_empty());
+        rt.update(dt, &one_player(player, frame(rig.clone(), at_blend(0.95))));
+        assert_eq!(
+            rt.drain_haptics(),
+            vec![HapticRequest { player, hand: HapticHand::Both, strength: 1.0, seconds: 0.05 }]
+        );
+    }
+
+
+    // ── Button edges and polled axes ─────────────────────────────────────────
+
+    #[test]
     fn button_up_and_hand_reach_scripts_and_axes_can_be_polled() {
         let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_button_edges_test");

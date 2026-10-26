@@ -615,6 +615,13 @@ impl GameRuntime {
                 });
             }
             A::PlaySound { id } => self.script_host.push_command(EngineCommand::PlaySound { id }),
+            A::Vibrate { hand, strength, seconds } => {
+                // Part triggers are dispatched per player's input, so the current
+                // player is the one whose hand moved the part.
+                let player = self.script_host.current_player();
+                self.script_host
+                    .push_command(EngineCommand::Vibrate { hand, strength, seconds, player })
+            }
             A::SpawnParticleBurst { id, count } => {
 
                 self.script_host

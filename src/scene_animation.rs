@@ -1,6 +1,7 @@
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::events::HapticHand;
 use crate::scene_cuboid::Color3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -205,6 +206,9 @@ pub enum PartTriggerAction {
     PlayClip { clip: String },
     PlaySound { id: String },
     SpawnParticleBurst { id: String, count: u32 },
+    /// Buzz the controller(s) of the player whose input crossed the threshold --
+    /// the click of a magazine seating, felt as well as heard.
+    Vibrate { hand: HapticHand, strength: f32, seconds: f32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
