@@ -105,7 +105,7 @@ impl PhysicsWorld {
             actor.set_mass(def.mass.max(0.5));
             unsafe {
                 physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(
-                    &raw mut *actor as *mut physx_sys::PxRigidBody,
+                    (&raw mut *actor).cast::<physx_sys::PxRigidBody>(),
                     def.mass.max(0.5),
                     std::ptr::null(),
                     false,
@@ -309,7 +309,7 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::runtime_test_support::PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        crate::runtime_test_support::PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn door(def: DoorDef) -> (PhysicsWorld, Scene) {
@@ -378,7 +378,7 @@ mod tests {
         let hi = 100f32.to_radians();
         assert!(coasting.iter().all(|a| *a >= -0.01 && *a <= hi + 0.02), "past its limits");
         let tail = &coasting[coasting.len() - 30..];
-        let spread = tail.iter().cloned().fold(f32::MIN, f32::max) - tail.iter().cloned().fold(f32::MAX, f32::min);
+        let spread = tail.iter().copied().fold(f32::MIN, f32::max) - tail.iter().copied().fold(f32::MAX, f32::min);
         assert!(spread < 1e-3, "still moving after 6 s: {spread}");
     }
 
@@ -418,7 +418,7 @@ mod tests {
             physics.step(DT, &mut scene, &rigs);
             angles.push(physics.door_angle("door").unwrap());
         }
-        let most = angles.iter().cloned().fold(f32::MIN, f32::max);
+        let most = angles.iter().copied().fold(f32::MIN, f32::max);
         assert!(most > 40f32.to_radians(), "a hard knock swung it only {} deg", most.to_degrees());
         assert!(most < 100f32.to_radians() + 0.05, "past its stop: {} deg", most.to_degrees());
         assert!(angles.iter().all(|a| a.is_finite()), "it exploded");
@@ -522,7 +522,7 @@ mod tests {
             physics.step(DT, &mut scene, &rigs);
         }
         let stopped = run(&mut physics, &mut scene, &rigs, 1.5);
-        let most = stopped.iter().cloned().fold(f32::MIN, f32::max);
+        let most = stopped.iter().copied().fold(f32::MIN, f32::max);
         assert!(most < 100.6f32.to_radians(), "pulled past its stop to {} deg", most.to_degrees());
         let tail = &stopped[stopped.len() - 60..];
         let step = tail.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
@@ -552,11 +552,11 @@ mod tests {
         let (pos, _) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
         let v = px((Vec3::Y * 18.0).cross(pos - Vec3::new(-0.4, 1.1, 0.0)));
         unsafe {
-            physx_sys::PxRigidDynamic_setAngularVelocity_mut(state.ptr as *mut physx_sys::PxRigidDynamic, &w, true);
-            physx_sys::PxRigidDynamic_setLinearVelocity_mut(state.ptr as *mut physx_sys::PxRigidDynamic, &v, true);
+            physx_sys::PxRigidDynamic_setAngularVelocity_mut(state.ptr.cast::<physx_sys::PxRigidDynamic>(), &raw const w, true);
+            physx_sys::PxRigidDynamic_setLinearVelocity_mut(state.ptr.cast::<physx_sys::PxRigidDynamic>(), &raw const v, true);
         }
         let angles = run(&mut physics, &mut scene, &HashMap::new(), 2.0);
-        let most = angles.iter().cloned().fold(f32::MIN, f32::max);
+        let most = angles.iter().copied().fold(f32::MIN, f32::max);
         let end = *angles.last().unwrap();
         eprintln!("flung at 18 rad/s: reached {:.2} deg, rests at {:.2}", most.to_degrees(), end.to_degrees());
         assert!(most <= 100.3f32.to_radians(), "it passed its stop: {} deg", most.to_degrees());

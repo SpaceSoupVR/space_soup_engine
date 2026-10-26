@@ -114,7 +114,7 @@ impl PhysicsWorld {
         let found = unsafe {
             physx_sys::PxSceneQueryExt_sweepSingle(
                 self.scene.as_ptr(),
-                &raw const geometry as *const physx_sys::PxGeometry,
+                (&raw const geometry).cast::<physx_sys::PxGeometry>(),
                 &raw const pose,
                 &raw const dir_px,
                 max_distance,
@@ -161,7 +161,7 @@ impl PhysicsWorld {
         let count = unsafe {
             physx_sys::PxSceneQueryExt_overlapMultiple(
                 self.scene.as_ptr(),
-                &raw const geometry as *const physx_sys::PxGeometry,
+                (&raw const geometry).cast::<physx_sys::PxGeometry>(),
                 &raw const pose,
                 hits.as_mut_ptr(),
                 MAX_HITS as u32,

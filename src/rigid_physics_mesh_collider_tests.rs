@@ -64,10 +64,10 @@ fn box_glb(min: Vec3, max: Vec3, node_rotation: Quat) -> Vec<u8> {
         ]
     });
     let mut json = serde_json::to_vec(&json).unwrap();
-    while json.len() % 4 != 0 {
+    while !json.len().is_multiple_of(4) {
         json.push(b' ');
     }
-    while bin.len() % 4 != 0 {
+    while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
     let total = 12 + 8 + json.len() + 8 + bin.len();
@@ -117,7 +117,7 @@ fn wall_ahead(dir: &Path, stretch: Vec3, quarter_turns: u32) -> Option<f32> {
 
 #[test]
 fn a_model_collider_is_where_the_model_is_drawn() {
-    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = wall_model_dir();
     let near = |got: Option<f32>, want: f32, what: &str| {
         let got = got.unwrap_or_else(|| panic!("{what}: the wall was not hit"));
@@ -164,7 +164,7 @@ fn query_world(dir: &Path) -> PhysicsWorld {
 
 #[test]
 fn a_swept_sphere_stops_at_the_first_surface_and_says_whether_it_is_fixed() {
-    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = wall_model_dir();
     let physics = query_world(&dir);
 
@@ -187,7 +187,7 @@ fn a_swept_sphere_stops_at_the_first_surface_and_says_whether_it_is_fixed() {
 
 #[test]
 fn a_hand_near_a_room_mesh_finds_the_wall_and_which_way_is_out() {
-    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = wall_model_dir();
     let physics = query_world(&dir);
 

@@ -50,7 +50,7 @@ fn ray_hits_wall(rt: &GameRuntime) -> bool {
 
 #[test]
 fn a_breached_wall_stops_blocking_a_ray() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("ray");
 
     assert!(
@@ -76,7 +76,7 @@ fn a_breached_wall_stops_blocking_a_ray() {
 
 #[test]
 fn damage_short_of_a_breach_leaves_the_collider_alone() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("chipped");
 
     assert!(rt.apply_damage("wall", 10.0).is_none(), "no stage crossed yet");
@@ -87,7 +87,7 @@ fn damage_short_of_a_breach_leaves_the_collider_alone() {
 
 #[test]
 fn breaching_is_idempotent() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("idempotent");
 
     rt.apply_damage("wall", 60.0).expect("first breach");
@@ -99,7 +99,7 @@ fn breaching_is_idempotent() {
 
 #[test]
 fn reloading_the_scene_restores_the_collider() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("reload");
 
     rt.apply_damage("wall", 60.0).expect("breach");

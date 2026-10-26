@@ -618,7 +618,7 @@ impl GameRuntime {
             A::SpawnParticleBurst { id, count } => {
 
                 self.script_host
-                    .push_command(EngineCommand::SpawnParticleBurst { id, count: i64::from(count) })
+                    .push_command(EngineCommand::SpawnParticleBurst { id, count: i64::from(count) });
             }
         }
     }

@@ -48,7 +48,7 @@ fn wade(physics: &PhysicsWorld, from: Vec3, to: Vec3) -> (Vec3, f32) {
 
 #[test]
 fn a_walk_stops_where_the_water_is_too_deep() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = pool(1.0);
     let (end, deepest) = wade(&physics, Vec3::ZERO, Vec3::new(8.0, 0.0, 0.0));
     assert!(end.x > 1.9 && end.x < 2.0, "a metre of water from x = 2, and the walk ended at x = {}", end.x);
@@ -57,7 +57,7 @@ fn a_walk_stops_where_the_water_is_too_deep() {
 
 #[test]
 fn shallow_water_is_waded_through() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = pool(0.4);
     let (end, deepest) = wade(&physics, Vec3::ZERO, Vec3::new(8.0, 0.0, 0.0));
     assert!(end.x > 7.99, "stopped at x = {} in water {deepest} m deep", end.x);
@@ -67,7 +67,7 @@ fn shallow_water_is_waded_through() {
 #[test]
 fn a_player_out_of_their_depth_can_walk_back_to_the_shore() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = pool(1.0);
     let (end, _) = wade(&physics, Vec3::new(6.0, 0.0, 0.0), Vec3::new(-2.0, 0.0, 0.0));
     assert!(end.x < -1.99, "held in the water, at x = {}", end.x);
@@ -75,14 +75,13 @@ fn a_player_out_of_their_depth_can_walk_back_to_the_shore() {
 
 #[test]
 fn the_shipped_beach_is_waded_into_and_no_further_and_the_pond_all_the_way() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);
-    for (what, from, to) in [
-        ("the sea", Vec3::new(0.0, 5.0, 24.0), Vec3::new(0.0, 5.0, 60.0)),
-    ] {
+    {
+        let (what, from, to) = ("the sea", Vec3::new(0.0, 5.0, 24.0), Vec3::new(0.0, 5.0, 60.0));
         let (end, deepest) = wade(&physics, from, to);
         assert!(deepest > MAX_WADE_DEPTH - 0.05, "never waded into {what}: {deepest} m at most, ended at {end:?}");
         assert!(deepest <= MAX_WADE_DEPTH, "waded {deepest} m deep into {what}");
@@ -100,7 +99,7 @@ fn the_shipped_beach_is_waded_into_and_no_further_and_the_pond_all_the_way() {
 /// again.
 #[test]
 fn a_body_dropped_into_water_is_reported_once_as_it_met_the_surface() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut scene: Scene = serde_json::from_str(r#"{"name":"water_drop","objects":[]}"#).unwrap();
     let mut body = GameObject { id: "box".into(), ..Default::default() };
     body.cuboid.position = Vec3::new(6.0, 2.2, 0.0);
@@ -137,7 +136,7 @@ fn a_body_dropped_into_water_is_reported_once_as_it_met_the_surface() {
 /// not water behind a wall, nor any looking up.
 #[test]
 fn a_shot_finds_where_it_meets_the_water() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = pool(1.0);
     let muzzle = Vec3::new(0.0, 2.0, 0.0);
     let (hit, depth) = physics.water_hit(muzzle, Vec3::new(1.0, -0.25, 0.0), 50.0).expect("the shot meets the pool");

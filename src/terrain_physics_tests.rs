@@ -15,7 +15,7 @@ fn write_test_terrain(path: &std::path::Path, plateau_height_frac: f32) {
         for ix in 0..n {
             let in_plateau = (12..=20).contains(&ix) && (12..=20).contains(&iz);
             let v = if in_plateau {
-                (plateau_height_frac * u16::MAX as f32) as u16
+                (plateau_height_frac * f32::from(u16::MAX)) as u16
             } else {
                 0
             };
@@ -81,7 +81,7 @@ fn y_of(runtime: &GameRuntime, id: &str) -> f32 {
 
 #[test]
 fn a_ball_lands_on_the_sculpted_plateau_instead_of_falling_through() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("ss_terrain_phys_plateau");
     let _ = std::fs::remove_dir_all(&dir);
     let mut runtime = build_runtime(&dir, 0.5);
@@ -100,7 +100,7 @@ fn a_ball_lands_on_the_sculpted_plateau_instead_of_falling_through() {
 
 #[test]
 fn the_same_scene_holds_a_ball_up_at_the_low_ground_too() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("ss_terrain_phys_flat");
     let _ = std::fs::remove_dir_all(&dir);
     let mut runtime = build_runtime(&dir, 0.5);
@@ -118,7 +118,7 @@ fn the_same_scene_holds_a_ball_up_at_the_low_ground_too() {
 #[test]
 fn raising_the_plateau_raises_where_the_ball_stops() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let low_dir = std::env::temp_dir().join("ss_terrain_phys_low");
     let _ = std::fs::remove_dir_all(&low_dir);
@@ -146,7 +146,7 @@ fn raising_the_plateau_raises_where_the_ball_stops() {
 #[test]
 fn a_missing_terrain_file_warns_rather_than_failing_the_load() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("ss_terrain_phys_missing");
     let _ = std::fs::remove_dir_all(&dir);
     let scenes = dir.join("scenes");
@@ -164,7 +164,7 @@ fn a_missing_terrain_file_warns_rather_than_failing_the_load() {
 
 #[test]
 fn cooking_terrain_and_dropping_the_world_does_not_crash() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("ss_terrain_teardown");
     let _ = std::fs::remove_dir_all(&dir);
     {

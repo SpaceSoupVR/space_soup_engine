@@ -42,7 +42,7 @@ fn walk(physics: &PhysicsWorld, from: Vec3, to: Vec3) -> Vec3 {
 
 #[test]
 fn a_tree_trunk_stops_a_walking_player() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let scene = scene_with("trees");
     let tree = first_placement(&scene);
     let mut physics = PhysicsWorld::new();
@@ -61,7 +61,7 @@ fn a_tree_trunk_stops_a_walking_player() {
 
 #[test]
 fn a_bush_is_walked_through() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let scene = scene_with("bushes");
     let bush = first_placement(&scene);
     let mut physics = PhysicsWorld::new();

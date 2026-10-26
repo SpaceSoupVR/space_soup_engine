@@ -130,7 +130,7 @@ fn carry_and_throw(physics: &mut PhysicsWorld, scene: &mut Scene, id: &str, both
 /// throw is the hand's.
 #[test]
 fn a_pebble_follows_the_hand_and_is_thrown_at_the_hands_speed() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut physics, mut scene) = world(vec![ground(), body("pebble", 0.0, PEBBLE.0, PEBBLE.1)], None);
     let (hung, hand, at_release, after) = carry_and_throw(&mut physics, &mut scene, "pebble", false, 9.0);
     eprintln!("pebble: hangs {:.1} mm from the hand; hand {hand:.2} m/s, pebble {:.2} m/s at release, {:.2} m/s after", hung * 1000.0, at_release.x, after.x);
@@ -146,7 +146,7 @@ fn a_pebble_follows_the_hand_and_is_thrown_at_the_hands_speed() {
 /// comes after at what a hand's strength gives it. Two hands give it twice.
 #[test]
 fn a_heavy_rock_is_carried_lags_a_quick_hand_and_cannot_be_flung() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let throw = |both: bool| {
         let (mut physics, mut scene) = world(vec![ground(), body("rock", 0.0, ROCK.0, ROCK.1)], None);
         carry_and_throw(&mut physics, &mut scene, "rock", both, 9.0)
@@ -168,7 +168,7 @@ fn a_heavy_rock_is_carried_lags_a_quick_hand_and_cannot_be_flung() {
 /// goes on without it has let go of it.
 #[test]
 fn what_is_too_heavy_stays_down_and_the_hand_that_leaves_it_lets_go() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let half = Vec3::splat(0.2);
     let (mut physics, mut scene) = world(vec![ground(), body("anvil", 0.0, half, 60.0)], None);
     let top = Vec3::new(0.0, 0.4, 0.0);
@@ -198,7 +198,7 @@ fn what_is_too_heavy_stays_down_and_the_hand_that_leaves_it_lets_go() {
 #[test]
 fn the_default_grab_of_a_dynamic_body_carries_it_and_the_release_drops_it() {
     use crate::runtime::GameRuntime;
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join(format!("space_soup_engine_free_grab_{}", std::process::id()));
     std::fs::create_dir_all(dir.join("scenes")).unwrap();
     std::fs::write(dir.join("manifest.json"), r#"{"name":"t","version":"0.1.0","entry_scene":"t","scenes":["t"]}"#).unwrap();
@@ -281,7 +281,7 @@ fn dropped(id: &str, x: f32, z: f32, y: f32, half: Vec3, mass: f32) -> GameObjec
 /// end -- costing nothing.
 #[test]
 fn a_rock_sinks_and_a_crate_floats() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let crate_half = Vec3::splat(0.15);
     let mut objects = pond_floor();
     objects.push(dropped("rock", 6.0, 0.0, 1.0, ROCK.0, ROCK.1));
@@ -320,7 +320,7 @@ fn a_rock_sinks_and_a_crate_floats() {
 /// shallow bed -- is told again only if it brings a real share of that.
 #[test]
 fn a_body_is_told_of_once_however_it_bobs_and_bounces() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut objects = pond_floor();
     objects.push(dropped("crate", 10.0, 0.0, 3.0, Vec3::splat(0.15), 4.0));
     objects.push(GameObject {
@@ -414,7 +414,7 @@ fn the_cap_drops_the_least_energetic_first() {
 /// as its author gave it, when it is asked for -- and not out of a hand.
 #[test]
 fn a_sunk_prop_comes_back_and_so_does_every_prop_when_asked() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut objects = pond_floor();
     let start = Vec3::new(1.0, ROCK.0.y, 0.0);
     let mut rock = dropped("rock", start.x, start.z, start.y, ROCK.0, ROCK.1);
@@ -476,7 +476,7 @@ fn a_sunk_prop_comes_back_and_so_does_every_prop_when_asked() {
 ///     cargo test --release --lib rocks_into_a_pond -- --nocapture
 #[test]
 fn rocks_into_a_pond_cost_what_is_awake_and_tell_of_no_more_than_the_cap() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut table = Vec::new();
     for count in [1usize, 16, 128] {
         let mut objects = pond_floor();
@@ -510,7 +510,7 @@ fn rocks_into_a_pond_cost_what_is_awake_and_tell_of_no_more_than_the_cap() {
             awake_at_end = stats.awake;
         }
         let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
-        let worst = |v: &[f64]| v.iter().cloned().fold(0.0, f64::max);
+        let worst = |v: &[f64]| v.iter().copied().fold(0.0, f64::max);
         table.push((count, mean(&falling), mean(&entering), worst(&entering), mean(&resting), seen, told, most_seen, most_told, awake_at_end));
         assert!(most_told <= crate::water::MAX_ENTRIES_A_STEP, "{most_told} told of in one step");
         assert_eq!(awake_at_end, 0, "{count} rocks: {awake_at_end} still awake after 20 s");
@@ -527,14 +527,14 @@ fn rocks_into_a_pond_cost_what_is_awake_and_tell_of_no_more_than_the_cap() {
     assert!(many < one + 60.0, "128 sleeping rocks cost {many:.1} us a step against {one:.1} for one");
 }
 
-/// THE SHIPPED PILES, in the real level: test_room's fourteen props -- by
+/// THE SHIPPED PILES, in the real level: `test_room`'s fourteen props -- by
 /// the sea and by the pond, three pebbles, two rocks, a boulder and a crate
 /// each -- settle where they were put and go to sleep; then the pond's
 /// boulder, thrown out over the water, is told of once with the energy it
 /// brought, sinks, and is back on the bank some seconds after it settled.
 #[test]
 fn the_shipped_rocks_rest_where_they_lie_and_one_thrown_in_the_pond_comes_back() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
     let Ok(mut scene) = Scene::load(&game.join("scenes/test_room.json")) else {
         eprintln!("skipping: no test_room");
@@ -551,7 +551,7 @@ fn the_shipped_rocks_rest_where_they_lie_and_one_thrown_in_the_pond_comes_back()
     assert_eq!(props.len(), 14, "two piles of seven: {:?}", props.iter().map(|p| &p.0).collect::<Vec<_>>());
     for site in ["beach", "pond"] {
         let masses: Vec<f32> = props.iter().filter(|p| p.0.starts_with(site)).map(|p| p.2).collect();
-        assert!(masses.iter().any(|m| *m <= 0.1) && masses.iter().any(|m| *m == 1.0) && masses.iter().any(|m| *m >= 8.0), "{site}: {masses:?}");
+        assert!(masses.iter().any(|m| *m <= 0.1) && masses.contains(&1.0) && masses.iter().any(|m| *m >= 8.0), "{site}: {masses:?}");
     }
     let rigs = HashMap::new();
     for _ in 0..(60 * 6) {
@@ -598,7 +598,7 @@ fn the_shipped_rocks_rest_where_they_lie_and_one_thrown_in_the_pond_comes_back()
 #[test]
 fn the_shipped_game_by_the_headsets_events_a_rock_into_the_pond_and_a_door_by_its_handle() {
     use crate::runtime::GameRuntime;
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
     let Ok(mut rt) = GameRuntime::load(game) else {
         eprintln!("skipping: the shipped game did not load");

@@ -250,7 +250,7 @@ mod tests {
             .into_iter()
             .map(|(n, d): (Vec3, f32)| {
                 serde_json::from_value(serde_json::json!({
-                    "plane": [n.x as f64, n.y as f64, n.z as f64, d as f64],
+                    "plane": [f64::from(n.x), f64::from(n.y), f64::from(n.z), f64::from(d)],
                 }))
                 .unwrap()
             })
@@ -487,7 +487,7 @@ mod derivation_tests {
         .map(|(n, d): (Vec3, f32)| {
 
             serde_json::from_value::<BrushFace>(serde_json::json!({
-                "plane": [n.x as f64, n.y as f64, n.z as f64, d as f64],
+                "plane": [f64::from(n.x), f64::from(n.y), f64::from(n.z), f64::from(d)],
             }))
             .expect("a plane is the only required field of a face")
         })

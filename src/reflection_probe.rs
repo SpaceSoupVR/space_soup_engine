@@ -522,15 +522,12 @@ pub fn load_scene_probe_index(game_dir: &std::path::Path, scene_name: &str) -> V
             continue;
         };
 
-        let centre = match vec3("centre") {
-            Some(c) => c,
-            None => {
-                eprintln!(
-                    "probe {id}: index carries no capture point; using the box centre, \
-                     which is wrong for a subdivided volume -- re-bake this scene",
-                );
-                [f32::midpoint(min[0], max[0]), f32::midpoint(min[1], max[1]), f32::midpoint(min[2], max[2])]
-            }
+        let centre = if let Some(c) = vec3("centre") { c } else {
+            eprintln!(
+                "probe {id}: index carries no capture point; using the box centre, \
+                 which is wrong for a subdivided volume -- re-bake this scene",
+            );
+            [f32::midpoint(min[0], max[0]), f32::midpoint(min[1], max[1]), f32::midpoint(min[2], max[2])]
         };
         let uvec3 = |key: &str| -> Option<[u32; 3]> {
             let a = e.get(key)?.as_array()?;
@@ -575,9 +572,9 @@ mod probe_decode_tests {
     use super::*;
 
     fn f16_to_f32(h: u16) -> f32 {
-        let sign = ((h >> 15) & 1) as u32;
-        let exp = ((h >> 10) & 0x1f) as i32;
-        let mant = (h & 0x3ff) as u32;
+        let sign = u32::from((h >> 15) & 1);
+        let exp = i32::from((h >> 10) & 0x1f);
+        let mant = u32::from(h & 0x3ff);
         let bits = if exp == 0 {
             if mant == 0 {
                 sign << 31
@@ -807,7 +804,7 @@ mod probe_decode_tests {
         let codes: Vec<[u16; 4]> = (0..64)
             .map(|i| {
                 let v = WALL_MAX * i as f32 / 63.0;
-                let c = ((v / 1.0).sqrt() * u16::MAX as f32).round() as u16;
+                let c = ((v / 1.0).sqrt() * f32::from(u16::MAX)).round() as u16;
                 [c, c, c, u16::MAX]
             })
             .collect();

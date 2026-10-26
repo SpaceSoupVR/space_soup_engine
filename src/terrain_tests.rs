@@ -197,7 +197,7 @@ fn patch_triangles_wind_counter_clockwise_seen_from_above() {
     let field = flat_grid(3, 3);
     let patch = field.patch(whole_of(&field), 1);
 
-    for tri in patch.indices.chunks_exact(3) {
+    for tri in patch.indices.as_chunks::<3>().0 {
         let a = patch.positions[tri[0] as usize];
         let b = patch.positions[tri[1] as usize];
         let c = patch.positions[tri[2] as usize];

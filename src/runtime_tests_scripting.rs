@@ -9,7 +9,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn scripted_raycast_hits_the_correct_object_and_reports_its_transform() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_raycast_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -83,7 +83,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn scripted_part_animation_blend_reaches_the_render_mesh() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_part_blend_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -128,7 +128,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn scripted_particle_burst_fires_once_ages_then_disappears() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_particle_burst_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -190,7 +190,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn scripted_spawn_and_impulse_launches_a_fresh_dynamic_object() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_spawn_impulse_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -257,7 +257,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn socket_attach_carries_the_child_and_detach_hands_it_back_to_physics() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_socket_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -332,7 +332,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn rapid_fire_play_sound_layers_instead_of_cutting_off() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_rapid_fire_sound_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -393,7 +393,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn button_up_and_hand_reach_scripts_and_axes_can_be_polled() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_button_edges_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -466,7 +466,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn set_part_visible_toggles_hidden_parts_and_defaults_to_visible() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_part_visible_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -522,7 +522,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn a_blend_trigger_fires_once_per_crossing_and_detaches_to_physics() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_blend_trigger_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -602,7 +602,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn a_part_anchored_socket_and_detach_use_the_posed_part_position() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_part_socket_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -666,7 +666,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn a_trigger_can_set_a_state_that_gates_another_clip() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_clip_state_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -733,7 +733,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn authored_grip_points_are_grabbable_without_a_script() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_default_grab_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -791,7 +791,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn a_script_that_handles_on_grab_still_owns_the_behaviour() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_script_grab_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -829,7 +829,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
         let vars = rt.script_host.context().lock().unwrap().vars.clone();
         assert_eq!(
-            vars.get("grabbed_by_script").map(|v| v.to_string()),
+            vars.get("grabbed_by_script").map(std::string::ToString::to_string),
             Some("main_grip".to_string()),
             "the script handler must still run"
         );
@@ -841,7 +841,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
 #[test]
 fn per_trigger_condition_and_counter_gate_a_repeated_action() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("space_soup_engine_rule_counter_test");
     let scenes_dir = dir.join("scenes");
     std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -899,7 +899,7 @@ fn per_trigger_condition_and_counter_gate_a_repeated_action() {
 #[test]
 fn a_realtime_light_can_be_flickered_from_a_script() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("space_soup_engine_flicker_test");
     let scenes_dir = dir.join("scenes");
     std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -938,7 +938,7 @@ fn a_realtime_light_can_be_flickered_from_a_script() {
         seen.push(lamp.map(|l| l.intensity));
     }
 
-    assert!(seen.iter().all(|v| v.is_some()), "the lamp left the render list: {seen:?}");
+    assert!(seen.iter().all(std::option::Option::is_some), "the lamp left the render list: {seen:?}");
     let values: Vec<f32> = seen.into_iter().map(|v| v.unwrap()).collect();
     assert!(
         values.windows(2).all(|w| w[1] > w[0]),
@@ -949,7 +949,7 @@ fn a_realtime_light_can_be_flickered_from_a_script() {
 #[test]
 fn a_baked_light_ignores_a_scripted_intensity_change() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("space_soup_engine_flicker_baked_test");
     let scenes_dir = dir.join("scenes");
     std::fs::create_dir_all(&scenes_dir).unwrap();

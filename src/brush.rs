@@ -859,18 +859,18 @@ mod tests {
                 let p = |i: u32| {
                     let i = i as usize * 3;
                     [
-                        g.positions[i] as f64,
-                        g.positions[i + 1] as f64,
-                        g.positions[i + 2] as f64,
+                        f64::from(g.positions[i]),
+                        f64::from(g.positions[i + 1]),
+                        f64::from(g.positions[i + 2]),
                     ]
                 };
                 let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
                 let face = cross(sub(b, a), sub(c, a));
                 let i = t[0] as usize * 3;
                 let stored = [
-                    g.normals[i] as f64,
-                    g.normals[i + 1] as f64,
-                    g.normals[i + 2] as f64,
+                    f64::from(g.normals[i]),
+                    f64::from(g.normals[i + 1]),
+                    f64::from(g.normals[i + 2]),
                 ];
                 assert!(dot(face, stored) > 0.0, "triangle wound inward");
             }
@@ -1104,7 +1104,7 @@ mod exposed_surface_tests {
                 }
             }
         }
-        let total: usize = exposed.iter().flatten().map(|f| f.len()).sum();
+        let total: usize = exposed.iter().flatten().map(std::vec::Vec::len).sum();
         assert_eq!(total, 10, "a 2x1x1 box has 10 unit faces showing, not {total}");
     }
 
@@ -1160,8 +1160,7 @@ mod exposed_surface_tests {
         assert_eq!(buried, 0, "{buried} drawn fragments face into solid or have nothing behind them");
         assert!(
             (ceiling_z.0 + 15.7).abs() < 1e-6 && (ceiling_z.1 - 3.7).abs() < 1e-6,
-            "the hall ceiling spans z {:?}; the room is -15.7..3.7",
-            ceiling_z,
+            "the hall ceiling spans z {ceiling_z:?}; the room is -15.7..3.7",
         );
     }
 }

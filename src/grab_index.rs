@@ -261,7 +261,7 @@ mod tests {
         g
     }
 
-    fn brute<'a>(objects: &'a [(String, Vec3, Quat, Vec3)], point: Vec3, reach: f32, allowed: impl Fn(&str) -> bool) -> Option<(&'a str, f32)> {
+    fn brute(objects: &[(String, Vec3, Quat, Vec3)], point: Vec3, reach: f32, allowed: impl Fn(&str) -> bool) -> Option<(&str, f32)> {
         objects
             .iter()
             .filter(|o| allowed(&o.0))
@@ -287,7 +287,7 @@ mod tests {
             };
             let (a, b) = (g.nearest(point, 0.15, loose), brute(&objects, point, 0.15, loose));
             assert_eq!(a.map(|x| x.0), b.map(|x| x.0), "at {point}");
-            found += a.is_some() as usize;
+            found += usize::from(a.is_some());
             assert_eq!(g.nearest(point, 0.15, |_| true).map(|x| x.0), brute(&objects, point, 0.15, |_| true).map(|x| x.0));
         }
         assert!(found > 500, "the test's hands found only {found} things");

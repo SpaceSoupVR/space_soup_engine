@@ -9,7 +9,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn two_players_grab_different_objects_via_attachments() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_two_player_attach_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -95,7 +95,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn two_players_hand_anchors_drive_independently() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_two_player_physx_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -191,7 +191,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn disconnected_player_is_cleaned_up_without_corrupting_the_scene() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_disconnect_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();

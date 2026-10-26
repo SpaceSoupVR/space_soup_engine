@@ -10,7 +10,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn falls_lands_and_loops() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_rigid_physics_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -190,7 +190,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn active_sounds_tracked_without_a_listener() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_sound_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();
@@ -238,7 +238,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn wall_collision_blocks_walking_through_solid_geometry() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_wall_collision_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();

@@ -76,7 +76,7 @@ fn first_hit(geometry: &CollisionTriangles, origin: Vec3, dir: Vec3, max: f32) -
 
 #[test]
 fn the_navmesh_is_baked_from_exactly_what_players_collide_with() {
-    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = wall_model_dir();
     let scene = every_kind(&dir);
     let mut physics = PhysicsWorld::new();
@@ -146,7 +146,7 @@ fn the_navmesh_is_baked_from_exactly_what_players_collide_with() {
 
 #[test]
 fn a_baked_scene_walks_round_its_walls() {
-    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let scene: Scene = serde_json::from_value(serde_json::json!({
         "name": "nav_room",
         "objects": [
@@ -180,7 +180,7 @@ fn a_baked_scene_walks_round_its_walls() {
 
 #[test]
 fn a_saved_navmesh_loads_with_its_scene_and_knows_when_the_scene_has_moved_on() {
-    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _physx = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join(format!("ss_nav_saved_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("scenes")).unwrap();

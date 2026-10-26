@@ -568,7 +568,7 @@ impl GameRuntime {
             .objects
             .iter()
             .find(|o| o.id == object_id)
-            .map_or(true, |o| self.damage.is_solid(o))
+            .is_none_or(|o| self.damage.is_solid(o))
     }
 
     pub fn reset_damage(&mut self) {

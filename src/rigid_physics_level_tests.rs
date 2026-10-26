@@ -41,7 +41,7 @@ const DEEP_LEVEL: &str = r#"
 /// under the kill height -- and hung two metres over the floor for ever.
 #[test]
 fn a_body_resting_on_ground_forty_metres_down_is_not_respawned() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut scene = scene(DEEP_LEVEL);
     let mut physics = world_of(&scene, Path::new("."));
 
@@ -65,7 +65,7 @@ fn a_body_resting_on_ground_forty_metres_down_is_not_respawned() {
 /// edge it falls under the level, and is put back where it started.
 #[test]
 fn a_body_that_falls_out_under_a_deep_levels_floor_is_still_respawned() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut scene = scene(DEEP_LEVEL);
     let mut physics = world_of(&scene, Path::new("."));
     let kill = physics.kill_height();
@@ -91,7 +91,7 @@ fn a_body_that_falls_out_under_a_deep_levels_floor_is_still_respawned() {
 /// A level at the origin keeps the height it always had.
 #[test]
 fn a_level_whose_floor_is_at_the_origin_keeps_the_old_kill_height() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let scene = scene(
         r#"{ "id": "floor", "cuboid": { "position": [0.0, -0.5, 0.0], "half_size": [4.0, 0.5, 4.0] },
              "rigid_body": { "mode": "Static", "shape": "Box" } }"#,
@@ -111,7 +111,7 @@ fn a_level_whose_floor_is_at_the_origin_keeps_the_old_kill_height() {
 /// reach.
 #[test]
 fn the_kill_height_follows_the_lowest_ground_of_a_heightfield() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join("ss_level_floor_terrain");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("terrain")).unwrap();
@@ -162,7 +162,7 @@ fn ray_down_at(physics: &PhysicsWorld, x: f32, z: f32) -> Option<f32> {
 /// released an actor that was already gone.
 #[test]
 fn a_static_whose_id_the_next_scene_reuses_is_built_where_the_next_scene_puts_it() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let wall_at = |x: f32, half_y: f32| {
         scene(&format!(
             r#"{{ "id": "wall", "cuboid": {{ "position": [{x}, 0.0, 0.0], "half_size": [1.0, {half_y}, 1.0] }},
@@ -192,7 +192,7 @@ fn a_brush_whose_id_the_next_scene_reuses_is_built_where_the_next_scene_puts_it(
     use crate::brush::{block_solid, BrushDef};
     use crate::scene::GameObject;
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let block_at = |x: f64| {
         let mut s = scene("");
         s.objects = vec![GameObject {

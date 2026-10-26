@@ -71,7 +71,7 @@ fn stand_at(rt: &mut GameRuntime, at: Vec3) {
 fn var(rt: &GameRuntime, name: &str) -> Option<String> {
     rt.script_host
         .var_string(name)
-        .map(|s| s.to_string())
+        .map(|s| s.clone())
 }
 
 fn door_blocks(rt: &GameRuntime) -> bool {
@@ -82,7 +82,7 @@ fn door_blocks(rt: &GameRuntime) -> bool {
 
 #[test]
 fn standing_in_a_zone_sets_its_var_and_leaving_clears_it() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("var");
 
     stand_at(&mut rt, Vec3::new(30.0, 0.0, 30.0));
@@ -97,7 +97,7 @@ fn standing_in_a_zone_sets_its_var_and_leaving_clears_it() {
 
 #[test]
 fn a_zone_opens_a_door_without_being_solid_itself() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("door");
 
     stand_at(&mut rt, Vec3::new(30.0, 0.0, 30.0));
@@ -112,7 +112,7 @@ fn a_zone_opens_a_door_without_being_solid_itself() {
 
 #[test]
 fn the_zone_itself_never_blocks_anything() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let rt = runtime("passable");
 
     assert!(
@@ -125,7 +125,7 @@ fn the_zone_itself_never_blocks_anything() {
 
 #[test]
 fn a_once_volume_fires_once_and_is_then_spent() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("once");
 
     stand_at(&mut rt, Vec3::new(0.0, 0.0, 60.0));
@@ -149,7 +149,7 @@ fn a_once_volume_fires_once_and_is_then_spent() {
 
 #[test]
 fn a_disabled_volume_notices_nothing() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("disabled");
 
     stand_at(&mut rt, Vec3::new(0.0, 0.0, 80.0));
@@ -158,7 +158,7 @@ fn a_disabled_volume_notices_nothing() {
 
 #[test]
 fn arming_a_volume_while_someone_stands_in_it_fires_on_the_next_tick() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("arm");
 
     stand_at(&mut rt, Vec3::new(0.0, 0.0, 80.0));
@@ -177,7 +177,7 @@ fn arming_a_volume_while_someone_stands_in_it_fires_on_the_next_tick() {
 
 #[test]
 fn a_zone_is_entered_at_chest_height_not_at_the_feet() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("probe");
 
     stand_at(&mut rt, Vec3::ZERO);
@@ -186,7 +186,7 @@ fn a_zone_is_entered_at_chest_height_not_at_the_feet() {
 
 #[test]
 fn a_reload_re_arms_a_spent_volume() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("reload");
 
     stand_at(&mut rt, Vec3::new(0.0, 0.0, 60.0));
@@ -204,7 +204,7 @@ fn a_reload_re_arms_a_spent_volume() {
 
 #[test]
 fn a_script_can_ask_whether_a_zone_is_occupied() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("script");
 
     stand_at(&mut rt, Vec3::ZERO);
@@ -222,7 +222,7 @@ fn a_script_can_ask_whether_a_zone_is_occupied() {
 
 #[test]
 fn a_script_can_branch_on_occupancy() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let dir = std::env::temp_dir().join(format!("ss_zone_fn_{}", std::process::id()));
     let scenes = dir.join("scenes");

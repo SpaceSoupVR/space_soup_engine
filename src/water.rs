@@ -566,7 +566,7 @@ mod tests {
             indices.len(),
         );
 
-        for tri in indices.chunks_exact(3) {
+        for tri in indices.as_chunks::<3>().0 {
             assert!(
                 tri.iter().any(|&i| verts[i as usize].depth > 0.0),
                 "a triangle was kept with all three corners on dry land",
@@ -616,7 +616,7 @@ mod tests {
         w.swash = 0.3;
         let (verts, indices) = build_surface(&w, beach).unwrap();
         assert!(indices.len() > still, "swash must keep more surface: {} vs {still}", indices.len());
-        for tri in indices.chunks_exact(3) {
+        for tri in indices.as_chunks::<3>().0 {
             assert!(
                 tri.iter().any(|&i| verts[i as usize].depth > -0.3),
                 "a triangle was kept above where the waves reach",
@@ -652,7 +652,7 @@ mod tests {
             Some(if r < 3.0 { 0.0 } else if r < 12.0 { 4.0 } else { 0.0 })
         };
         let (verts, indices) = build_surface(&w, island).unwrap();
-        let in_basin = indices.chunks_exact(3).filter(|t| {
+        let in_basin = indices.as_chunks::<3>().0.iter().filter(|t| {
             t.iter().all(|&i| {
                 let [x, _, z] = verts[i as usize].position;
                 (x * x + z * z).sqrt() < 3.0
@@ -662,7 +662,7 @@ mod tests {
 
         w.skirt = 0.0;
         let (verts, indices) = build_surface(&w, island).unwrap();
-        assert!(indices.chunks_exact(3).any(|t| t.iter().all(|&i| {
+        assert!(indices.as_chunks::<3>().0.iter().any(|t| t.iter().all(|&i| {
             let [x, _, z] = verts[i as usize].position;
             (x * x + z * z).sqrt() < 3.0
         })));

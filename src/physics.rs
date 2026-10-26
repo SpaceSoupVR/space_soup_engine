@@ -188,8 +188,7 @@ mod ray_intersect_obb_test {
         let unrotated_dist = 4.5;
         assert!(
             dist.unwrap() < unrotated_dist,
-            "expected the rotated box's diamond corner to be hit sooner than the unrotated face, got {:?}",
-            dist
+            "expected the rotated box's diamond corner to be hit sooner than the unrotated face, got {dist:?}"
         );
     }
 }

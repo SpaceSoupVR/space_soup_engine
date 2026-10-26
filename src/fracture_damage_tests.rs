@@ -9,15 +9,13 @@ fn scene_json() -> String {
             format!(
                 r#"{{
                   "id": "wall_chunk_{i}",
-                  "cuboid": {{ "position": [{x}.0, 1.0, 0.0], "half_size": [0.5, 1.0, 0.25] }},
+                  "cuboid": {{ "position": [{i}.0, 1.0, 0.0], "half_size": [0.5, 1.0, 0.25] }},
                   "rigid_body": {{ "mode": "Static", "shape": "Box" }},
                   "breakable": {{
                     "health": 100.0,
                     "stages": [{{ "at": 1.0, "removed": true }}]
                   }}
-                }}"#,
-                i = i,
-                x = i
+                }}"#
             )
         })
         .collect();
@@ -52,7 +50,7 @@ fn ray_hits(rt: &GameRuntime, x: f32) -> bool {
 
 #[test]
 fn a_round_destroys_the_chunk_it_hit_and_leaves_its_neighbours() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("one_chunk");
 
     for x in 0..5 {
@@ -75,7 +73,7 @@ fn a_round_destroys_the_chunk_it_hit_and_leaves_its_neighbours() {
 #[test]
 fn the_hole_is_actually_open() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("hole_open");
 
     assert!(ray_hits(&rt, 2.0), "the intact wall stops a ray");
@@ -87,7 +85,7 @@ fn the_hole_is_actually_open() {
 
 #[test]
 fn a_round_that_does_not_finish_a_chunk_changes_nothing_visible() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("chipped");
 
     let changes = rt.apply_damage_at(Vec3::new(2.0, 1.0, 0.0), 0.0, 30.0);
@@ -104,7 +102,7 @@ fn a_round_that_does_not_finish_a_chunk_changes_nothing_visible() {
 
 #[test]
 fn a_blast_opens_a_hole_and_only_chips_the_edges() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("blast");
 
     let changes = rt.apply_damage_at(Vec3::new(2.0, 1.0, 0.0), 2.0, 100.0);
@@ -134,7 +132,7 @@ fn a_blast_opens_a_hole_and_only_chips_the_edges() {
 
 #[test]
 fn damage_at_a_point_nothing_stands_at_is_harmless() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("miss");
 
     assert!(rt.apply_damage_at(Vec3::new(2.0, 1.0, 40.0), 1.0, 500.0).is_empty());
@@ -145,7 +143,7 @@ fn damage_at_a_point_nothing_stands_at_is_harmless() {
 
 #[test]
 fn a_tighter_blast_leaves_the_far_chunks_alone() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("blast_tight");
 
     rt.apply_damage_at(Vec3::new(2.0, 1.0, 0.0), 0.8, 100.0);
@@ -239,7 +237,7 @@ fn brush_runtime(tag: &str) -> GameRuntime {
 #[test]
 fn a_brush_is_never_sent_as_a_bounding_box() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let rt = brush_runtime("not_a_box");
 
     assert!(
@@ -255,7 +253,7 @@ fn a_brush_is_never_sent_as_a_bounding_box() {
 #[test]
 fn a_destroyed_brush_is_named_in_the_list_the_client_skips() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = brush_runtime("skip_list");
 
     rt.apply_damage_at(Vec3::new(0.0, 1.0, 0.0), 0.0, 100.0);
@@ -266,7 +264,7 @@ fn a_destroyed_brush_is_named_in_the_list_the_client_skips() {
 #[test]
 fn a_brush_a_script_hid_is_skipped_too() {
 
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = brush_runtime("script_hidden");
 
     rt.script_host.push_command(crate::script::EngineCommand::SetObjectVisible {

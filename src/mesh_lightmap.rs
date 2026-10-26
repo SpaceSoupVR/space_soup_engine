@@ -1202,7 +1202,7 @@ mod authored_tests {
     #[test]
     fn an_authored_mesh_is_read_not_packed() {
         let part = square();
-        let layout = mesh_lightmap_layout(&[part.clone()], DEFAULT_TEXEL).expect("a layout");
+        let layout = mesh_lightmap_layout(std::slice::from_ref(&part), DEFAULT_TEXEL).expect("a layout");
         assert_eq!((layout.width, layout.height), (16, 16), "the atlas is the file's");
         assert_eq!(layout.charts.len(), 3);
         for t in 0..3 {

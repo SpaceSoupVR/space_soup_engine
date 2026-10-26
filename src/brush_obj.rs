@@ -482,7 +482,7 @@ mod tests {
             .map(|l| l.split_whitespace().nth(2).unwrap().parse().unwrap())
             .collect();
 
-        assert!((ys.iter().cloned().fold(f64::MIN, f64::max) - 3.0).abs() < 1e-4);
+        assert!((ys.iter().copied().fold(f64::MIN, f64::max) - 3.0).abs() < 1e-4);
     }
 
     #[test]

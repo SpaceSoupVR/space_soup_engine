@@ -497,10 +497,10 @@ mod tests {
             for (tx, ty) in [(0, 0), (1, 1), (c.w - 1, c.h - 1)] {
                 let world = c.texel_world(tx, ty);
                 let uv = c.uv2(world, layout.width, layout.height);
-                let back_x = uv[0] as f64 * layout.width as f64 - 0.5 - c.x as f64;
-                let back_y = uv[1] as f64 * layout.height as f64 - 0.5 - c.y as f64;
-                assert!((back_x - tx as f64).abs() < 1e-3, "u round trip {back_x} vs {tx}");
-                assert!((back_y - ty as f64).abs() < 1e-3, "v round trip {back_y} vs {ty}");
+                let back_x = f64::from(uv[0]) * f64::from(layout.width) - 0.5 - f64::from(c.x);
+                let back_y = f64::from(uv[1]) * f64::from(layout.height) - 0.5 - f64::from(c.y);
+                assert!((back_x - f64::from(tx)).abs() < 1e-3, "u round trip {back_x} vs {tx}");
+                assert!((back_y - f64::from(ty)).abs() < 1e-3, "v round trip {back_y} vs {ty}");
             }
         }
     }
@@ -516,14 +516,14 @@ mod tests {
             let poly = polys[c.face].as_ref().expect("charted face must have a polygon");
             for p in poly {
                 let uv = c.uv2(*p, layout.width, layout.height);
-                let tx = uv[0] as f64 * layout.width as f64;
-                let ty = uv[1] as f64 * layout.height as f64;
+                let tx = f64::from(uv[0]) * f64::from(layout.width);
+                let ty = f64::from(uv[1]) * f64::from(layout.height);
                 assert!(
-                    tx >= c.x as f64 - 1e-6 && tx <= (c.x + c.w) as f64 + 1e-6,
+                    tx >= f64::from(c.x) - 1e-6 && tx <= f64::from(c.x + c.w) + 1e-6,
                     "corner sampled at {tx}, chart spans {}..{}", c.x, c.x + c.w,
                 );
                 assert!(
-                    ty >= c.y as f64 - 1e-6 && ty <= (c.y + c.h) as f64 + 1e-6,
+                    ty >= f64::from(c.y) - 1e-6 && ty <= f64::from(c.y + c.h) + 1e-6,
                     "corner sampled at {ty}, chart spans {}..{}", c.y, c.y + c.h,
                 );
             }
@@ -677,8 +677,8 @@ mod welding_tests {
 
         let len = |v: Vec3| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
         let (du, dv) = (len(front.du), len(front.dv));
-        let spanned_w = front.w as f64 * du;
-        let spanned_h = front.h as f64 * dv;
+        let spanned_w = f64::from(front.w) * du;
+        let spanned_h = f64::from(front.h) * dv;
 
         assert!(
             (spanned_w - 8.0).abs() <= du,
@@ -850,7 +850,7 @@ mod scaled_layout_tests {
         let fine = base.scaled(SUN_MASK_SCALE);
         for (a, b) in base.charts.iter().zip(&fine.charts) {
             for (fu, fv) in [(0.0, 0.0), (0.37, 0.81), (0.999, 0.5)] {
-                let p = add(a.texel_world(0, 0), add(mul(a.du, fu * a.w as f64), mul(a.dv, fv * a.h as f64)));
+                let p = add(a.texel_world(0, 0), add(mul(a.du, fu * f64::from(a.w)), mul(a.dv, fv * f64::from(a.h))));
                 let (ua, ub) = (a.uv2(p, base.width, base.height), b.uv2(p, fine.width, fine.height));
                 assert!((ua[0] - ub[0]).abs() < 1e-6 && (ua[1] - ub[1]).abs() < 1e-6, "{ua:?} vs {ub:?}");
             }

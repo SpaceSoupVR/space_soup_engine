@@ -64,7 +64,7 @@ fn collision_triangles_face_out_of_the_solid() {
     };
     let (p, idx) = brush_collision_triangles(&def);
     assert_eq!(idx.len() / 3, 12, "a box is six quads");
-    for t in idx.chunks_exact(3) {
+    for t in idx.as_chunks::<3>().0 {
         let [a, b, c] = [p[t[0] as usize], p[t[1] as usize], p[t[2] as usize]].map(Vec3::from);
         let n = (b - a).cross(c - a);
         let centroid = (a + b + c) / 3.0;
@@ -74,7 +74,7 @@ fn collision_triangles_face_out_of_the_solid() {
 
 #[test]
 fn a_brush_room_stops_a_player_walking_at_its_wall() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = world_with(vec![room_object(None)]);
     assert!(physics.has_collider("room"), "a brush is solid by default");
     let end = walk(&physics, Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0));
@@ -84,7 +84,7 @@ fn a_brush_room_stops_a_player_walking_at_its_wall() {
 
 #[test]
 fn a_brush_marked_not_solid_is_walked_through() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = world_with(vec![room_object(Some(false))]);
     assert!(!physics.has_collider("room"));
     let end = walk(&physics, Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0));
@@ -93,7 +93,7 @@ fn a_brush_marked_not_solid_is_walked_through() {
 
 #[test]
 fn the_wall_is_solid_from_inside_the_room_and_from_outside() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = world_with(vec![room_object(None)]);
     let (inside, n_in) = physics
         .raycast(Vec3::new(0.0, 1.0, 0.0), Vec3::X, 10.0)
@@ -129,7 +129,7 @@ fn a_trigger_is_never_a_wall_unless_someone_says_so() {
 
 #[test]
 fn an_authored_rigid_body_on_a_brush_keeps_its_own_shape() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut obj = room_object(None);
     obj.cuboid.position = Vec3::ZERO;
     obj.cuboid.half_size = Vec3::splat(0.5);
@@ -144,7 +144,7 @@ fn an_authored_rigid_body_on_a_brush_keeps_its_own_shape() {
 
 #[test]
 fn breaching_a_solid_brush_removes_its_collider() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut physics = world_with(vec![room_object(None)]);
     let ray = || physics_ray(&physics);
     assert!(ray(), "the intact wall should stop a ray");
@@ -159,7 +159,7 @@ fn physics_ray(physics: &PhysicsWorld) -> bool {
 
 #[test]
 fn the_shipped_hall_is_entered_by_its_door_and_not_through_its_walls() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
     let mut physics = PhysicsWorld::new();
@@ -181,7 +181,7 @@ fn the_shipped_hall_is_entered_by_its_door_and_not_through_its_walls() {
 
 #[test]
 fn a_player_standing_away_from_their_play_area_centre_is_stopped_at_the_wall() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = world_with(vec![room_object(None)]);
     let head = Vec3::new(1.5, 0.0, 0.0);
     let origin = walk_with_head(&physics, Vec3::new(-1.5, 0.0, 0.0), Vec3::new(3.5, 0.0, 0.0), head);
@@ -192,7 +192,7 @@ fn a_player_standing_away_from_their_play_area_centre_is_stopped_at_the_wall() {
 
 #[test]
 fn walking_into_a_wall_in_the_real_room_pushes_the_rig_back() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = world_with(vec![room_object(None)]);
     let mut loco = Locomotion::new(LocomotionMode::Smooth);
     let mut head_x = 0.0;
@@ -210,7 +210,7 @@ fn walking_into_a_wall_in_the_real_room_pushes_the_rig_back() {
 
 #[test]
 fn a_teleport_is_not_stopped_by_the_walls_it_crosses() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let physics = world_with(vec![room_object(None)]);
     let mut loco = Locomotion::new(LocomotionMode::Teleport);
     let rig = PlayerRig::new();
@@ -226,7 +226,7 @@ fn a_teleport_is_not_stopped_by_the_walls_it_crosses() {
 
 #[test]
 fn a_room_with_a_low_ceiling_keeps_the_player_on_its_floor() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let low = GameObject {
         id: "low".into(),
         brush: Some(BrushDef {
@@ -242,7 +242,7 @@ fn a_room_with_a_low_ceiling_keeps_the_player_on_its_floor() {
 
 #[test]
 fn the_shipped_hallway_is_walked_through_on_its_floor() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
     let mut physics = PhysicsWorld::new();
@@ -284,7 +284,7 @@ fn the_shipped_hallway_is_walked_through_on_its_floor() {
 /// patch beside the hole mask).
 #[test]
 fn the_baked_cave_is_walked_through_without_a_jolt() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let game = std::env::var("GAME_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../game").to_string());
     let game = Path::new(&game);
     let Ok(scene) = Scene::load(&game.join("scenes/test_room.json")) else {

@@ -231,7 +231,7 @@ mod fixture_tests {
     use crate::GameRuntime;
 
     fn drive_of(lights_json: &str) -> f32 {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join(format!(
             "ss_fixture_{}",
             std::time::SystemTime::now()
@@ -347,7 +347,7 @@ mod socket_light_tests {
     fn rendered(o: GameObject) -> (Vec3, Vec3) {
         let _guard = crate::runtime_test_support::PHYSX_TEST_LOCK
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_socket_light_test");
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
         std::fs::write(

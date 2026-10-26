@@ -358,7 +358,7 @@ impl PhysicsWorld {
                         actor.set_mass(mass);
                         unsafe {
                             physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(
-                                &raw mut *actor as *mut physx_sys::PxRigidBody,
+                                (&raw mut *actor).cast::<physx_sys::PxRigidBody>(),
                                 mass,
                                 std::ptr::null(),
                                 false,
@@ -375,7 +375,7 @@ impl PhysicsWorld {
                             actor.set_solver_iteration_counts(8, 2);
                             unsafe {
                                 physx_sys::PxRigidBody_setMaxDepenetrationVelocity_mut(
-                                    &raw mut *actor as *mut physx_sys::PxRigidBody,
+                                    (&raw mut *actor).cast::<physx_sys::PxRigidBody>(),
                                     2.0,
                                 );
                             }
@@ -862,22 +862,19 @@ impl PhysicsWorld {
             MeshGeometryFlags::empty(),
         );
         let transform = to_px_transform(Vec3::ZERO, Quat::IDENTITY);
-        match self.foundation.create_rigid_static(
+        if let Some(mut actor) = self.foundation.create_rigid_static(
             transform,
             &geo,
             material.as_mut(),
             PxTransform::default(),
             (),
         ) {
-            Some(mut actor) => {
-                let ptr: *mut PxRigidStatic = &raw mut *actor;
-                self.scene.add_static_actor(actor);
-                self.statics.insert(obj.id.clone(), ptr);
-            }
-            None => {
-                log::warn!("rigid_physics: failed to create static actor for brush '{}'", obj.id);
-                return;
-            }
+            let ptr: *mut PxRigidStatic = &raw mut *actor;
+            self.scene.add_static_actor(actor);
+            self.statics.insert(obj.id.clone(), ptr);
+        } else {
+            log::warn!("rigid_physics: failed to create static actor for brush '{}'", obj.id);
+            return;
         }
         self.materials.push(material);
         log::info!(

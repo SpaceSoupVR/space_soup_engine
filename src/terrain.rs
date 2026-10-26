@@ -627,7 +627,7 @@ mod splat_tests {
     fn indexing_is_row_major_with_x_fastest() {
 
         let mut bytes = vec![0u8; 3 * 2 * SPLAT_LAYERS];
-        let last = (1 * 3 + 2) * SPLAT_LAYERS;
+        let last = (3 + 2) * SPLAT_LAYERS;
         bytes[last + 3] = 200;
         let m = SplatMap::new(bytes, [3, 2]).unwrap();
         assert_eq!(m.at_index(2, 1), [0, 0, 0, 200]);
@@ -673,7 +673,7 @@ mod splat_tests {
         assert_eq!(on_step, [0, 225, 30, 0], "the cliff's soil should be rock, its `high` kept");
         let level = map.at_index(1, 8);
         assert_eq!(level, [200, 0, 30, 25], "level ground keeps its paint");
-        let fnv = map.as_bytes().iter().fold(0x811c9dc5u32, |h, &b| (h ^ b as u32).wrapping_mul(0x01000193));
+        let fnv = map.as_bytes().iter().fold(0x811c9dc5u32, |h, &b| (h ^ u32::from(b)).wrapping_mul(0x01000193));
         assert_eq!(fnv, SHEER_FIXTURE_CHECKSUM, "the engine and the editor bare different texels");
         let flat = Heightfield::new(vec![0; 81], [res, res], [4.0, 4.0], [0.0, 3.0], Vec3::ZERO).unwrap();
         let mut untouched = SplatMap::new([200u8, 0, 30, 25].repeat((texels * texels) as usize), [texels, texels]).unwrap();
@@ -742,7 +742,7 @@ mod splat_tests {
             let samples = (0..SAMPLES * SAMPLES)
                 .map(|i| {
                     let y = height(shape, drawn, (i % SAMPLES) as f32 * CELL, (i / SAMPLES) as f32 * CELL);
-                    ((y - range[0]) / (range[1] - range[0]) * u16::MAX as f32).round() as u16
+                    ((y - range[0]) / (range[1] - range[0]) * f32::from(u16::MAX)).round() as u16
                 })
                 .collect();
             Heightfield::new(samples, [SAMPLES, SAMPLES], [SIZE, SIZE], range, Vec3::ZERO).unwrap()
@@ -768,7 +768,7 @@ mod splat_tests {
             let patch = field.patch(field.bounds(), 1);
             patch
                 .indices
-                .chunks_exact(3)
+                .as_chunks::<3>().0.iter()
                 .map(|t| {
                     let c = [t[0], t[1], t[2]].map(|i| patch.positions[i as usize]);
                     let n = (c[1] - c[0]).cross(c[2] - c[0]);
@@ -868,7 +868,7 @@ mod splat_tests {
                             continue;
                         }
                         steep += 1;
-                        slivers += (thin < 8.0) as u32;
+                        slivers += u32::from(thin < 8.0);
                         thinnest = thinnest.min(thin);
                         steepest = steepest.max(n.y.acos().to_degrees());
                         let area = (c[1] - c[0]).cross(c[2] - c[0]).length() * 0.5;
@@ -927,7 +927,7 @@ mod splat_tests {
                     for z in 0..TEXELS {
                         for x in 0..TEXELS {
                             let (was, now) = (painted.at_index(x, z), bared.at_index(x, z));
-                            assert_eq!(now.iter().map(|&b| b as u32).sum::<u32>(), 255, "weights no longer sum to one");
+                            assert_eq!(now.iter().map(|&b| u32::from(b)).sum::<u32>(), 255, "weights no longer sum to one");
                             assert_eq!(now[2], was[2], "the high layer is as painted");
                             assert!(now[1] >= was[1], "rock is never taken away");
                             if !near_steep[(z * TEXELS + x) as usize] {
@@ -943,8 +943,8 @@ mod splat_tests {
                 bared.bare_rock_on_sheer_ground(&field);
                 for z in 0..TEXELS - 1 {
                     for x in 0..TEXELS - 1 {
-                        let here = bared.at_index(x, z)[0] as i32;
-                        for there in [bared.at_index(x + 1, z)[0] as i32, bared.at_index(x, z + 1)[0] as i32] {
+                        let here = i32::from(bared.at_index(x, z)[0]);
+                        for there in [i32::from(bared.at_index(x + 1, z)[0]), i32::from(bared.at_index(x, z + 1)[0])] {
                             assert!((here - there).abs() <= 85, "{shape:?}: the soil steps from {here} to {there} at texel ({x}, {z})");
                         }
                     }
@@ -953,7 +953,7 @@ mod splat_tests {
             let (field, painted) = (field(Shape::Bank60, true), painted());
             let mut bared = painted.clone();
             bared.bare_rock_on_sheer_ground(&field);
-            let soil = |m: &SplatMap| m.as_bytes().chunks_exact(SPLAT_LAYERS).map(|t| t[0] as u64 + t[3] as u64).sum::<u64>();
+            let soil = |m: &SplatMap| m.as_bytes().as_chunks::<SPLAT_LAYERS>().0.iter().map(|t| u64::from(t[0]) + u64::from(t[3])).sum::<u64>();
             assert!(soil(&bared) as f64 >= 0.97 * soil(&painted) as f64, "a 60 degree bank lost its paint: {} of {}", soil(&bared), soil(&painted));
         }
     }
@@ -1174,6 +1174,7 @@ impl GroundPatch {
     /// to the grid's triangles ([`TerrainSource::patch`]), and for physics,
     /// which cooks them beside its height field -- so the two never disagree
     /// about a triangle at the region's edge.
+    #[allow(clippy::chunks_exact_to_as_chunks, reason = "public signature yields slices, not arrays")]
     pub fn triangles_in(&self, region: Aabb) -> impl Iterator<Item = &[u32]> + '_ {
         self.indices.chunks_exact(3).filter(move |tri| {
             let corners = [0, 1, 2].map(|k| self.positions[tri[k] as usize]);
@@ -1358,7 +1359,7 @@ mod ground_patch_tests {
 
     fn open_edges(indices: &[u32]) -> usize {
         let mut count: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
-        for t in indices.chunks_exact(3) {
+        for t in indices.as_chunks::<3>().0 {
             for k in 0..3 {
                 let (a, b) = (t[k], t[(k + 1) % 3]);
                 *count.entry((a.min(b), a.max(b))).or_default() += 1;
@@ -1383,7 +1384,7 @@ mod ground_patch_tests {
         assert_eq!(after.normals.len(), 26);
         assert_eq!(after.normals.iter().filter(|n| **n != Vec3::ZERO).count(), 1, "only the patch's own vertex has an authored normal");
         assert_eq!(after.normals[25], Vec3::Y);
-        for t in after.indices.chunks_exact(3) {
+        for t in after.indices.as_chunks::<3>().0 {
             let [a, b, c] = [0, 1, 2].map(|k| after.positions[t[k] as usize]);
             assert!((b - a).cross(c - a).y > 0.0);
         }
@@ -1422,7 +1423,7 @@ mod ground_patch_tests {
         for (name, p) in sections {
             out.extend((name.len() as u16).to_le_bytes());
             out.extend(name.as_bytes());
-            while out.len() % 4 != 0 {
+            while !out.len().is_multiple_of(4) {
                 out.push(0);
             }
             out.extend((p.positions.len() as u32).to_le_bytes());

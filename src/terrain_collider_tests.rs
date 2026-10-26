@@ -1,6 +1,6 @@
 //! THE GROUND'S COLLIDER AGAINST THE GROUND THAT IS DRAWN.
 //!
-//! Physics holds a sculpted ground as a PhysX height field
+//! Physics holds a sculpted ground as a `PhysX` height field
 //! (`PhysicsWorld::spawn_scene_height_field`) where it used to cook the
 //! mesher's own triangles. That is only the same ground if every cell is
 //! split along the diagonal the mesher draws, every hole is the mesher's hole,
@@ -127,15 +127,15 @@ impl Drawn {
         let patch = field.patch(field.bounds(), 1);
         let [dx, dz] = field.cell_size();
         let cells = [(NX - 1) as usize, (NZ - 1) as usize];
-        let (origin, cell) = (DVec2::new(field.origin().x as f64, field.origin().z as f64), DVec2::new(dx as f64, dz as f64));
+        let (origin, cell) = (DVec2::new(f64::from(field.origin().x), f64::from(field.origin().z)), DVec2::new(f64::from(dx), f64::from(dz)));
         let mut bins = vec![Vec::new(); cells[0] * cells[1]];
-        for (t, tri) in patch.indices.chunks_exact(3).enumerate() {
+        for (t, tri) in patch.indices.as_chunks::<3>().0.iter().enumerate() {
             let p = [0, 1, 2].map(|k| patch.positions[tri[k] as usize]);
             let lo = p[0].min(p[1]).min(p[2]);
             let hi = p[0].max(p[1]).max(p[2]);
             let span = |lo: f32, hi: f32, o: f64, c: f64, n: usize| {
-                let a = (((lo as f64 - o) / c).floor() - 1.0).max(0.0) as usize;
-                let b = ((((hi as f64 - o) / c).floor() + 1.0).max(0.0) as usize).min(n - 1);
+                let a = (((f64::from(lo) - o) / c).floor() - 1.0).max(0.0) as usize;
+                let b = ((((f64::from(hi) - o) / c).floor() + 1.0).max(0.0) as usize).min(n - 1);
                 a..=b
             };
             for iz in span(lo.z, hi.z, origin.y, cell.y, cells[1]) {
@@ -157,7 +157,7 @@ impl Drawn {
         /// How far inside a triangle, as a share of it, a point has to be to
         /// be asked about; and how far outside every one to be called open.
         const EDGE: f64 = 0.02;
-        let p = DVec2::new(x as f64, z as f64);
+        let p = DVec2::new(f64::from(x), f64::from(z));
         let cx = ((p.x - self.origin.x) / self.cell.x).floor();
         let cz = ((p.y - self.origin.y) / self.cell.y).floor();
         if cx < 0.0 || cz < 0.0 || cx as usize >= self.cells[0] || cz as usize >= self.cells[1] {
@@ -166,14 +166,14 @@ impl Drawn {
         let (mut best, mut near) = (None::<(f32, Vec3)>, false);
         for &t in &self.bins[cz as usize * self.cells[0] + cx as usize] {
             let c = self.corners(t);
-            let q = c.map(|v| DVec2::new(v.x as f64, v.z as f64));
+            let q = c.map(|v| DVec2::new(f64::from(v.x), f64::from(v.z)));
             let area = (q[1] - q[0]).perp_dot(q[2] - q[0]);
             if area.abs() < 1e-12 {
                 continue;
             }
             let w = [(q[1] - p).perp_dot(q[2] - p) / area, (q[2] - p).perp_dot(q[0] - p) / area, (q[0] - p).perp_dot(q[1] - p) / area];
             if w.iter().all(|w| *w >= EDGE) {
-                let y = (w[0] * c[0].y as f64 + w[1] * c[1].y as f64 + w[2] * c[2].y as f64) as f32;
+                let y = (w[0] * f64::from(c[0].y) + w[1] * f64::from(c[1].y) + w[2] * f64::from(c[2].y)) as f32;
                 let n = (c[1] - c[0]).cross(c[2] - c[0]).normalize();
                 if best.is_none_or(|(by, _)| y > by) {
                     best = Some((y, n));
@@ -309,14 +309,14 @@ fn sweep(field: &Heightfield, kind: TerrainCollider, expect_a_height_field: bool
 fn relief_grid(field: &Heightfield) -> impl Fn(u32, u32) -> [f32; 4] + '_ {
     let (raw, [nx, _], [lo, hi], base) = (field.raw_samples(), field.resolution(), field.height_range(), field.origin().y);
     move |ix, iz| {
-        let h = |ix: u32, iz: u32| base + lo + raw[(iz * nx + ix) as usize] as f32 / u16::MAX as f32 * (hi - lo);
+        let h = |ix: u32, iz: u32| base + lo + f32::from(raw[(iz * nx + ix) as usize]) / f32::from(u16::MAX) * (hi - lo);
         [h(ix, iz), h(ix + 1, iz), h(ix, iz + 1), h(ix + 1, iz + 1)]
     }
 }
 
 #[test]
 fn a_ray_lands_on_the_drawn_triangle_everywhere_on_a_ground_with_relief_holes_and_a_patch() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let field = relief_with_holes_and_a_patch();
     assert_eq!(field.meshed_cells(), [NX - 2, NZ - 1], "the fixture is meant to leave its last column of cells undrawn");
 
@@ -337,7 +337,7 @@ fn a_ray_lands_on_the_drawn_triangle_everywhere_on_a_ground_with_relief_holes_an
 /// the ground's -- opens the cells the mesher opens for it.
 #[test]
 fn a_hole_mask_coarser_than_the_cells_opens_the_same_cells() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut mask = HoleMask::solid([12, 10]);
     mask.set_open(3, 4, true);
     mask.set_open(11, 9, true);
@@ -351,17 +351,17 @@ fn a_hole_mask_coarser_than_the_cells_opens_the_same_cells() {
 /// is still a height field, at that level.
 #[test]
 fn a_level_ground_is_a_height_field_at_its_level() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let field = relief([3.0, 3.0]).with_holes(Some(cell_holes()));
     let grid = sweep(&field, TerrainCollider::HeightField, true);
     assert!(grid.hits > 24_000 && grid.open > 600, "{grid:?}");
 }
 
-/// A height range written upside down is not a height field PhysX can hold:
+/// A height range written upside down is not a height field `PhysX` can hold:
 /// the ground is cooked as triangles, and is still the drawn ground.
 #[test]
 fn a_range_written_upside_down_falls_back_to_the_triangle_mesh() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let field = relief([18.0, -6.0]).with_holes(Some(cell_holes()));
     let mesh = sweep(&field, TerrainCollider::HeightField, false);
     assert!(mesh.hits > 24_000 && mesh.open > 600, "{mesh:?}");
@@ -392,7 +392,7 @@ fn rolling_ground_with_an_opening() -> Heightfield {
 /// opening falls through it.
 #[test]
 fn a_body_rests_on_the_height_field_where_it_rests_on_the_mesh_and_falls_through_a_hole() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let field = rolling_ground_with_an_opening();
     let solid = [(-9.3f32, -7.4f32), (6.6, -11.2), (10.2, 9.7), (-4.1, 12.3)];
     let hole = (-0.5f32, -0.5f32);
@@ -446,7 +446,7 @@ fn a_body_rests_on_the_height_field_where_it_rests_on_the_mesh_and_falls_through
     }
 }
 
-/// A REAL LEVEL, both ways: the shipped test_room's ground (`GAME_DIR`, or the
+/// A REAL LEVEL, both ways: the shipped `test_room`'s ground (`GAME_DIR`, or the
 /// game beside this crate) with its cave's holes and the ground its bake put
 /// back, built as the triangle mesh it was and then as the height field, and
 /// asked the same rays. Each has to meet the same thing: nothing, or the same
@@ -475,7 +475,7 @@ fn a_body_rests_on_the_height_field_where_it_rests_on_the_mesh_and_falls_through
 /// Skips where there is no such level.
 #[test]
 fn a_real_levels_ground_meets_every_ray_where_its_triangle_mesh_did() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let game = std::env::var("GAME_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../game").to_string());
     let game = Path::new(&game);
     let name = std::env::var("SCENE").unwrap_or_else(|_| "test_room".into());
@@ -607,10 +607,10 @@ fn the_caves_ground_is_batched_in_whole_connected_pieces() {
     }
     assert_eq!(seen, vec![vec![0, 1, 2], vec![3, 4]], "a piece was split between two meshes");
     let mut before: Vec<[(u32, u32, u32); 3]> =
-        patch.indices.chunks_exact(3).map(|t| [0, 1, 2].map(|k| { let p = patch.positions[t[k] as usize]; (p.x.to_bits(), p.y.to_bits(), p.z.to_bits()) })).collect();
+        patch.indices.as_chunks::<3>().0.iter().map(|t| [0, 1, 2].map(|k| { let p = patch.positions[t[k] as usize]; (p.x.to_bits(), p.y.to_bits(), p.z.to_bits()) })).collect();
     let mut after: Vec<[(u32, u32, u32); 3]> = batches
         .iter()
-        .flat_map(|(points, indices)| indices.chunks_exact(3).map(move |t| [0, 1, 2].map(|k| { let p = &points[t[k] as usize]; (p.x().to_bits(), p.y().to_bits(), p.z().to_bits()) })))
+        .flat_map(|(points, indices)| indices.as_chunks::<3>().0.iter().map(move |t| [0, 1, 2].map(|k| { let p = &points[t[k] as usize]; (p.x().to_bits(), p.y().to_bits(), p.z().to_bits()) })))
         .collect();
     before.sort_unstable();
     after.sort_unstable();
@@ -637,7 +637,7 @@ fn rss_mb() -> f32 {
 #[test]
 #[ignore = "a measurement: needs GAME_DIR and SCENE"]
 fn print_what_the_physics_rebuild_costs() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let Ok(game) = std::env::var("GAME_DIR") else {
         eprintln!("skipped: no GAME_DIR");
         return;
@@ -678,7 +678,7 @@ fn print_what_the_physics_rebuild_costs() {
                 down_hits += u32::from(physics.raycast_down(Vec3::new(x, b.max.y + 10.0, z), reach).is_some());
             }
         }
-        let down_ms = started.elapsed().as_secs_f64() * 1000.0 / ROUNDS as f64;
+        let down_ms = started.elapsed().as_secs_f64() * 1000.0 / f64::from(ROUNDS);
         let mut missed = String::new();
         if down_hits < 100 * ROUNDS {
             missed = "\n  rays down that met no ground (x across, z down):".to_string();
@@ -696,7 +696,7 @@ fn print_what_the_physics_rebuild_costs() {
                 long_hits += u32::from(physics.raycast(Vec3::new(x, y, z), along, w * 1.5).is_some());
             }
         }
-        let long_ms = started.elapsed().as_secs_f64() * 1000.0 / ROUNDS as f64;
+        let long_ms = started.elapsed().as_secs_f64() * 1000.0 / f64::from(ROUNDS);
         let across = Vec3::new(1.0, 0.0, 0.31).normalize();
         let high = b.min.y + (b.max.y - b.min.y) * 0.9;
         let started = std::time::Instant::now();
@@ -705,7 +705,7 @@ fn print_what_the_physics_rebuild_costs() {
                 over_hits += u32::from(physics.raycast(Vec3::new(b.min.x + 0.5, high, z), across, w * 1.5).is_some());
             }
         }
-        let over_ms = started.elapsed().as_secs_f64() * 1000.0 / ROUNDS as f64;
+        let over_ms = started.elapsed().as_secs_f64() * 1000.0 / f64::from(ROUNDS);
         rays = format!(
             "; 100 rays down {down_ms:.4} ms ({} hit), 100 rays along the ground {long_ms:.4} ms ({} hit), 100 rays across the level over it {over_ms:.4} ms ({} hit){missed}",
             down_hits / ROUNDS,

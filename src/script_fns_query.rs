@@ -124,7 +124,7 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                     if let Some(dist) =
                         ray_intersect_obb(origin, dir, center, half_size, rotation, max_dist as f32)
                     {
-                        if best.as_ref().map_or(true, |(_, d)| dist < *d) {
+                        if best.as_ref().is_none_or(|(_, d)| dist < *d) {
                             best = Some((id.clone(), dist));
                         }
                     }

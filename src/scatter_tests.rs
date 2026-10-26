@@ -305,7 +305,7 @@ fn scatter_follows_a_real_heightfield() {
         for ix in 0..n {
 
             let t = if ix < 8 { 0.0 } else { (ix - 8) as f32 / 8.0 };
-            samples.push((t * u16::MAX as f32) as u16);
+            samples.push((t * f32::from(u16::MAX)) as u16);
         }
     }
     let field = Heightfield::new(

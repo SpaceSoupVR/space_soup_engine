@@ -19,7 +19,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn spawn_point_seeds_a_fresh_players_position_and_yaw() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = empty_scene_dir("space_soup_engine_spawn_point_test");
         std::fs::write(
             dir.join("scenes/test.json"),
@@ -59,7 +59,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn no_spawn_point_falls_back_to_origin() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = empty_scene_dir("space_soup_engine_no_spawn_point_test");
         std::fs::write(
             dir.join("scenes/test.json"),
@@ -80,7 +80,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn teleport_disarms_until_the_player_walks_off_the_destination_pad() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = empty_scene_dir("space_soup_engine_teleportal_test");
         std::fs::write(
             dir.join("scenes/test.json"),
@@ -181,7 +181,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn cross_scene_teleportal_switches_scenes_and_repositions_the_player() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_cross_scene_teleport_test");
         write_two_scene_game(&dir);
 
@@ -210,7 +210,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
 
     #[test]
     fn load_scene_repositions_already_connected_players_to_the_new_spawn_point() {
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_load_scene_reposition_test");
         write_two_scene_game(&dir);
 

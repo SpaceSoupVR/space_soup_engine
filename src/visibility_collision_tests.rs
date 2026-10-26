@@ -68,7 +68,7 @@ fn run(rt: &mut GameRuntime, cmd: EngineCommand) {
 
 #[test]
 fn a_collider_authored_off_is_absent_but_recoverable() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("authored_off");
 
     assert!(!ray_hits(&rt, 10.0), "an authored-off gate must not block");
@@ -80,7 +80,7 @@ fn a_collider_authored_off_is_absent_but_recoverable() {
 
 #[test]
 fn a_spawn_points_handle_is_never_drawn_in_play() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let rt = runtime("spawn_handle");
     assert!(!drawn(&rt, "spawn"), "a spawn point's cuboid is the editor's handle, not geometry");
     assert!(drawn(&rt, "hologram"), "a plain cuboid is still drawn");
@@ -88,7 +88,7 @@ fn a_spawn_points_handle_is_never_drawn_in_play() {
 
 #[test]
 fn hiding_an_object_leaves_it_solid() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("hide_solid");
 
     run(&mut rt, EngineCommand::SetObjectVisible { id: "wall".into(), visible: false });
@@ -102,7 +102,7 @@ fn hiding_an_object_leaves_it_solid() {
 
 #[test]
 fn making_an_object_passable_leaves_it_visible() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("passable_visible");
 
     run(&mut rt, EngineCommand::SetObjectSolid { id: "wall".into(), solid: false });
@@ -113,7 +113,7 @@ fn making_an_object_passable_leaves_it_visible() {
 
 #[test]
 fn the_two_switches_do_not_disturb_each_other() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("independent");
 
     run(&mut rt, EngineCommand::SetObjectVisible { id: "wall".into(), visible: false });
@@ -130,7 +130,7 @@ fn the_two_switches_do_not_disturb_each_other() {
 
 #[test]
 fn turning_collision_on_twice_does_not_leave_a_second_collider() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("no_duplicate");
 
     let obj = rt.scene.find_object("wall").expect("wall").clone();
@@ -147,7 +147,7 @@ fn turning_collision_on_twice_does_not_leave_a_second_collider() {
 
 #[test]
 fn an_object_with_no_rigid_body_cannot_be_made_solid() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("no_body");
 
     run(&mut rt, EngineCommand::SetObjectSolid { id: "hologram".into(), solid: true });
@@ -156,7 +156,7 @@ fn an_object_with_no_rigid_body_cannot_be_made_solid() {
 
 #[test]
 fn collision_state_survives_a_scene_reload_as_authored() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut rt = runtime("reload");
 
     run(&mut rt, EngineCommand::SetObjectSolid { id: "wall".into(), solid: false });
@@ -170,7 +170,7 @@ fn collision_state_survives_a_scene_reload_as_authored() {
 
 #[test]
 fn a_scene_written_before_enabled_existed_keeps_its_collision() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let rt = runtime("legacy");
 
     assert!(ray_hits(&rt, 0.0));
@@ -218,7 +218,7 @@ mod editor_shapes {
 
 #[test]
 fn a_script_can_open_and_close_a_gate() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let dir = std::env::temp_dir().join(format!("ss_vis_script_{}", std::process::id()));
     let scenes = dir.join("scenes");
@@ -265,7 +265,7 @@ fn a_script_can_open_and_close_a_gate() {
 
 #[test]
 fn a_walls_declared_width_is_the_width_that_blocks() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let rt = runtime("declared_width");
 
     assert!(ray_hits_at(&rt, 1.5, 0.0), "1.5m off centre is still wall");
