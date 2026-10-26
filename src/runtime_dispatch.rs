@@ -620,7 +620,7 @@ impl GameRuntime {
                 // player is the one whose hand moved the part.
                 let player = self.script_host.current_player();
                 self.script_host
-                    .push_command(EngineCommand::Vibrate { hand, strength, seconds, player })
+                    .push_command(EngineCommand::Vibrate { hand, strength, seconds, player });
             }
             A::SpawnParticleBurst { id, count } => {
 

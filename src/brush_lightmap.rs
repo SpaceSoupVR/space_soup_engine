@@ -237,7 +237,7 @@ pub fn chart_coverage(brushes: &[&BrushDef], layout: &BrushLightmapLayout) -> Ve
             let mut out = Vec::with_capacity((c.w * c.h) as usize);
             for ty in 0..c.h {
                 for tx in 0..c.w {
-                    let q = [tx as f64, ty as f64];
+                    let q = [f64::from(tx), f64::from(ty)];
                     out.push(polys.iter().any(|poly| inside_2d(poly, q) || distance_2d(poly, q) <= REACH));
                 }
             }
@@ -829,12 +829,12 @@ mod tests {
                     // Well inside the hallway's footprint (y -0.3..2.9, z -4.5..-1.5).
                     if p[1] > 0.0 && p[1] < 2.6 && p[2] > -4.2 && p[2] < -1.8 {
                         hole += 1;
-                        hole_covered += covered as usize;
+                        hole_covered += usize::from(covered);
                     }
                     // The open wall, well clear of the hallway.
                     if p[2] < -5.0 || p[2] > -1.0 || p[1] > 3.2 {
                         wall += 1;
-                        lost += !covered as usize;
+                        lost += usize::from(!covered);
                     }
                 }
             }

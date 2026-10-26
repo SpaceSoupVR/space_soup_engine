@@ -130,7 +130,7 @@ pub struct RenderLaser {
 pub const MAX_HAPTIC_SECONDS: f32 = 2.0;
 
 /// One controller vibration asked for by a script (`vibrate`) or a part trigger.
-/// The engine cannot reach OpenXR, so these queue on the runtime until the host
+/// The engine cannot reach `OpenXR`, so these queue on the runtime until the host
 /// takes them with `drain_haptics` and hands them to its controllers.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HapticRequest {
@@ -138,7 +138,7 @@ pub struct HapticRequest {
     pub hand: HapticHand,
     /// 0..1.
     pub strength: f32,
-    /// 0..MAX_HAPTIC_SECONDS.
+    /// `0..MAX_HAPTIC_SECONDS`.
     pub seconds: f32,
 }
 
@@ -571,7 +571,7 @@ impl GameRuntime {
             self.next_ground_hit += 1;
         }
         while self.ground_hits.len() > crate::ground_hits::MAX_GROUND_HITS_TOLD {
-            let least = self.ground_hits.iter().enumerate().min_by(|a, b| a.1.hit.energy().total_cmp(&b.1.hit.energy())).map(|(i, _)| i).unwrap_or(0);
+            let least = self.ground_hits.iter().enumerate().min_by(|a, b| a.1.hit.energy().total_cmp(&b.1.hit.energy())).map_or(0, |(i, _)| i);
             self.ground_hits.remove(least);
         }
     }

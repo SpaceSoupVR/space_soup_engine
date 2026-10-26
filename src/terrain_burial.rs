@@ -65,7 +65,7 @@ pub fn bury_under_structures(
 ///
 /// `bury_under_structures` asked every ground vertex against every solid:
 /// samples x solids, both of which grow with the level's area -- 13 ms on
-/// test_room, 210 ms at 625 samples a side, 2.5 s at 1,025, 39 s at 2,049
+/// `test_room`, 210 ms at 625 samples a side, 2.5 s at 1,025, 39 s at 2,049
 /// (`docs/scale-audit-2026-10-13.md`, L1). Nearly all of the ground is under
 /// no building at all.
 ///
@@ -122,7 +122,7 @@ impl<'a> SolidIndex<'a> {
         }
         let boxed = boxes.iter().flatten().count();
         if boxed == 0 {
-            return Self { solids, boxes, boxless, origin: [0.0; 2], cell: 1.0, cells_x: 0, cells_z: 0, cells: Vec::new(), tests: Default::default() };
+            return Self { solids, boxes, boxless, origin: [0.0; 2], cell: 1.0, cells_x: 0, cells_z: 0, cells: Vec::new(), tests: std::cell::Cell::default() };
         }
         // About as many cells as solids, and no cell under 4 m: a building's
         // solids share a few cells, an open level's cells are mostly empty.
@@ -141,7 +141,7 @@ impl<'a> SolidIndex<'a> {
                 }
             }
         }
-        Self { solids, boxes, boxless, origin: lo, cell, cells_x, cells_z, cells, tests: Default::default() }
+        Self { solids, boxes, boxless, origin: lo, cell, cells_x, cells_z, cells, tests: std::cell::Cell::default() }
     }
 
     /// Whether any solid holds `p`, within `tolerance`.
@@ -179,7 +179,7 @@ impl<'a> SolidIndex<'a> {
 /// plane-set tests it took.
 pub fn bury_indexed(positions: &mut [Vec3], indices: &[u32], solids: &SolidIndex) -> (Vec<u32>, Burial, u64) {
     let before = solids.tests();
-    let covered = |q: Vec3| solids.holds([q.x as f64, (q.y - BURIED_PROBE_DEPTH) as f64, q.z as f64], 1e-4);
+    let covered = |q: Vec3| solids.holds([f64::from(q.x), f64::from(q.y - BURIED_PROBE_DEPTH), f64::from(q.z)], 1e-4);
     let buried: Vec<bool> = positions.iter().map(|p| covered(*p)).collect();
     // COVERED ACROSS ITS WHOLE AREA, not just at its corners. Three buried
     // corners prove a triangle covered only under a CONVEX footprint. Where the
@@ -199,7 +199,7 @@ pub fn bury_indexed(positions: &mut [Vec3], indices: &[u32], solids: &SolidIndex
     };
     let mut kept = Vec::with_capacity(indices.len());
     let mut burial = Burial::default();
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| positions[i as usize]);
         if tri.iter().all(|&i| buried[i as usize]) && fully_covered(a, b, c) {
             burial.hidden_triangles += 1;
@@ -223,7 +223,7 @@ pub fn bury_indexed(positions: &mut [Vec3], indices: &[u32], solids: &SolidIndex
 pub fn lower_buried(positions: &mut [Vec3], solids: &SolidIndex) -> usize {
     let mut lowered = 0;
     for p in positions.iter_mut() {
-        if solids.holds([p.x as f64, (p.y - BURIED_PROBE_DEPTH) as f64, p.z as f64], 1e-4) {
+        if solids.holds([f64::from(p.x), f64::from(p.y - BURIED_PROBE_DEPTH), f64::from(p.z)], 1e-4) {
             p.y -= BURIED_DROP;
             lowered += 1;
         }

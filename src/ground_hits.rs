@@ -14,7 +14,7 @@
 //!
 //! Which ground is mud is the client's to know (its splat and material);
 //! the server only says where and how hard. See docs/ground-hits.md in
-//! space_soup_protocol.
+//! `space_soup_protocol`.
 
 use glam::Vec3;
 

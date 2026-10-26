@@ -396,7 +396,7 @@ use crate::runtime_test_support::{frame, one_player, PHYSX_TEST_LOCK};
         use crate::events::HapticHand;
         use crate::runtime::HapticRequest;
 
-        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join("space_soup_engine_vibrate_test");
         let scenes_dir = dir.join("scenes");
         std::fs::create_dir_all(&scenes_dir).unwrap();

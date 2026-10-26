@@ -2,7 +2,7 @@
 //!
 //! Built as Unity's SCP: Blacksite built its corpses (`RagdollBuilder.cs`), on what this engine
 //! already uses for doors and grabs: one `PxRigidDynamic` per limb and a `PxD6Joint` from each
-//! limb to its parent. Not a PhysX articulation, for this game's reasons (2026-10-18 research,
+//! limb to its parent. Not a `PhysX` articulation, for this game's reasons (2026-10-18 research,
 //! `reports/Ragdolls for Space Soup VR.md`): an articulation's links cannot be kinematic (a hand
 //! carrying a limb), its joints cannot break (a limb torn off), the `physx` 0.19 wrapper cannot
 //! make its links, and 5.1.3 lacks the later fixes for its spherical joints.
@@ -10,7 +10,7 @@
 //! What it does, and what Unity's did that it does not:
 //! - Each joint's NEUTRAL is the bones' rest pose ([`RagdollBodyDef::rest`]), so a limit means
 //!   the same thing however the body died. Its cone is ROUND: a small or very elliptical cone
-//!   jitters (PhysX's own guidance), and Unity's swing2 was half its swing1.
+//!   jitters (`PhysX`'s own guidance), and Unity's swing2 was half its swing1.
 //! - Limbs that are not jointed to each other COLLIDE (an arm lies across the chest, not
 //!   through it). Unity made every pair ignore every other, because its colliders were
 //!   deliberately fat and started out overlapping; these are measured to fit
@@ -19,7 +19,7 @@
 //!   default shader asks for no CCD contacts, so ordinary CCD does nothing here), so a body
 //!   thrown at a wall at 40 m/s does not go through it.
 //! - A limb can be torn off, by a monster: a pull past its tear force held for [`TEAR_AFTER_S`]
-//!   while a monster's grip holds the body (not PhysX's instant break force, which an impact's
+//!   while a monster's grip holds the body (not `PhysX`'s instant break force, which an impact's
 //!   spike tripped; and not by a landing or a skid), or [`PhysicsWorld::tear_ragdoll_limb`].
 //! - A hand holds a limb with a SPRING, not by moving it (Unity made the limb kinematic and
 //!   moved it, so a dragged body went through walls and trailed stiffly): a kinematic anchor at
@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::rigid_physics::{from_px_transform, to_px_transform, to_raw_transform, PhysicsWorld, PxRigidDynamic};
 
-/// A limb's collider, in its body's frame. A capsule lies along its own +X, as PhysX's do.
+/// A limb's collider, in its body's frame. A capsule lies along its own +X, as `PhysX`'s do.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum RagdollShape {
     Capsule { radius: f32, half_height: f32 },
@@ -178,7 +178,7 @@ pub(crate) struct Ragdoll {
 }
 
 /// A limb tears when its joint is pulled past its tear force for this long, straight (s). Not
-/// PhysX's break force, which tears on the instant: an impact's spike tore limbs off a body
+/// `PhysX`'s break force, which tears on the instant: an impact's spike tore limbs off a body
 /// landing. Measured (`joint_loads_impacts_against_pulls`): a 30 m/s body into a wall peaks at
 /// 11,000 N but in runs of a few steps; a monster pulling an arm off a held body stays past
 /// 600 N for 29 steps (0.48 s); a player's hand never reaches it (300 N).
@@ -206,11 +206,11 @@ fn px(v: Vec3) -> physx_sys::PxVec3 {
 }
 
 fn as_body(p: *mut physx_sys::PxRigidDynamic) -> *mut physx_sys::PxRigidBody {
-    p as *mut physx_sys::PxRigidBody
+    p.cast::<physx_sys::PxRigidBody>()
 }
 
 fn as_joint(j: *mut physx_sys::PxD6Joint) -> *mut physx_sys::PxJoint {
-    j as *mut physx_sys::PxJoint
+    j.cast::<physx_sys::PxJoint>()
 }
 
 impl PhysicsWorld {
@@ -243,19 +243,19 @@ impl PhysicsWorld {
                 }
                 return Err(format!("{id}: could not make the body for {}", b.bone));
             };
-            let ptr = &mut *actor as *mut PxRigidDynamic as *mut physx_sys::PxRigidDynamic;
+            let ptr = (&raw mut *actor).cast::<physx_sys::PxRigidDynamic>();
             unsafe {
                 physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(as_body(ptr), b.mass, std::ptr::null(), false);
                 let i = physx_sys::PxRigidBody_getMassSpaceInertiaTensor(as_body(ptr));
                 let i = physx_sys::PxVec3 { x: i.x * INERTIA_SCALE, y: i.y * INERTIA_SCALE, z: i.z * INERTIA_SCALE };
-                physx_sys::PxRigidBody_setMassSpaceInertiaTensor_mut(as_body(ptr), &i);
+                physx_sys::PxRigidBody_setMassSpaceInertiaTensor_mut(as_body(ptr), &raw const i);
                 physx_sys::PxRigidBody_setLinearDamping_mut(as_body(ptr), LINEAR_DAMPING);
                 physx_sys::PxRigidBody_setAngularDamping_mut(as_body(ptr), ANGULAR_DAMPING);
                 physx_sys::PxRigidBody_setMaxDepenetrationVelocity_mut(as_body(ptr), MAX_DEPENETRATION);
                 physx_sys::PxRigidBody_setRigidBodyFlag_mut(as_body(ptr), physx_sys::PxRigidBodyFlag::EnableSpeculativeCcd, true);
                 physx_sys::PxRigidDynamic_setSolverIterationCounts_mut(ptr, ITERATIONS.0, ITERATIONS.1);
                 let mut shape: *mut physx_sys::PxShape = std::ptr::null_mut();
-                physx_sys::PxRigidActor_getShapes(ptr as *const physx_sys::PxRigidActor, &mut shape, 1, 0);
+                physx_sys::PxRigidActor_getShapes(ptr as *const physx_sys::PxRigidActor, &raw mut shape, 1, 0);
                 if !shape.is_null() {
                     physx_sys::PxShape_setFlag_mut(shape, physx_sys::PxShapeFlag::SceneQueryShape, false);
                 }
@@ -274,10 +274,10 @@ impl PhysicsWorld {
             let joint = unsafe {
                 physx_sys::phys_PxD6JointCreate(
                     self.foundation.as_mut_ptr(),
-                    bodies[p] as *mut physx_sys::PxRigidActor,
-                    &parent_frame,
-                    bodies[i] as *mut physx_sys::PxRigidActor,
-                    &child_frame,
+                    bodies[p].cast::<physx_sys::PxRigidActor>(),
+                    &raw const parent_frame,
+                    bodies[i].cast::<physx_sys::PxRigidActor>(),
+                    &raw const child_frame,
                 )
             };
             if joint.is_null() {
@@ -333,8 +333,8 @@ impl PhysicsWorld {
 
     fn release_body(&mut self, ptr: *mut physx_sys::PxRigidDynamic) {
         unsafe {
-            physx_sys::PxScene_removeActor_mut(self.scene.as_mut_ptr(), ptr as *mut physx_sys::PxActor, false);
-            physx_sys::PxActor_release_mut(ptr as *mut physx_sys::PxActor);
+            physx_sys::PxScene_removeActor_mut(self.scene.as_mut_ptr(), ptr.cast::<physx_sys::PxActor>(), false);
+            physx_sys::PxActor_release_mut(ptr.cast::<physx_sys::PxActor>());
         }
     }
 
@@ -370,7 +370,7 @@ impl PhysicsWorld {
     /// Each body's pose, world, in the order of its def.
     pub fn ragdoll_poses(&self, id: &str) -> Option<Vec<(Vec3, Quat)>> {
         let r = self.ragdolls.get(id)?;
-        Some(r.bodies.iter().map(|&p| from_px_transform(&unsafe { (*(p as *mut PxRigidDynamic)).get_global_pose() })).collect())
+        Some(r.bodies.iter().map(|&p| from_px_transform(&unsafe { (*p.cast::<PxRigidDynamic>()).get_global_pose() })).collect())
     }
 
     /// Each body's linear velocity, world.
@@ -414,7 +414,7 @@ impl PhysicsWorld {
                 return None;
             }
             let (mut f, mut t) = (physx_sys::PxVec3 { x: 0.0, y: 0.0, z: 0.0 }, physx_sys::PxVec3 { x: 0.0, y: 0.0, z: 0.0 });
-            physx_sys::PxConstraint_getForce(c, &mut f, &mut t);
+            physx_sys::PxConstraint_getForce(c, &raw mut f, &raw mut t);
             Some((Vec3::new(f.x, f.y, f.z).length(), Vec3::new(t.x, t.y, t.z).length()))
         }
     }
@@ -422,7 +422,7 @@ impl PhysicsWorld {
     /// Tears limb `body` from its parent.
     pub fn tear_ragdoll_limb(&mut self, id: &str, body: usize) {
         let Some(r) = self.ragdolls.get_mut(id) else { return };
-        if let Some(Some(j)) = r.joints.get_mut(body).map(|j| j.take()) {
+        if let Some(Some(j)) = r.joints.get_mut(body).map(std::option::Option::take) {
             unsafe { physx_sys::PxJoint_release_mut(as_joint(j)) };
         }
         if let Some(&p) = r.bodies.get(body) {
@@ -481,10 +481,10 @@ impl PhysicsWorld {
             (),
         )?;
         anchor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
-        let anchor_ptr = &mut *anchor as *mut PxRigidDynamic as *mut physx_sys::PxRigidDynamic;
+        let anchor_ptr = (&raw mut *anchor).cast::<physx_sys::PxRigidDynamic>();
         unsafe {
             let mut shape: *mut physx_sys::PxShape = std::ptr::null_mut();
-            physx_sys::PxRigidActor_getShapes(anchor_ptr as *const physx_sys::PxRigidActor, &mut shape, 1, 0);
+            physx_sys::PxRigidActor_getShapes(anchor_ptr as *const physx_sys::PxRigidActor, &raw mut shape, 1, 0);
             if !shape.is_null() {
                 physx_sys::PxShape_setFlag_mut(shape, physx_sys::PxShapeFlag::SimulationShape, false);
                 physx_sys::PxShape_setFlag_mut(shape, physx_sys::PxShapeFlag::SceneQueryShape, false);
@@ -492,14 +492,14 @@ impl PhysicsWorld {
         }
         self.scene.add_dynamic_actor(anchor);
 
-        let (lp, lr) = from_px_transform(&unsafe { (*(limb as *mut PxRigidDynamic)).get_global_pose() });
+        let (lp, lr) = from_px_transform(&unsafe { (*limb.cast::<PxRigidDynamic>()).get_global_pose() });
         let in_limb = lr.inverse() * (at - lp);
         let joint = unsafe {
             physx_sys::phys_PxD6JointCreate(
                 self.foundation.as_mut_ptr(),
-                anchor_ptr as *mut physx_sys::PxRigidActor,
+                anchor_ptr.cast::<physx_sys::PxRigidActor>(),
                 &raw(Vec3::ZERO, Quat::IDENTITY),
-                limb as *mut physx_sys::PxRigidActor,
+                limb.cast::<physx_sys::PxRigidActor>(),
                 &raw(in_limb, lr.inverse()),
             )
         };
@@ -517,7 +517,7 @@ impl PhysicsWorld {
             }
             let spring = physx_sys::PxD6JointDrive_new_1(strength.stiffness, strength.damping, f32::MAX, false);
             for d in [D::X, D::Y, D::Z] {
-                physx_sys::PxD6Joint_setDrive_mut(joint, d, &spring);
+                physx_sys::PxD6Joint_setDrive_mut(joint, d, &raw const spring);
             }
             physx_sys::PxRigidDynamic_wakeUp_mut(limb);
         }
@@ -532,7 +532,7 @@ impl PhysicsWorld {
         if let Some(g) = self.ragdoll_grips.get_mut(&grip) {
             g.hand = at;
             let target = raw(at, Quat::IDENTITY);
-            unsafe { physx_sys::PxRigidDynamic_setKinematicTarget_mut(g.anchor, &target) };
+            unsafe { physx_sys::PxRigidDynamic_setKinematicTarget_mut(g.anchor, &raw const target) };
         }
     }
 
@@ -572,7 +572,7 @@ impl PhysicsWorld {
                     let c = physx_sys::PxJoint_getConstraint(as_joint(j));
                     let (mut f, mut t) = (physx_sys::PxVec3 { x: 0.0, y: 0.0, z: 0.0 }, physx_sys::PxVec3 { x: 0.0, y: 0.0, z: 0.0 });
                     if !c.is_null() {
-                        physx_sys::PxConstraint_getForce(c, &mut f, &mut t);
+                        physx_sys::PxConstraint_getForce(c, &raw mut f, &raw mut t);
                     }
                     Vec3::new(f.x, f.y, f.z).length()
                 };
@@ -593,7 +593,7 @@ impl PhysicsWorld {
             if g.joint.is_null() {
                 continue;
             }
-            let (lp, lr) = from_px_transform(&unsafe { (*(g.limb as *mut PxRigidDynamic)).get_global_pose() });
+            let (lp, lr) = from_px_transform(&unsafe { (*g.limb.cast::<PxRigidDynamic>()).get_global_pose() });
             if (lp + lr * g.point).distance(g.hand) > g.reach {
                 unsafe { physx_sys::PxJoint_release_mut(as_joint(g.joint)) };
                 g.joint = std::ptr::null_mut();

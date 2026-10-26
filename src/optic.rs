@@ -1,9 +1,8 @@
 //! Runtime state for magnifying optics (weapon sights, scopes, binoculars).
 //!
-//! This module is deliberately pure: it takes poses and an [`OpticDef`] and
-//! produces the small amount of state the renderer needs. It never touches
-//! camera matrices, wgpu, or scene mutation, so all of it is unit-testable
-//! without a headset or a GPU.
+//! Pure: poses and an [`OpticDef`] in, the small state the renderer needs out.
+//! No camera matrices, wgpu or scene mutation, so it is unit-testable without a
+//! headset or a GPU.
 //!
 //! The behaviour here is driven by real optics rather than tuning curves:
 //!
@@ -43,7 +42,7 @@ pub struct OpticalPathPose {
     pub objective: Vec3,
     /// Rear lens: what the player looks into.
     pub ocular: Vec3,
-    /// Radius of the ocular glass, used for on-screen coverage/gating.
+    /// Radius of the ocular glass; sets on-screen coverage and gating.
     pub ocular_radius_m: f32,
 }
 
@@ -120,7 +119,7 @@ pub fn sample_eye_box(
     // Unshaded while the eye pupil is fully inside the exit pupil...
     let core_r = ((usable_pupil_mm - EYE_PUPIL_DIAMETER_MM) * 0.5).max(0.0);
     // ...fully dark once it is entirely outside.
-    let outer_r = (usable_pupil_mm + EYE_PUPIL_DIAMETER_MM) * 0.5;
+    let outer_r = f32::midpoint(usable_pupil_mm, EYE_PUPIL_DIAMETER_MM);
 
     let occupancy = if lateral_mm <= core_r {
         1.0
@@ -183,9 +182,8 @@ impl MagnificationState {
         self.blend.is_some()
     }
 
-    /// Change power over `duration_s` instead of snapping. Used for button and
-    /// script changes, where an instant jump between (say) 1x and 6x reads as a
-    /// glitch rather than as glass moving.
+    /// Change power over `duration_s` instead of snapping, so button and script
+    /// changes (1x to 6x, say) read as glass moving rather than a glitch.
     pub fn set_over(&mut self, def: &MagnificationDef, value: f32, duration_s: f32) {
         let resolved = resolve_magnification(def, value);
         if duration_s <= 0.0 || (resolved - self.current).abs() < 1e-6 {
@@ -222,8 +220,8 @@ impl MagnificationState {
     /// supports. For a stepped optic this snaps to the nearest detent, because a
     /// variable optic with detents cannot sit between them.
     ///
-    /// This is the path a physical ring or wheel uses: the glass is wherever the
-    /// player's hand has put it, with no easing in between.
+    /// A physical ring or wheel sets power this way: the glass sits wherever the
+    /// hand put it, with no easing.
     pub fn set(&mut self, def: &MagnificationDef, value: f32) {
         self.current = resolve_magnification(def, value);
         self.blend = None;
@@ -342,8 +340,7 @@ impl OpticController {
         self.magnification.current()
     }
 
-    /// Snap power immediately. This is the physical-control path (ring/wheel):
-    /// the glass is wherever the hand put it.
+    /// Snap power at once, for a physical ring or wheel.
     pub fn set_magnification(&mut self, def: &OpticDef, value: f32) {
         self.magnification.set(&def.magnification, value);
     }

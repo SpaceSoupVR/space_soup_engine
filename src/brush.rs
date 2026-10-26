@@ -754,7 +754,7 @@ impl BrushDef {
         if was_half.iter().chain(half.iter()).any(|h| *h <= 1e-6) {
             return false;
         }
-        let was_centre = [0, 1, 2].map(|i| (hi[i] + lo[i]) / 2.0);
+        let was_centre = [0, 1, 2].map(|i| f64::midpoint(hi[i], lo[i]));
         let k = [0, 1, 2].map(|i| half[i] / was_half[i]);
         let a = [[k[0], 0.0, 0.0], [0.0, k[1], 0.0], [0.0, 0.0, k[2]]];
         // x' = k (x - c) + c'.
@@ -1689,8 +1689,8 @@ mod transform_tests {
     #[test]
     fn an_impossible_map_changes_nothing() {
         let mut b = cube();
-        let before = format!("{:?}", b);
+        let before = format!("{b:?}");
         b.transform([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3], [0.0; 3], true);
-        assert_eq!(before, format!("{:?}", b));
+        assert_eq!(before, format!("{b:?}"));
     }
 }

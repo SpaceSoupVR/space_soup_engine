@@ -26,7 +26,9 @@ pub use crate::scene_rig::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum OpticClass {
+    #[default]
     ReflexRedDot,
     Holographic,
     Lpvo,
@@ -35,11 +37,6 @@ pub enum OpticClass {
     Binocular,
 }
 
-impl Default for OpticClass {
-    fn default() -> Self {
-        Self::ReflexRedDot
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MagnificationDef {
@@ -77,7 +74,9 @@ impl MagnificationDef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum MagnificationControlDef {
+    #[default]
     None,
     ButtonStep { button: String, wrap: bool },
     Axis { source: String, sensitivity: f32 },
@@ -95,24 +94,16 @@ pub enum MagnificationControlDef {
     ScriptOnly,
 }
 
-impl Default for MagnificationControlDef {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum LensClipShape {
+    #[default]
     Circle,
     Ellipse,
     MeshMask,
 }
 
-impl Default for LensClipShape {
-    fn default() -> Self {
-        Self::Circle
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpticalPathDef {
@@ -193,16 +184,13 @@ impl OpticalPathsDef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ReticleFocalPlane {
     First,
+    #[default]
     Second,
 }
 
-impl Default for ReticleFocalPlane {
-    fn default() -> Self {
-        Self::Second
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReticleDef {
@@ -259,17 +247,14 @@ impl Default for ZeroDef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum OpticQualityTier {
     Low,
+    #[default]
     Balanced,
     Ultra,
 }
 
-impl Default for OpticQualityTier {
-    fn default() -> Self {
-        Self::Balanced
-    }
-}
 
 impl OpticQualityTier {
     pub fn target_resolution(&self) -> u32 {
@@ -1190,12 +1175,9 @@ mod breakable_editor_parity {
         assert_eq!(def.health, 250.0);
     }
 
-    /// The checked-in lobby scene is the scope test fixture, so the engine must
-    /// be able to read the optic an author saved. This is a *parity* test: it
-    /// loads the real file rather than a literal, so it fails if the editor and
-    /// the engine ever disagree about the shape of `OpticDef` — or if the
-    /// content is dropped, which is exactly what happened during the port that
-    /// brought the optic work onto this branch.
+    /// The checked-in lobby scene is the scope fixture: loading the real file
+    /// (not a literal) fails if the editor and the engine disagree on the shape
+    /// of `OpticDef`, or if the optic content is dropped.
     #[test]
     #[ignore = "needs a game whose lobby scene carries the m4a1 optic; the workspace game/ does not"]
     fn the_checked_in_lobby_scene_optic_deserializes_in_rust() {

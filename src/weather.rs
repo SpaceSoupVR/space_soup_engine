@@ -663,7 +663,7 @@ impl WeatherField {
             .filter(|(_, (d, _, _))| d.from_sky)
             .map(|(i, (d, _, _))| {
                 let (x0, z0, x1, z1) = d.extent();
-                (i, [(x0 + x1) * 0.5, (z0 + z1) * 0.5])
+                (i, [f32::midpoint(x0, x1), f32::midpoint(z0, z1)])
             })
             .collect()
     }
@@ -785,7 +785,7 @@ mod tests {
     #[test]
     fn an_area_that_follows_the_sky_rains_while_the_clouds_do() {
         let def = WeatherDef { from_sky: true, cycle: [60.0, 60.0], intensity: 0.8, ..rain() };
-        let mut field = WeatherField::new(&[def.clone()], flat);
+        let mut field = WeatherField::new(std::slice::from_ref(&def), flat);
         assert_eq!(field.sky_areas().len(), 1);
         field.step(1.0, 0.25);
         assert_eq!(field.areas[0].2.falling, 0.0, "dry until the sky says otherwise, whatever the cycle");

@@ -140,7 +140,7 @@ fn swings(def: &RagdollDef, poses: &[(Vec3, Quat)]) -> Vec<(usize, f32)> {
 
 #[test]
 fn a_dropped_body_settles_in_one_piece_within_its_limits() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut p, mut s) = world(vec![block("ground", [-20.0, -1.0, -20.0], [20.0, 0.0, 20.0])]);
     let def = body();
     p.spawn_ragdoll("corpse", &def, &start(&def, Vec3::new(0.0, 2.0, 0.0), Vec3::new(1.5, 0.0, 0.5))).unwrap();
@@ -176,7 +176,7 @@ fn a_dropped_body_settles_in_one_piece_within_its_limits() {
 
 #[test]
 fn a_body_thrown_at_a_wall_at_40_m_s_stays_this_side_of_it() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut p, mut s) = world(vec![block("ground", [-20.0, -1.0, -20.0], [20.0, 0.0, 20.0]), block("wall", [3.0, 0.0, -10.0], [3.15, 4.0, 10.0])]);
     let def = body();
     p.spawn_ragdoll("thrown", &def, &start(&def, Vec3::new(0.0, 1.2, 0.0), Vec3::new(40.0, 3.0, 0.0))).unwrap();
@@ -211,7 +211,7 @@ fn a_body_thrown_at_a_wall_at_40_m_s_stays_this_side_of_it() {
 
 #[test]
 fn limbs_tear_off_by_hand_and_by_their_break_force() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut p, mut s) = world(vec![block("ground", [-20.0, -1.0, -20.0], [20.0, 0.0, 20.0])]);
     let def = body();
     p.spawn_ragdoll("a", &def, &start(&def, Vec3::new(0.0, 0.4, 0.0), Vec3::ZERO)).unwrap();
@@ -271,7 +271,7 @@ fn limbs_tear_off_by_hand_and_by_their_break_force() {
 
 #[test]
 fn a_hand_drags_a_body_and_lets_go_of_one_snagged_on_a_wall() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut p, mut s) = world(vec![block("ground", [-20.0, -1.0, -20.0], [20.0, 0.0, 20.0]), block("wall", [3.0, 0.0, -10.0], [3.3, 4.0, 10.0])]);
     let def = body();
     p.spawn_ragdoll("c", &def, &start(&def, Vec3::new(0.0, 0.25, 0.0), Vec3::ZERO)).unwrap();
@@ -303,7 +303,7 @@ fn a_hand_drags_a_body_and_lets_go_of_one_snagged_on_a_wall() {
 
 #[test]
 fn a_frozen_corpse_stays_put_and_a_rebuild_lets_ragdolls_go() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut p, mut s) = world(vec![block("ground", [-20.0, -1.0, -20.0], [20.0, 0.0, 20.0])]);
     let def = body();
     p.spawn_ragdoll("d", &def, &start(&def, Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO)).unwrap();
@@ -336,7 +336,7 @@ fn a_frozen_corpse_stays_put_and_a_rebuild_lets_ragdolls_go() {
 /// What eight bodies falling at once cost a step (release builds only mean anything).
 #[test]
 fn eight_bodies_falling_at_once_cost() {
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut p, mut s) = world(vec![block("ground", [-20.0, -1.0, -20.0], [20.0, 0.0, 20.0])]);
     let def = body();
     for k in 0..8 {
@@ -366,7 +366,7 @@ fn joint_loads_impacts_against_pulls() {
     if std::env::var_os("LOADS").is_none() {
         return;
     }
-    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut p, mut s) = world(vec![block("ground", [-20.0, -1.0, -20.0], [20.0, 0.0, 20.0]), block("wall", [6.0, 0.0, -10.0], [6.3, 4.0, 10.0])]);
     let def = body();
     let run = |p: &mut PhysicsWorld, s: &mut Scene, id: &str, steps: usize, mv: &mut dyn FnMut(&mut PhysicsWorld, usize)| -> Vec<f32> {
@@ -381,10 +381,10 @@ fn joint_loads_impacts_against_pulls() {
     let over = |loads: &[f32], f: f32| loads.iter().filter(|l| **l > f).count();
     p.spawn_ragdoll("drop", &def, &start(&def, Vec3::new(0.0, 2.0, 0.0), Vec3::ZERO)).unwrap();
     let l = run(&mut p, &mut s, "drop", 180, &mut |_, _| {});
-    eprintln!("2 m drop: peak {:.0} N, steps over 600 N: {}", l.iter().cloned().fold(0.0, f32::max), over(&l, 600.0));
+    eprintln!("2 m drop: peak {:.0} N, steps over 600 N: {}", l.iter().copied().fold(0.0, f32::max), over(&l, 600.0));
     p.spawn_ragdoll("wall", &def, &start(&def, Vec3::new(3.0, 1.2, 4.0), Vec3::new(30.0, 2.0, 0.0))).unwrap();
     let l = run(&mut p, &mut s, "wall", 180, &mut |_, _| {});
-    eprintln!("30 m/s into a wall: peak {:.0} N, steps over 600 N: {}", l.iter().cloned().fold(0.0, f32::max), over(&l, 600.0));
+    eprintln!("30 m/s into a wall: peak {:.0} N, steps over 600 N: {}", l.iter().copied().fold(0.0, f32::max), over(&l, 600.0));
     p.spawn_ragdoll("pull", &def, &start(&def, Vec3::new(-6.0, 0.4, 0.0), Vec3::ZERO)).unwrap();
     for _ in 0..90 {
         step(&mut p, &mut s);
@@ -404,7 +404,7 @@ fn joint_loads_impacts_against_pulls() {
             run_len = if *x > 600.0 { run_len + 1 } else { 0 };
             longest = longest.max(run_len);
         }
-        eprintln!("{name} pulling an arm, body held: peak {:.0} N, steps over 600 N: {}, longest run over 600 N: {longest}", l.iter().cloned().fold(0.0, f32::max), over(&l, 600.0));
+        eprintln!("{name} pulling an arm, body held: peak {:.0} N, steps over 600 N: {}, longest run over 600 N: {longest}", l.iter().copied().fold(0.0, f32::max), over(&l, 600.0));
         p.release_ragdoll_grip(grip);
         p.release_ragdoll_grip(hold);
         for _ in 0..60 {

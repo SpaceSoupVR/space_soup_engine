@@ -527,7 +527,7 @@ fn rocks_into_a_pond_cost_what_is_awake_and_tell_of_no_more_than_the_cap() {
     assert!(many < one + 60.0, "128 sleeping rocks cost {many:.1} us a step against {one:.1} for one");
 }
 
-/// THE SHIPPED PILES, in the real level: test_room's fourteen piled props -- by
+/// THE SHIPPED PILES, in the real level: `test_room`'s fourteen piled props -- by
 /// the sea and by the pond, three pebbles, two rocks, a boulder and a crate
 /// each -- and the mud patch's three settle where they were put and go to
 /// sleep; then the pond's boulder, thrown out over the water, is told of once
