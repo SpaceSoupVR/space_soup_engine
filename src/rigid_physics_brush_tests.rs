@@ -160,7 +160,7 @@ fn physics_ray(physics: &PhysicsWorld) -> bool {
 #[test]
 fn the_shipped_hall_is_entered_by_its_door_and_not_through_its_walls() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
+    let game = &crate::test_game_dir();
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);
@@ -243,7 +243,7 @@ fn a_room_with_a_low_ceiling_keeps_the_player_on_its_floor() {
 #[test]
 fn the_shipped_hallway_is_walked_through_on_its_floor() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
+    let game = &crate::test_game_dir();
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);
@@ -285,7 +285,7 @@ fn the_shipped_hallway_is_walked_through_on_its_floor() {
 #[test]
 fn the_baked_cave_is_walked_through_without_a_jolt() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let game = std::env::var("GAME_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../game").to_string());
+    let game = crate::test_game_dir();
     let game = Path::new(&game);
     let Ok(scene) = Scene::load(&game.join("scenes/test_room.json")) else {
         eprintln!("skipped: no test_room");

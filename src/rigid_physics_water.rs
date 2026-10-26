@@ -222,6 +222,7 @@ impl PhysicsWorld {
         let now = self.clock;
         let mut stats = StepStats { bodies: self.dynamic.len(), respawned: self.stats.respawned, ..Default::default() };
         let mut entries: Vec<crate::water::WaterEntry> = Vec::new();
+        let mut landings: Vec<crate::ground_hits::GroundHit> = Vec::new();
         for (id, state) in &mut self.dynamic {
             let asleep = unsafe { physx_sys::PxRigidDynamic_isSleeping(state.ptr as *const physx_sys::PxRigidDynamic) };
             if asleep && state.asleep {
@@ -238,11 +239,20 @@ impl PhysicsWorld {
             let entity = &mut scene.objects[state.object];
             entity.cuboid.position = pos;
             entity.cuboid.rotation = rot;
-            if self.water.is_empty() {
+            if self.water.is_empty() && self.terrain.is_none() {
                 continue;
             }
             let (v, mass) = unsafe { ((*state.ptr).get_linear_velocity(), (*state.ptr).get_mass()) };
             let half = crate::water::world_half_extents(state.half, rot);
+            if let Some(ground) = self.terrain.as_ref() {
+                if let Some(mut hit) = state.ground.see(pos, half, Vec3::new(v.x(), v.y(), v.z()), mass, ground.height_at(pos.x, pos.z)) {
+                    hit.id.clone_from(id);
+                    landings.push(hit);
+                }
+            }
+            if self.water.is_empty() {
+                continue;
+            }
             let surface = self.water.iter().filter_map(|w| w.surface_at(pos.x, pos.z)).reduce(f32::max);
             if let Some(mut e) = state.water.see(Some(now), pos, half, Vec3::new(v.x(), v.y(), v.z()), mass, surface) {
                 e.id.clone_from(id);
@@ -255,6 +265,8 @@ impl PhysicsWorld {
         stats.entries_told = entries.len();
         self.water_entries.extend(entries);
         crate::water::keep_most_energetic(&mut self.water_entries, 256);
+        self.ground_hits.extend(landings);
+        crate::ground_hits::keep_most_energetic(&mut self.ground_hits, 256);
         self.stats = stats;
     }
 }

@@ -182,6 +182,8 @@ pub(crate) struct DynamicActor {
     pub(crate) asleep: bool,
     /// Its going in and out of the water (`water::WaterState`).
     pub(crate) water: crate::water::WaterState,
+    /// Its landings on the ground (`ground_hits::GroundState`).
+    pub(crate) ground: crate::ground_hits::GroundState,
     /// Put back where it started after resting under water this long,
     /// seconds (`RigidBodyDef::respawn_sunk`), and how long it has.
     pub(crate) respawn_sunk: Option<f32>,
@@ -205,6 +207,7 @@ impl DynamicActor {
             object: 0,
             asleep: false,
             water: crate::water::WaterState::default(),
+            ground: crate::ground_hits::GroundState::default(),
             respawn_sunk: None,
             sunk_for: 0.0,
             checked_at: 0.0,
@@ -263,6 +266,10 @@ pub struct PhysicsWorld {
     /// (`take_water_entries`): what the splashes are raised from. Which
     /// bodies are in it is each body's own (`DynamicActor::water`).
     pub(crate) water_entries: Vec<crate::water::WaterEntry>,
+    /// The level's ground, kept for what lands on it, and the bodies that
+    /// landed since they were last asked for (`take_ground_hits`).
+    pub(crate) terrain: Option<Box<dyn crate::terrain::TerrainSource>>,
+    pub(crate) ground_hits: Vec<crate::ground_hits::GroundHit>,
 
     pub(crate) doors: HashMap<String, crate::door::DoorGeom>,
 
@@ -398,6 +405,8 @@ impl PhysicsWorld {
             scratch: unsafe { ScratchBuffer::new(4) },
             water: Vec::new(),
             water_entries: Vec::new(),
+            terrain: None,
+            ground_hits: Vec::new(),
             doors: HashMap::new(),
             door_hinges: HashMap::new(),
             door_latches: HashMap::new(),
@@ -464,6 +473,13 @@ impl PhysicsWorld {
     /// (`space_soup::renderer::effects::Splash`). Seen in [`Self::step`].
     pub fn take_water_entries(&mut self) -> Vec<crate::water::WaterEntry> {
         std::mem::take(&mut self.water_entries)
+    }
+
+    /// THE BODIES THAT LANDED ON THE GROUND since this was last called, each
+    /// at the speed it fell (`ground_hits::GroundState`). Seen in
+    /// [`Self::step`].
+    pub fn take_ground_hits(&mut self) -> Vec<crate::ground_hits::GroundHit> {
+        std::mem::take(&mut self.ground_hits)
     }
 
     /// WHERE A SHOT MEETS WATER: the point where the ray from `origin` along
@@ -647,6 +663,7 @@ impl PhysicsWorld {
         for height in self.water.iter().filter_map(super::water::WaterFootprint::surface_height).collect::<Vec<_>>() {
             self.note_floor(height);
         }
+        self.terrain = terrain;
     }
 }
 

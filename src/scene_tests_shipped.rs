@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::scene::Scene;
 
 fn game_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../game")
+    crate::test_game_dir()
 }
 
 fn shipped_scenes() -> Vec<PathBuf> {

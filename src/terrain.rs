@@ -113,9 +113,10 @@ pub trait TerrainSource: Send + Sync {
 ///
 /// ONE rule, asked by the mesher ([`TerrainSource::patch`]) and by physics'
 /// height field (`Heightfield::cell_splits_through_first_sample`), so a ray
-/// lands on the triangle that is drawn. See the mesher for why the shorter
-/// diagonal.
-fn splits_b_to_c(ha: f32, hb: f32, hc: f32, hd: f32) -> bool {
+/// lands on the triangle that is drawn -- and by the studio's sculpted copy,
+/// so the ground does not flip at the first dab. See the mesher for why the
+/// shorter diagonal.
+pub fn splits_b_to_c(ha: f32, hb: f32, hc: f32, hd: f32) -> bool {
     (hb - hc).abs() <= (ha - hd).abs()
 }
 

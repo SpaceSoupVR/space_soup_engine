@@ -76,7 +76,7 @@ fn a_player_out_of_their_depth_can_walk_back_to_the_shore() {
 #[test]
 fn the_shipped_beach_is_waded_into_and_no_further_and_the_pond_all_the_way() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
+    let game = &crate::test_game_dir();
     let scene = Scene::load(&game.join("scenes/test_room.json")).expect("test_room.json loads");
     let mut physics = PhysicsWorld::new();
     physics.rebuild(&scene, game);
@@ -145,4 +145,40 @@ fn a_shot_finds_where_it_meets_the_water() {
     assert!(physics.water_hit(muzzle, Vec3::new(1.0, 0.1, 0.0), 50.0).is_none(), "upward");
     assert!(physics.water_hit(muzzle, Vec3::new(-1.0, -0.25, 0.0), 50.0).is_none(), "onto dry ground");
     assert!(physics.water_hit(muzzle, Vec3::new(1.0, -0.25, 0.0), 3.0).is_none(), "out of range");
+}
+
+/// A body physics drops onto the level's terrain is told of once, as it
+/// landed, at the speed the fall gave it (`ground_hits`): what every headset
+/// raises its mud splash from where that ground is mud. Resting after, it is
+/// not told again.
+#[test]
+fn a_body_dropped_onto_the_terrain_is_told_once_at_the_speed_it_fell() {
+    let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = std::env::temp_dir().join(format!("ss_ground_hit_{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("terrain")).unwrap();
+    std::fs::write(dir.join("terrain/flat.r16"), vec![0u8; 9 * 9 * 2]).unwrap();
+    let mut scene: Scene = serde_json::from_str(
+        r#"{"name":"ground_drop","objects":[],"terrain":{"kind":"heightfield","path":"terrain/flat.r16","resolution":[9,9],"size":[8.0,8.0],"height_range":[0.0,10.0],"origin":[-4.0,0.0,-4.0]}}"#,
+    )
+    .unwrap();
+    let mut body = GameObject { id: "crate".into(), ..Default::default() };
+    body.cuboid.position = Vec3::new(0.5, 2.0, 0.5);
+    body.cuboid.half_size = Vec3::splat(0.25);
+    body.rigid_body = Some(serde_json::from_str(r#"{"mode":"Dynamic","shape":"Box","mass":30.0}"#).unwrap());
+    scene.objects = vec![body];
+    let mut physics = PhysicsWorld::new();
+    physics.rebuild(&scene, &dir);
+    let rigs = std::collections::HashMap::new();
+    let mut hits = Vec::new();
+    for _ in 0..360 {
+        physics.step(1.0 / 120.0, &mut scene, &rigs);
+        hits.extend(physics.take_ground_hits());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    let h = &hits[0];
+    assert_eq!((h.id.as_str(), h.kind), ("crate", crate::ground_hits::GroundHitKind::Landing));
+    assert!(h.position.y.abs() < 0.02 && (h.position.x - 0.5).abs() < 0.05, "{h:?}");
+    assert!((-h.velocity.y - (2.0f32 * 9.81 * 1.75).sqrt()).abs() < 0.5, "{h:?}");
+    assert!((h.mass - 30.0).abs() < 1e-3, "{h:?}");
 }

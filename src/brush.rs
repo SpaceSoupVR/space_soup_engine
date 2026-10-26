@@ -170,6 +170,14 @@ fn rotate_axes(u: Vec3, v: Vec3, n: Vec3, degrees: f64) -> (Vec3, Vec3) {
     (rot(u), rot(v))
 }
 
+/// One face of a brush: of a solid, or of a carve (`subtract`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FaceRef {
+    pub carve: bool,
+    pub solid: usize,
+    pub face: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrushSolid {
     pub faces: Vec<BrushFace>,
@@ -181,6 +189,122 @@ pub struct BrushDef {
     pub solids: Vec<BrushSolid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtract: Vec<BrushSolid>,
+}
+
+impl BrushSolid {
+    /// An axis-aligned box about `centre`, `half` its half extents, every
+    /// face in `material` at the default texture scale (the web editor's
+    /// new-brush box).
+    pub fn cuboid(centre: Vec3, half: Vec3, material: &str) -> Self {
+        let faces = (0..6)
+            .map(|i| {
+                let (axis, sign) = (i / 2, if i % 2 == 0 { 1.0 } else { -1.0 });
+                let mut n = [0.0; 3];
+                n[axis] = sign;
+                BrushFace {
+                    plane: [n[0], n[1], n[2], sign * centre[axis] + half[axis]],
+                    material: material.to_string(),
+                    u_axis: None,
+                    v_axis: None,
+                    scale: default_scale(),
+                    shift: [0.0; 2],
+                    rotation: 0.0,
+                    lightmap_scale: default_lightmap(),
+                    smoothing: 0,
+                }
+            })
+            .collect();
+        BrushSolid { faces }
+    }
+
+    /// The solid moved by `delta`, its textures with it: each face's shift
+    /// follows, so a moved wall keeps its brickwork rather than sliding
+    /// through it (texture lock, always on, as the web editor's
+    /// `translateSolid` had it).
+    pub fn translate(&mut self, delta: Vec3) {
+        for f in &mut self.faces {
+            let (u, v) = f.axes();
+            let su = if f.scale[0] == 0.0 { 1.0 } else { f.scale[0] };
+            let sv = if f.scale[1] == 0.0 { 1.0 } else { f.scale[1] };
+            f.plane[3] += dot([f.plane[0], f.plane[1], f.plane[2]], delta);
+            f.shift[0] -= dot(delta, u) / su;
+            f.shift[1] -= dot(delta, v) / sv;
+        }
+    }
+}
+
+impl BrushDef {
+    /// Every solid and carve moved by `delta`, textures locked (see
+    /// `BrushSolid::translate`). A brush's planes are in the world, so moving
+    /// its object's `cuboid` alone moves nothing but the box that reports it.
+    pub fn translate(&mut self, delta: Vec3) {
+        for s in self.solids.iter_mut().chain(self.subtract.iter_mut()) {
+            s.translate(delta);
+        }
+    }
+
+    /// Every solid and carve carried through x' = `a` x + `t` (`a` rows, any
+    /// invertible map: a turn, a resize, both). See `BrushSolid::transform`.
+    pub fn transform(&mut self, a: [[f64; 3]; 3], t: Vec3, anchor: Vec3, stretch_textures: bool) {
+        for s in self.solids.iter_mut().chain(self.subtract.iter_mut()) {
+            s.transform(a, t, anchor, stretch_textures);
+        }
+    }
+}
+
+fn mat_vec(m: [[f64; 3]; 3], v: Vec3) -> Vec3 {
+    [dot(m[0], v), dot(m[1], v), dot(m[2], v)]
+}
+
+/// The transpose of the inverse (the map normals and texture axes take).
+fn inverse_transpose(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    // Rows of the cofactor matrix over the determinant are the rows of
+    // the inverse's transpose.
+    let c0 = cross(m[1], m[2]);
+    let c1 = cross(m[2], m[0]);
+    let c2 = cross(m[0], m[1]);
+    let det = dot(m[0], c0);
+    (det.abs() > 1e-12).then(|| [scale(c0, 1.0 / det), scale(c1, 1.0 / det), scale(c2, 1.0 / det)])
+}
+
+impl BrushSolid {
+    /// THE SOLID CARRIED THROUGH x' = `a` x + `t`, its textures with it.
+    /// Each plane takes the inverse transpose; each face's texture axes are
+    /// made explicit (the defaults follow the normal's largest axis, and a
+    /// turned face would jump to another). With `stretch_textures` the
+    /// texture is fixed to the solid and stretches with a resize, as a turn
+    /// carries it; without, a resize keeps the texture's size in the world,
+    /// pinned where `anchor` (the resize's fixed point) projects onto each
+    /// face, as the web editor's `resizeBrushToCuboid` did.
+    pub fn transform(&mut self, a: [[f64; 3]; 3], t: Vec3, anchor: Vec3, stretch_textures: bool) {
+        let Some(it) = inverse_transpose(a) else { return };
+        for f in &mut self.faces {
+            let pl = f.plane();
+            let (u, v) = f.axes();
+            let su = if f.scale[0] == 0.0 { 1.0 } else { f.scale[0] };
+            let sv = if f.scale[1] == 0.0 { 1.0 } else { f.scale[1] };
+            // Where the anchor meets this face, and where that goes.
+            let on = sub(anchor, scale(pl.n, pl.distance(anchor)));
+            let on2 = add(mat_vec(a, on), t);
+            let n2 = normalize(mat_vec(it, pl.n));
+            f.plane = [n2[0], n2[1], n2[2], dot(n2, on2)];
+            let (ut, vt) = (mat_vec(it, u), mat_vec(it, v));
+            let (lu, lv) = (dot(ut, ut).sqrt().max(1e-12), dot(vt, vt).sqrt().max(1e-12));
+            let (u2, v2) = (scale(ut, 1.0 / lu), scale(vt, 1.0 / lv));
+            if stretch_textures {
+                // uv(x) = x.u / s + shift, and x = a^-1 (x' - t).
+                f.shift[0] -= dot(t, ut) / su;
+                f.shift[1] -= dot(t, vt) / sv;
+                f.scale = [su / lu, sv / lv];
+            } else {
+                f.shift[0] += (dot(on, u) - dot(on2, u2)) / su;
+                f.shift[1] += (dot(on, v) - dot(on2, v2)) / sv;
+            }
+            f.u_axis = Some(u2);
+            f.v_axis = Some(v2);
+            f.rotation = 0.0;
+        }
+    }
 }
 
 fn plane_basis(n: Vec3) -> (Vec3, Vec3) {
@@ -368,7 +492,17 @@ fn subtract_cover(poly: &[Vec3], face: Plane, cover: &BrushSolid) -> Vec<Vec<Vec
 }
 
 pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
+    exposed_fragments_among(solids, &[])
+}
+
+/// `exposed_fragments`, each face trimmed also where a solid of ANOTHER
+/// brush (`others`) covers it or presses against it. Two brushes that touch
+/// are then one building: a hall's outer wall stops where a hallway built
+/// against it begins, instead of running on under the hallway's walls, and
+/// the hallway's wall ends pressed against the hall are gone.
+pub fn exposed_fragments_among(solids: &[BrushSolid], others: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
     let bounds: Vec<Option<(Vec3, Vec3)>> = solids.iter().map(solid_bounds).collect();
+    let other_bounds: Vec<Option<(Vec3, Vec3)>> = others.iter().map(solid_bounds).collect();
     let overlaps = |a: (Vec3, Vec3), b: (Vec3, Vec3)| {
         (0..3).all(|k| a.0[k] <= b.1[k] + EPS && b.0[k] <= a.1[k] + EPS)
     };
@@ -383,11 +517,15 @@ pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
                     let Some(poly) = poly else { return Vec::new() };
                     let face = solid.faces[fi].plane();
                     let mut frags = vec![poly];
-                    for (oj, other) in solids.iter().enumerate() {
-                        if oj == si {
-                            continue;
-                        }
-                        let (Some(a), Some(b)) = (bounds[si], bounds[oj]) else { continue };
+                    let covers = solids
+                        .iter()
+                        .zip(&bounds)
+                        .enumerate()
+                        .filter(|(oj, _)| *oj != si)
+                        .map(|(_, c)| c)
+                        .chain(others.iter().zip(&other_bounds));
+                    for (other, b) in covers {
+                        let (Some(a), Some(b)) = (bounds[si], *b) else { continue };
                         if !overlaps(a, b) {
                             continue;
                         }
@@ -402,6 +540,40 @@ pub fn exposed_fragments(solids: &[BrushSolid]) -> Vec<Vec<Vec<Vec<Vec3>>>> {
                     frags
                 })
                 .collect()
+        })
+        .collect()
+}
+
+/// THE LEVEL'S BRUSHES AS ONE BUILDING (2026-10-21): each brush evaluated,
+/// and its exposed surface trimmed by every other brush's solids as well as
+/// its own (`exposed_fragments_among`). Separate brush objects used to keep
+/// every face another object covered -- a hall's outer wall ran on under a
+/// hallway built against it, a strip lit by the hallway's lamps under 0.3 m
+/// of wall, and the lightmap filtered that light out along the joint as a
+/// bright line at night (headset, 2026-10-21).
+pub fn scene_exposed_fragments(brushes: &[&BrushDef]) -> Vec<(Vec<BrushSolid>, Vec<Vec<Vec<Vec<Vec3>>>>)> {
+    let evaluated: Vec<Vec<BrushSolid>> = brushes.iter().map(|b| b.evaluate()).collect();
+    let extent = |solids: &[BrushSolid]| {
+        solids.iter().filter_map(solid_bounds).fold(None, |acc: Option<(Vec3, Vec3)>, (lo, hi)| {
+            Some(match acc {
+                Some((a, b)) => ([a[0].min(lo[0]), a[1].min(lo[1]), a[2].min(lo[2])], [b[0].max(hi[0]), b[1].max(hi[1]), b[2].max(hi[2])]),
+                None => (lo, hi),
+            })
+        })
+    };
+    let extents: Vec<Option<(Vec3, Vec3)>> = evaluated.iter().map(|s| extent(s)).collect();
+    let touch = |a: Option<(Vec3, Vec3)>, b: Option<(Vec3, Vec3)>| match (a, b) {
+        (Some(a), Some(b)) => (0..3).all(|k| a.0[k] <= b.1[k] + EPS && b.0[k] <= a.1[k] + EPS),
+        _ => false,
+    };
+    (0..evaluated.len())
+        .map(|i| {
+            let others: Vec<BrushSolid> = (0..evaluated.len())
+                .filter(|&j| j != i && touch(extents[i], extents[j]))
+                .flat_map(|j| evaluated[j].iter().cloned())
+                .collect();
+            let exposed = exposed_fragments_among(&evaluated[i], &others);
+            (evaluated[i].clone(), exposed)
         })
         .collect()
 }
@@ -511,6 +683,94 @@ impl BrushDef {
         self.evaluate().iter().map(solid_volume).sum()
     }
 
+    /// THE FACE A POINT ON THE BRUSH'S SURFACE LIES ON: of the solids and
+    /// carves holding `p` (within `eps` of every plane), the face whose
+    /// plane it is nearest, if that is within `eps`. A carve's face is the
+    /// wall the carve leaves, so editing it edits what is seen there.
+    #[must_use]
+    pub fn face_ref_at(&self, p: Vec3, eps: f64) -> Option<FaceRef> {
+        let mut best: Option<(f64, FaceRef)> = None;
+        for (carve, list) in [(false, &self.solids), (true, &self.subtract)] {
+            for (solid, s) in list.iter().enumerate() {
+                let d: Vec<f64> = s.faces.iter().map(|f| f.plane().distance(p)).collect();
+                if d.iter().any(|x| *x > eps) {
+                    continue;
+                }
+                for (face, x) in d.iter().enumerate() {
+                    let x = x.abs();
+                    if x <= eps && best.is_none_or(|b| x < b.0) {
+                        best = Some((x, FaceRef { carve, solid, face }));
+                    }
+                }
+            }
+        }
+        best.map(|(_, r)| r)
+    }
+
+    /// `face_ref_at`'s face itself.
+    pub fn face_at_mut(&mut self, p: Vec3, eps: f64) -> Option<&mut BrushFace> {
+        let r = self.face_ref_at(p, eps)?;
+        self.face_mut(r)
+    }
+
+    pub fn face(&self, r: FaceRef) -> Option<&BrushFace> {
+        let list = if r.carve { &self.subtract } else { &self.solids };
+        list.get(r.solid)?.faces.get(r.face)
+    }
+
+    pub fn face_mut(&mut self, r: FaceRef) -> Option<&mut BrushFace> {
+        let list = if r.carve { &mut self.subtract } else { &mut self.solids };
+        list.get_mut(r.solid)?.faces.get_mut(r.face)
+    }
+
+    /// THE FACE PUSHED `by` METRES along its outward normal (pulled when
+    /// negative): its solid grows or shrinks on that side alone, as a face
+    /// drag in a brush editor. Refused (false, nothing changed) when the
+    /// solid would be left with no volume, or a face it had would vanish.
+    pub fn push_face(&mut self, r: FaceRef, by: f64) -> bool {
+        let list = if r.carve { &mut self.subtract } else { &mut self.solids };
+        let Some(solid) = list.get_mut(r.solid) else { return false };
+        if r.face >= solid.faces.len() {
+            return false;
+        }
+        let before = solid.clone();
+        solid.faces[r.face].plane[3] += by;
+        let kept = solid_polygons(solid).iter().all(|p| p.as_ref().is_some_and(|p| p.len() >= 3));
+        if !kept || solid_volume(solid) <= 1e-9 {
+            *solid = before;
+            return false;
+        }
+        true
+    }
+
+    /// Carve `index` (of `subtract`) reshaped to the box `centre` +- `half`,
+    /// through its planes about its own box (`BrushSolid::transform`), so its
+    /// walls keep their texture's size in the world. False when there is no
+    /// such carve, it has no volume, or the size asked is not positive.
+    pub fn reshape_carve(&mut self, index: usize, centre: Vec3, half: Vec3) -> bool {
+        let Some(carve) = self.subtract.get_mut(index) else { return false };
+        let Some((lo, hi)) = solid_bounds(carve) else { return false };
+        let was_half = [0, 1, 2].map(|i| (hi[i] - lo[i]) / 2.0);
+        if was_half.iter().chain(half.iter()).any(|h| *h <= 1e-6) {
+            return false;
+        }
+        let was_centre = [0, 1, 2].map(|i| (hi[i] + lo[i]) / 2.0);
+        let k = [0, 1, 2].map(|i| half[i] / was_half[i]);
+        let a = [[k[0], 0.0, 0.0], [0.0, k[1], 0.0], [0.0, 0.0, k[2]]];
+        // x' = k (x - c) + c'.
+        let t = [0, 1, 2].map(|i| centre[i] - k[i] * was_centre[i]);
+        carve.transform(a, t, was_centre, false);
+        true
+    }
+
+    /// Every face of every solid in `material` (carves keep theirs: they
+    /// draw nothing of their own).
+    pub fn paint(&mut self, material: &str) {
+        for f in self.solids.iter_mut().flat_map(|s| s.faces.iter_mut()) {
+            f.material = material.to_string();
+        }
+    }
+
     #[must_use]
     pub fn materials(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
@@ -588,15 +848,36 @@ pub fn brush_polygons_in_atlas(
     layout: &crate::brush_lightmap::BrushLightmapLayout,
     entity: usize,
 ) -> Vec<BrushPolygon> {
-    let mut out = Vec::new();
     let solids = brush.evaluate();
-
     let exposed = exposed_fragments(&solids);
+    polygons_of_exposed(&solids, &exposed, layout, entity)
+}
+
+/// Every brush of a level as drawn, baked and laid out: `brush_polygons_in_atlas`
+/// for each, with the faces other brushes cover trimmed away
+/// (`scene_exposed_fragments`). Index `i` is the i-th brush, as the lightmap
+/// layout numbers them (`scene_brush_lightmap_layout`, same list).
+pub fn scene_brush_polygons_in_atlas(brushes: &[&BrushDef], layout: &crate::brush_lightmap::BrushLightmapLayout) -> Vec<Vec<BrushPolygon>> {
+    scene_exposed_fragments(brushes)
+        .iter()
+        .enumerate()
+        .map(|(i, (solids, exposed))| polygons_of_exposed(solids, exposed, layout, i))
+        .collect()
+}
+
+fn polygons_of_exposed(
+    solids: &[BrushSolid],
+    exposed: &[Vec<Vec<Vec<Vec3>>>],
+    layout: &crate::brush_lightmap::BrushLightmapLayout,
+    object: usize,
+) -> Vec<BrushPolygon> {
+    let mut out = Vec::new();
+    let parts = crate::brush_lightmap::fragment_parts(solids, exposed);
     for (si, solid) in solids.iter().enumerate() {
-        for (i, poly) in exposed[si]
+        for (i, k, poly) in exposed[si]
             .iter()
             .enumerate()
-            .flat_map(|(i, frags)| frags.iter().map(move |f| (i, f.clone())))
+            .flat_map(|(i, frags)| frags.iter().enumerate().map(move |(k, f)| (i, k, f.clone())))
         {
             let face = &solid.faces[i];
             let n = face.plane().n;
@@ -613,7 +894,7 @@ pub fn brush_polygons_in_atlas(
                 tangent: [u_axis[0] as f32, u_axis[1] as f32, u_axis[2] as f32, handed],
                 ..Default::default()
             };
-            let chart = layout.chart(entity, si, i);
+            let chart = layout.chart_part(object, si, i, parts[si][i][k]);
             for q in &ordered {
                 p.positions.push([q[0] as f32, q[1] as f32, q[2] as f32]);
                 let uv = face.uv(*q);
@@ -1152,8 +1433,59 @@ mod exposed_surface_tests {
     }
 
     #[test]
+    fn a_brush_built_against_another_trims_it_and_is_trimmed() {
+        // A hall, and a hallway box pressed against its outer x = 10 wall.
+        let block = |min, max| BrushDef { solids: vec![block_solid(min, max, "default")], subtract: Vec::new() };
+        let hall = block([10.0, 0.0, -8.0], [18.0, 3.0, 4.0]);
+        let hallway = block([3.0, 0.0, -4.5], [10.0, 2.9, -1.5]);
+        let scene = scene_exposed_fragments(&[&hall, &hallway]);
+        let all: Vec<BrushSolid> = scene.iter().flat_map(|(s, _)| s.iter().cloned()).collect();
+        let mut wall_area = 0.0;
+        for (oi, (solids, exposed)) in scene.iter().enumerate() {
+            for (si, solid) in solids.iter().enumerate() {
+                for (fi, face) in solid.faces.iter().enumerate() {
+                    let n = face.plane().n;
+                    for frag in &exposed[si][fi] {
+                        let (front, _) = front_and_back(frag, n);
+                        assert!(!inside_any(&all, front), "brush {oi} face {fi} faces into the other brush");
+                        if oi == 0 && n[0] < -0.9 {
+                            wall_area += polygon_area(frag, n);
+                        }
+                    }
+                }
+            }
+        }
+        let expected = 12.0 * 3.0 - 3.0 * 2.9;
+        assert!((wall_area - expected).abs() < 1e-6, "hall's x = 10 wall shows {wall_area} m2, not {expected}");
+    }
+
+    #[test]
+    fn the_shipped_level_draws_no_face_into_another_brush() {
+        let path = &crate::test_game_dir().join("scenes/test_room.json");
+        let scene = crate::scene::Scene::load(std::path::Path::new(path)).expect("test_room loads");
+        let defs: Vec<&BrushDef> = scene.objects.iter().filter_map(|o| o.brush.as_ref()).collect();
+        let evaluated = scene_exposed_fragments(&defs);
+        let all: Vec<BrushSolid> = evaluated.iter().flat_map(|(s, _)| s.iter().cloned()).collect();
+        let mut into = Vec::new();
+        for (oi, (solids, exposed)) in evaluated.iter().enumerate() {
+            for (si, solid) in solids.iter().enumerate() {
+                for (fi, face) in solid.faces.iter().enumerate() {
+                    let n = face.plane().n;
+                    for frag in &exposed[si][fi] {
+                        let (front, _) = front_and_back(frag, n);
+                        if inside_any(&all, front) {
+                            into.push((oi, si, fi, front));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(into.is_empty(), "{} drawn fragments face into a brush: {:?}", into.len(), &into[..into.len().min(6)]);
+    }
+
+    #[test]
     fn the_shipped_hall_draws_only_surface_that_borders_empty_space() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../game/scenes/test_room.json");
+        let path = &crate::test_game_dir().join("scenes/test_room.json");
         let scene = crate::scene::Scene::load(std::path::Path::new(path)).expect("test_room loads");
         let hall = scene
             .objects
@@ -1186,5 +1518,179 @@ mod exposed_surface_tests {
             (ceiling_z.0 + 15.7).abs() < 1e-6 && (ceiling_z.1 - 3.7).abs() < 1e-6,
             "the hall ceiling spans z {ceiling_z:?}; the room is -15.7..3.7",
         );
+    }
+}
+
+#[cfg(test)]
+mod translate_tests {
+    use super::*;
+
+    /// A moved brush's faces pass through the moved points and show them the
+    /// same texture coordinates they had: the plane and the texture move
+    /// together, a rotated texture included.
+    #[test]
+    fn a_moved_brush_carries_its_planes_and_its_texture() {
+        let face = |n: Vec3, d: f64, rotation: f64| BrushFace {
+            plane: [n[0], n[1], n[2], d],
+            material: "m".into(),
+            u_axis: None,
+            v_axis: None,
+            scale: [2.0, 0.5],
+            shift: [0.25, 0.0],
+            rotation,
+            lightmap_scale: 0.125,
+            smoothing: 0,
+        };
+        let mut brush = BrushDef {
+            solids: vec![BrushSolid { faces: vec![face([1.0, 0.0, 0.0], 3.0, 0.0), face([0.0, 0.0, -1.0], 2.0, 30.0)] }],
+            subtract: vec![BrushSolid { faces: vec![face([0.0, 1.0, 0.0], 1.0, 0.0)] }],
+        };
+        let before = brush.clone();
+        let delta = [1.5, -0.25, 4.0];
+        brush.translate(delta);
+        let all = |b: &BrushDef| b.solids.iter().chain(b.subtract.iter()).flat_map(|s| s.faces.clone()).collect::<Vec<_>>();
+        for (old, new) in all(&before).iter().zip(all(&brush).iter()) {
+            // A point on the old face, and where it went.
+            let n = [old.plane[0], old.plane[1], old.plane[2]];
+            let p = scale(n, old.plane[3]);
+            let q = add(p, delta);
+            assert!(new.plane().distance(q).abs() < 1e-9, "the face did not move with the brush");
+            let (a, b) = (old.uv(p), new.uv(q));
+            assert!((a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9, "the texture slid: {a:?} -> {b:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod transform_tests {
+    use super::*;
+
+    fn cube() -> BrushDef {
+        let face = |n: Vec3, d: f64| BrushFace {
+            plane: [n[0], n[1], n[2], d],
+            material: "default".into(),
+            u_axis: None,
+            v_axis: None,
+            scale: [2.0, 2.0],
+            shift: [0.25, 0.5],
+            rotation: 0.0,
+            lightmap_scale: 0.125,
+            smoothing: 0,
+        };
+        let faces = vec![
+            face([1.0, 0.0, 0.0], 1.0),
+            face([-1.0, 0.0, 0.0], 1.0),
+            face([0.0, 1.0, 0.0], 1.0),
+            face([0.0, -1.0, 0.0], 1.0),
+            face([0.0, 0.0, 1.0], 1.0),
+            face([0.0, 0.0, -1.0], 1.0),
+        ];
+        BrushDef { solids: vec![BrushSolid { faces }], subtract: Vec::new() }
+    }
+
+    fn turn_y(deg: f64) -> [[f64; 3]; 3] {
+        let (s, c) = deg.to_radians().sin_cos();
+        [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+    }
+
+    #[test]
+    fn a_turned_brush_turns_its_planes_and_carries_its_texture() {
+        let mut b = cube();
+        let before = b.clone();
+        let a = turn_y(30.0);
+        let centre = [2.0, 0.0, -1.0];
+        let t = sub(centre, mat_vec(a, centre));
+        b.transform(a, t, centre, true);
+        for (f0, f1) in before.solids[0].faces.iter().zip(&b.solids[0].faces) {
+            // A point on the old face, carried, lies on the new face with the same uv.
+            let p = scale(f0.plane().n, f0.plane[3]);
+            let p = add(p, scale(f0.axes().0, 0.3));
+            let q = add(mat_vec(a, p), t);
+            assert!(f1.plane().distance(q).abs() < 1e-9, "{:?}", f1.plane);
+            let (uv0, uv1) = (f0.uv(p), f1.uv(q));
+            assert!((uv0[0] - uv1[0]).abs() < 1e-9 && (uv0[1] - uv1[1]).abs() < 1e-9, "{uv0:?} vs {uv1:?}");
+        }
+    }
+
+    #[test]
+    fn a_resized_brush_keeps_its_texture_the_same_size_in_the_world() {
+        let mut b = cube();
+        let a = [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        b.transform(a, [0.0; 3], [0.0; 3], false);
+        let faces = &b.solids[0].faces;
+        // The +x face moved out to x = 2; the floor stayed and grew.
+        assert!((faces[0].plane[3] - 2.0).abs() < 1e-9);
+        assert!((faces[2].plane[3] - 1.0).abs() < 1e-9);
+        // The top face's texture repeats every 2 m as it did, pinned at the anchor's foot.
+        let f = &faces[2];
+        let (a0, a1) = (f.uv([0.0, 1.0, 0.0]), f.uv([2.0, 1.0, 0.0]));
+        assert!(((a1[0] - a0[0]).abs() - 1.0).abs() < 1e-9, "{a0:?} {a1:?}");
+        assert!((a0[0] - cube().solids[0].faces[2].uv([0.0, 1.0, 0.0])[0]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_new_box_brush_is_the_box_it_was_asked_for() {
+        let mut b = BrushDef { solids: vec![BrushSolid::cuboid([1.0, 2.0, -3.0], [0.5, 1.0, 2.0], "Bricks075A")], subtract: Vec::new() };
+        let (lo, hi) = b.bounds().unwrap();
+        for (x, y) in lo.iter().zip([0.5, 1.0, -5.0]).chain(hi.iter().zip([1.5, 3.0, -1.0])) {
+            assert!((x - y).abs() < 1e-9, "{lo:?} {hi:?}");
+        }
+        assert!((b.volume() - 8.0).abs() < 1e-6);
+        assert_eq!(b.materials(), vec!["Bricks075A".to_string()]);
+        b.paint("Marble020");
+        assert_eq!(b.materials(), vec!["Marble020".to_string()]);
+    }
+
+    #[test]
+    fn a_point_on_a_face_finds_that_face() {
+        let mut b = BrushDef {
+            solids: vec![BrushSolid::cuboid([0.0, 1.0, 0.0], [2.0, 1.0, 2.0], "Bricks075A")],
+            subtract: vec![BrushSolid::cuboid([0.0, 1.0, 0.0], [1.0, 0.5, 1.0], "Rock063")],
+        };
+        // The top of the outer box, and the inside of the carve's floor.
+        b.face_at_mut([1.5, 2.0, 0.3], 1e-3).unwrap().material = "Marble020".into();
+        assert_eq!(b.solids[0].faces[2].material, "Marble020");
+        assert_eq!(b.face_at_mut([0.2, 0.5, 0.2], 1e-3).unwrap().plane, [0.0, -1.0, 0.0, -0.5]);
+        assert!(b.face_at_mut([0.0, 3.0, 0.0], 1e-3).is_none(), "a point off the brush finds nothing");
+    }
+
+    #[test]
+    fn a_reshaped_carve_is_the_box_asked_for_and_cuts_its_brush() {
+        let mut b = BrushDef {
+            solids: vec![BrushSolid::cuboid([0.0, 1.5, 0.0], [3.0, 1.5, 3.0], "Bricks075A")],
+            subtract: vec![BrushSolid::cuboid([0.0, 1.5, 0.0], [2.8, 1.3, 2.8], "Marble020")],
+        };
+        assert!(b.reshape_carve(0, [1.0, 1.2, 0.0], [0.5, 1.0, 3.5]));
+        let (lo, hi) = solid_bounds(&b.subtract[0]).unwrap();
+        for (x, y) in lo.iter().zip([0.5, 0.2, -3.5]).chain(hi.iter().zip([1.5, 2.2, 3.5])) {
+            assert!((x - y).abs() < 1e-9, "{lo:?} {hi:?}");
+        }
+        // A 1 x 2 m doorway through the whole 6 m brush.
+        assert!((b.volume() - (6.0 * 3.0 * 6.0 - 1.0 * 2.0 * 6.0)).abs() < 1e-6, "{}", b.volume());
+        assert_eq!(b.subtract[0].faces[0].material, "Marble020");
+        assert!(!b.reshape_carve(1, [0.0; 3], [1.0; 3]), "no such carve");
+        assert!(!b.reshape_carve(0, [0.0; 3], [0.0, 1.0, 1.0]), "no flat carves");
+    }
+
+    #[test]
+    fn a_pushed_face_moves_its_side_alone_and_cannot_turn_the_solid_inside_out() {
+        let mut b = BrushDef { solids: vec![BrushSolid::cuboid([0.0, 1.0, 0.0], [1.0, 1.0, 1.0], "Bricks075A")], subtract: Vec::new() };
+        let top = b.face_ref_at([0.2, 2.0, 0.3], 1e-6).unwrap();
+        assert_eq!(top, FaceRef { carve: false, solid: 0, face: 2 });
+        assert!(b.push_face(top, 0.5));
+        assert!((b.volume() - 2.0 * 2.0 * 2.5).abs() < 1e-9 && (b.bounds().unwrap().1[1] - 2.5).abs() < 1e-9);
+        assert!(b.push_face(top, -1.5));
+        assert!((b.bounds().unwrap().1[1] - 1.0).abs() < 1e-9);
+        assert!(!b.push_face(top, -1.0), "the top cannot pass the floor");
+        assert!((b.bounds().unwrap().1[1] - 1.0).abs() < 1e-9, "a refused push changes nothing");
+        assert!(!b.push_face(FaceRef { carve: true, solid: 0, face: 0 }, 1.0), "no such carve");
+    }
+
+    #[test]
+    fn an_impossible_map_changes_nothing() {
+        let mut b = cube();
+        let before = format!("{:?}", b);
+        b.transform([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3], [0.0; 3], true);
+        assert_eq!(before, format!("{:?}", b));
     }
 }

@@ -20,6 +20,37 @@ pub const BRUSH_SUN_ID: &str = "__brushes_sunlight__";
 
 pub use space_soup_sky::time_of_day::AtlasLayers as BrushLayers;
 
+/// The sun keyframes' list in the daylight directory: which atlas images hold
+/// the sun's bounce baked with the sun where, in the order of the day. See
+/// `space_soup_sky::time_of_day::SunKey`.
+pub const SUN_KEYS_FILE: &str = "sun_keys.json";
+
+/// The id of sun keyframe `i`'s image.
+pub fn sun_key_id(i: usize) -> String {
+    format!("__brushes_sun_key_{i}__")
+}
+
+/// One sun keyframe as `SUN_KEYS_FILE` lists it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SunKeyEntry {
+    pub id: String,
+    pub hour: f32,
+    /// Toward the sun, world.
+    pub direction: [f32; 3],
+}
+
+/// Lists the sun keyframes `write_brush_layers` wrote; none removes the list.
+pub fn write_sun_keys(game_dir: &Path, scene_name: &str, keys: &[SunKeyEntry]) -> std::io::Result<()> {
+    let path = daylight_dir(game_dir, scene_name).join(SUN_KEYS_FILE);
+    if keys.is_empty() {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    std::fs::write(path, serde_json::to_string_pretty(keys).map_err(std::io::Error::other)?)
+}
+
 pub fn write_brush_layers(game_dir: &Path, scene_name: &str, images: &[(String, u32, u32, Vec<u8>)]) -> std::io::Result<PathBuf> {
     let dir = daylight_dir(game_dir, scene_name);
     std::fs::create_dir_all(&dir)?;
@@ -56,7 +87,22 @@ pub fn load_brush_layers(game_dir: &Path, scene_name: &str) -> Option<BrushLayer
     let (lamps, w, h) = read(BRUSH_LAMPS_ID)?;
     let (sky, sw, sh) = read(BRUSH_SKY_ID)?;
     let (sun, uw, uh) = read(BRUSH_SUN_ID)?;
-    ((sw, sh) == (w, h) && (uw, uh) == (w, h)).then_some(BrushLayers { width: w, height: h, lamps, sky, sun, sun_keys: Vec::new() })
+    if (sw, sh) != (w, h) || (uw, uh) != (w, h) {
+        return None;
+    }
+    // The keyframes, all or none: one missing or of another size leaves the
+    // one bake standing for every sun.
+    let listed: Vec<SunKeyEntry> =
+        std::fs::read_to_string(dir.join(SUN_KEYS_FILE)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let sun_keys = listed
+        .iter()
+        .map(|k| match read(&k.id) {
+            Some((rgba, kw, kh)) if (kw, kh) == (w, h) => Some(space_soup_sky::time_of_day::SunKey::from_rgba(k.hour, k.direction, &rgba)),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default();
+    Some(BrushLayers { width: w, height: h, lamps, sky, sun, sun_keys })
 }
 
 #[cfg(test)]
@@ -113,6 +159,32 @@ mod tests {
         .unwrap();
         let back = load_brush_layers(&dir, "t").unwrap();
         assert!(back.matches(&l.combine([1.0; 3], [1.0; 3]), 2, 1, 1e-3));
+        assert!(back.sun_keys.is_empty());
+
+        // With keyframes, listed in the order of the day.
+        let keys = [
+            SunKeyEntry { id: sun_key_id(0), hour: 7.0, direction: [0.8, 0.6, 0.0] },
+            SunKeyEntry { id: sun_key_id(1), hour: 12.0, direction: [0.0, 1.0, 0.0] },
+        ];
+        write_brush_layers(
+            &dir,
+            "t",
+            &[
+                (BRUSH_LAMPS_ID.into(), 2, 1, png(&l.lamps)),
+                (BRUSH_SKY_ID.into(), 2, 1, png(&l.sky)),
+                (BRUSH_SUN_ID.into(), 2, 1, png(&l.sun)),
+                (sun_key_id(0), 2, 1, png(&l.sun)),
+                (sun_key_id(1), 2, 1, png(&l.lamps)),
+            ],
+        )
+        .unwrap();
+        write_sun_keys(&dir, "t", &keys).unwrap();
+        let back = load_brush_layers(&dir, "t").unwrap();
+        assert_eq!(back.sun_keys.len(), 2);
+        assert_eq!((back.sun_keys[1].hour, back.sun_keys[1].direction), (12.0, [0.0, 1.0, 0.0]));
+        assert!((back.sun_keys[0].rgb[1].to_f32() - 0.9).abs() < 1e-3 && (back.sun_keys[1].rgb[0].to_f32() - 0.1).abs() < 1e-3);
+        write_sun_keys(&dir, "t", &[]).unwrap();
+        assert!(load_brush_layers(&dir, "t").unwrap().sun_keys.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

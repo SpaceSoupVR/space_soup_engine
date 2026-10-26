@@ -527,15 +527,16 @@ fn rocks_into_a_pond_cost_what_is_awake_and_tell_of_no_more_than_the_cap() {
     assert!(many < one + 60.0, "128 sleeping rocks cost {many:.1} us a step against {one:.1} for one");
 }
 
-/// THE SHIPPED PILES, in the real level: `test_room`'s fourteen props -- by
+/// THE SHIPPED PILES, in the real level: test_room's fourteen piled props -- by
 /// the sea and by the pond, three pebbles, two rocks, a boulder and a crate
-/// each -- settle where they were put and go to sleep; then the pond's
-/// boulder, thrown out over the water, is told of once with the energy it
-/// brought, sinks, and is back on the bank some seconds after it settled.
+/// each -- and the mud patch's three settle where they were put and go to
+/// sleep; then the pond's boulder, thrown out over the water, is told of once
+/// with the energy it brought, sinks, and is back on the bank some seconds
+/// after it settled.
 #[test]
 fn the_shipped_rocks_rest_where_they_lie_and_one_thrown_in_the_pond_comes_back() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
+    let game = &crate::test_game_dir();
     let Ok(mut scene) = Scene::load(&game.join("scenes/test_room.json")) else {
         eprintln!("skipping: no test_room");
         return;
@@ -548,7 +549,9 @@ fn the_shipped_rocks_rest_where_they_lie_and_one_thrown_in_the_pond_comes_back()
         .filter(|o| o.door.is_none() && o.rigid_body.as_ref().is_some_and(|b| b.mode == crate::scene_physics::BodyMode::Dynamic))
         .map(|o| (o.id.clone(), o.cuboid.position, o.rigid_body.as_ref().unwrap().mass.unwrap_or(0.0)))
         .collect();
-    assert_eq!(props.len(), 14, "two piles of seven: {:?}", props.iter().map(|p| &p.0).collect::<Vec<_>>());
+    // The mud patch's crates and boulder are props too, and must rest as well.
+    let piled = props.iter().filter(|p| p.0.starts_with("beach") || p.0.starts_with("pond")).count();
+    assert_eq!(piled, 14, "two piles of seven: {:?}", props.iter().map(|p| &p.0).collect::<Vec<_>>());
     for site in ["beach", "pond"] {
         let masses: Vec<f32> = props.iter().filter(|p| p.0.starts_with(site)).map(|p| p.2).collect();
         assert!(masses.iter().any(|m| *m <= 0.1) && masses.contains(&1.0) && masses.iter().any(|m| *m >= 8.0), "{site}: {masses:?}");
@@ -599,7 +602,7 @@ fn the_shipped_rocks_rest_where_they_lie_and_one_thrown_in_the_pond_comes_back()
 fn the_shipped_game_by_the_headsets_events_a_rock_into_the_pond_and_a_door_by_its_handle() {
     use crate::runtime::GameRuntime;
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let game = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../game"));
+    let game = &crate::test_game_dir();
     let Ok(mut rt) = GameRuntime::load(game) else {
         eprintln!("skipping: the shipped game did not load");
         return;

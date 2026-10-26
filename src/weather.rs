@@ -71,6 +71,14 @@ pub struct WeatherDef {
     #[serde(default, skip_serializing_if = "is_zero_pair")]
     pub cycle: [f32; 2],
 
+    /// The clouds overhead decide when it falls: `intensity` times the sky's
+    /// own precipitation over the area (`space_soup_sky::precipitation`,
+    /// given by the client as [`WeatherField::set_sky`]) -- a shower as a
+    /// deep cumulus passes, steady rain under a closed deck, dry under a fair
+    /// sky. `cycle` is then unused. Absent (false), the area keeps its cycle.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_sky: bool,
+
     #[serde(default, skip_serializing_if = "WeatherStart::is_dry")]
     pub start: WeatherStart,
 }
@@ -139,6 +147,18 @@ impl WeatherDef {
         })
     }
 
+    /// What falls at `t` with the sky giving `sky` (0..1) over the area:
+    /// the sky's share of the intensity when the area follows the clouds,
+    /// its cycle otherwise.
+    #[must_use]
+    pub fn falling(&self, t: f64, sky: f32) -> f32 {
+        if self.from_sky {
+            self.intensity.max(0.0) * sky.clamp(0.0, 1.0)
+        } else {
+            self.intensity_at(t)
+        }
+    }
+
     #[must_use]
     pub fn intensity_at(&self, t: f64) -> f32 {
         let i = self.intensity.max(0.0);
@@ -165,6 +185,10 @@ pub struct WeatherState {
     pub snow: f32,
 
     pub falling: f32,
+
+    /// The sky's precipitation over the area, 0..1, for an area that follows
+    /// the clouds (`WeatherDef::from_sky`).
+    pub sky: f32,
 }
 
 impl WeatherState {
@@ -176,12 +200,13 @@ impl WeatherState {
             wet: s.wetness.clamp(0.0, 1.0),
             fill: s.puddles.clamp(0.0, 1.0) * def.max_puddle_depth.max(0.0),
             snow: s.snow.clamp(0.0, 1.0) * def.max_snow_depth.max(0.0),
-            falling: def.intensity_at(0.0),
+            falling: def.falling(0.0, 0.0),
+            sky: 0.0,
         }
     }
 
     pub fn step(&mut self, def: &WeatherDef, t: f64, dt: f32) {
-        let falling = def.intensity_at(t);
+        let falling = def.falling(t, self.sky);
         self.falling = falling;
         let a = def.accumulation_rate.max(0.0);
         let d = def.dry_rate.max(0.0);
@@ -220,6 +245,11 @@ impl WeatherState {
     #[must_use]
     pub fn at(def: &WeatherDef, t: f64) -> Self {
         let mut s = Self::start(def);
+        // The sky's past is not replayed: an area that follows the clouds
+        // starts as authored and takes the weather from there.
+        if def.from_sky {
+            return s;
+        }
         let dt = if t > 6.0 * 3600.0 { 10.0 } else { 1.0 };
         let mut now = 0.0f64;
         while now < t {
@@ -618,7 +648,30 @@ impl WeatherField {
 
     pub fn set_time(&mut self, t: f64) {
         for (def, _, state) in &mut self.areas {
+            let sky = state.sky;
             *state = WeatherState::at(def, t);
+            state.sky = sky;
+        }
+    }
+
+    /// The areas that follow the clouds (`WeatherDef::from_sky`), by index,
+    /// with their centres (world x, z): where the client reads the sky.
+    pub fn sky_areas(&self) -> Vec<(usize, [f32; 2])> {
+        self.areas
+            .iter()
+            .enumerate()
+            .filter(|(_, (d, _, _))| d.from_sky)
+            .map(|(i, (d, _, _))| {
+                let (x0, z0, x1, z1) = d.extent();
+                (i, [(x0 + x1) * 0.5, (z0 + z1) * 0.5])
+            })
+            .collect()
+    }
+
+    /// The sky's precipitation over area `i` (0..1), from the clouds there.
+    pub fn set_sky(&mut self, i: usize, rain: f32) {
+        if let Some((_, _, state)) = self.areas.get_mut(i) {
+            state.sky = rain.clamp(0.0, 1.0);
         }
     }
 
@@ -730,6 +783,24 @@ mod tests {
     }
 
     #[test]
+    fn an_area_that_follows_the_sky_rains_while_the_clouds_do() {
+        let def = WeatherDef { from_sky: true, cycle: [60.0, 60.0], intensity: 0.8, ..rain() };
+        let mut field = WeatherField::new(&[def.clone()], flat);
+        assert_eq!(field.sky_areas().len(), 1);
+        field.step(1.0, 0.25);
+        assert_eq!(field.areas[0].2.falling, 0.0, "dry until the sky says otherwise, whatever the cycle");
+        field.set_sky(0, 0.5);
+        field.step(2.0, 0.25);
+        assert!((field.areas[0].2.falling - 0.4).abs() < 1e-6);
+        let centre = field.sky_areas()[0].1;
+        assert!(field.falling_on([centre[0], 1.6, centre[1]]).0 > 0.39);
+        field.set_time(5000.0);
+        assert!((field.areas[0].2.falling - 0.0).abs() < 1e-6 && field.areas[0].2.sky == 0.5, "a jump in time keeps what the sky last said");
+        let json = serde_json::to_string(&WeatherDef { ..rain() }).unwrap();
+        assert!(!json.contains("from_sky"), "an area that keeps its cycle saves as before");
+    }
+
+    #[test]
     fn a_cycle_falls_then_stops() {
         let mut d = rain();
         d.cycle = [60.0, 120.0];
@@ -749,7 +820,7 @@ mod tests {
         let mut d = rain();
         d.max_puddle_depth = 0.5;
         let g = WeatherGround::build(&d, bowl);
-        let full = WeatherState { wet: 1.0, fill: 0.5, snow: 0.0, falling: 1.0 };
+        let full = WeatherState { wet: 1.0, fill: 0.5, snow: 0.0, falling: 1.0, sky: 0.0 };
         let map = surface(&d, &g, &full);
         let at = |x: f32, z: f32| map[g.texel(x, z).unwrap()];
         let middle = at(8.0, 8.0)[1];
@@ -768,7 +839,7 @@ mod tests {
         let gentle = |x: f32, _: f32| Some(0.5 * x);
         let cliff = |x: f32, _: f32| Some(2.0 * x);
         let d = rain();
-        let full = WeatherState { wet: 1.0, fill: 0.03, snow: 0.15, falling: 1.0 };
+        let full = WeatherState { wet: 1.0, fill: 0.03, snow: 0.15, falling: 1.0, sky: 0.0 };
         let on = |cover: &dyn Fn(f32, f32) -> Option<f32>| {
             let g = WeatherGround::build(&d, cover);
             let map = surface(&d, &g, &full);
@@ -845,7 +916,7 @@ mod tests {
     fn everything_fades_out_at_the_areas_edge() {
         let d = rain();
         let g = WeatherGround::build(&d, flat);
-        let full = WeatherState { wet: 1.0, fill: 0.03, snow: 0.1, falling: 1.0 };
+        let full = WeatherState { wet: 1.0, fill: 0.03, snow: 0.1, falling: 1.0, sky: 0.0 };
         let map = surface(&d, &g, &full);
         let edge = map[g.texel(0.1, 8.0).unwrap()];
         let inside = map[g.texel(8.0, 8.0).unwrap()];
@@ -889,7 +960,7 @@ mod tests {
         let t = std::time::Instant::now();
         let g = WeatherGround::build(&d, |x, z| Some(0.3 * (x * 0.2).sin() + 0.2 * (z * 0.3).cos()));
         let built = t.elapsed();
-        let s = WeatherState { wet: 1.0, fill: 0.02, snow: 0.1, falling: 1.0 };
+        let s = WeatherState { wet: 1.0, fill: 0.02, snow: 0.1, falling: 1.0, sky: 0.0 };
         let t = std::time::Instant::now();
         let n = 50;
         for _ in 0..n {

@@ -29,6 +29,7 @@ mod runtime_script_commands;
 mod runtime_locomotion;
 mod runtime_render;
 pub mod brush;
+pub mod terrain_burial;
 pub mod door;
 pub mod trigger_volume;
 pub mod brush_obj;
@@ -55,6 +56,7 @@ pub mod schema;
 pub mod terrain;
 pub mod walk_area;
 pub mod water;
+pub mod ground_hits;
 pub mod weather;
 pub mod script;
 mod script_fns_input;
@@ -140,3 +142,13 @@ mod terrain_physics_tests;
 mod scatter_physics_tests;
 #[cfg(test)]
 mod terrain_collider_tests;
+/// The game the tests that read shipped files open: `GAME_DIR` when set,
+/// else artytest1, which ships test_room since the games were split one repo
+/// each (`games/games.toml`). The workspace's `game/` is the older, unsplit
+/// copy and no longer what the headset ships.
+#[cfg(test)]
+pub(crate) fn test_game_dir() -> std::path::PathBuf {
+    std::env::var("GAME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../games/artytest1"))
+}
