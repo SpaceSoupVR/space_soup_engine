@@ -9,6 +9,7 @@ pub mod locomotion;
 pub mod logic;
 pub mod netrules;
 pub mod manifest;
+pub mod optic;
 pub mod physics;
 pub mod rig;
 pub mod rig_profile;
@@ -85,12 +86,11 @@ pub use scene::{
     distance_to_oriented_box, Animation, AnimationBinding, BindingScope, BodyMode, ColliderShape,
     Color3, CuboidDef,
     CuboidShape, CuboidStyle, Easing, GameObject, GripKind, GripPointDef, GripPoseDef, Keyframe,
-    LaserDef, LightDef, LightKind, MeshRef, ParticleEmitterDef, PartAnimationDef, PartDriver,
-    PropRef, SelectorDef,
-    TeleportalDef,
-    LightMode,
-    SkyDef, TimeOfDayDef,
-    PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
+    LaserDef, LensClipShape, LightDef, LightKind, LightMode, MagnificationControlDef,
+    MagnificationDef, MeshRef, OpticalPathDef, OpticalPathsDef, OpticClass, OpticDef,
+    OpticQualityTier, ParticleEmitterDef, PartAnimationDef, PartDriver, PlayMode, PropRef,
+    ReticleDef, ReticleFocalPlane, RigAttachmentDef, RigidBodyDef, Scene, SelectorDef,
+    SkyDef, SliderJointDef, SoundSourceDef, TeleportalDef, TimeOfDayDef, ZeroDef,
     BINDING_BUTTONS,
 };
 

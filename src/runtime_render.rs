@@ -7,7 +7,7 @@ use crate::runtime::{
     GameRuntime, HapticRequest, RenderCuboid, RenderLaser, RenderLight, RenderMesh, RenderParticleBurst,
     RenderParticleEmitter, SoundState,
 };
-use crate::scene::{CuboidShape, GameObject, GripPointDef, MeshRef};
+use crate::scene::{CuboidShape, GameObject, GripPointDef, MeshRef, OpticDef};
 
 impl GameRuntime {
     pub fn held_grip_point(&self, player: PlayerId, hand: Hand) -> Option<(&GameObject, &GripPointDef)> {
@@ -27,6 +27,22 @@ impl GameRuntime {
         let entity = self.scene.find_object(id)?;
         let point = entity.grip_point(point_name)?;
         Some((entity, point))
+    }
+
+    pub fn held_optic(&self, player: PlayerId, hand: Hand) -> Option<(&GameObject, &OpticDef)> {
+        let (obj, _) = self.held_grip_point(player, hand)?;
+        let optic = obj.optic.as_ref()?;
+        Some((obj, optic))
+    }
+
+    pub fn held_optics(&self, player: PlayerId) -> Vec<(Hand, &GameObject, &OpticDef)> {
+        [Hand::Left, Hand::Right]
+            .into_iter()
+            .filter_map(|hand| {
+                self.held_optic(player, hand)
+                    .map(|(obj, optic)| (hand, obj, optic))
+            })
+            .collect()
     }
 
     pub(crate) fn collect_render_cuboids(&self) -> Vec<RenderCuboid> {

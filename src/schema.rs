@@ -122,6 +122,7 @@ pub fn game_object_field_order() -> Vec<&'static str> {
         "particle_emitter",
         "effect",
         "laser",
+        "optic",
         "spawn_point",
         "teleportal",
         "reflection_probe",
@@ -169,6 +170,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
             ),
             comp!(effect, "EffectDef", Optional, effect_fields()),
             comp!(laser, "LaserDef", Optional, laser_fields()),
+            comp!(optic, "OpticDef", Optional, optic_fields()),
             comp!(spawn_point, "SpawnPointDef", Optional),
             comp!(teleportal, "TeleportalDef", Optional, teleportal_fields()),
             comp!(reflection_probe, "ReflectionProbeDef", Optional, reflection_probe_fields()),
@@ -202,6 +204,45 @@ fn trigger_volume_fields() -> Vec<FieldDescriptor> {
 
         field!(var, Text, opt),
         field!(once, Bool),
+    ]
+}
+
+/// Leaf fields of `OpticDef`. Nested structures (magnification, paths, reticle,
+/// zero) have no `FieldKind`, so only scalars and plain enums are described; the
+/// exhaustive destructure still covers every field.
+fn optic_fields() -> Vec<FieldDescriptor> {
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
+    fn exhaustive(o: crate::scene::OpticDef) {
+        let crate::scene::OpticDef {
+            class,
+            magnification,
+            magnification_control,
+            objective_diameter_mm,
+            true_fov_deg_at_1x,
+            eye_relief_mm,
+            paths,
+            reticle,
+            zero,
+            quality,
+        } = o;
+    }
+    vec![
+        field!(
+            class,
+            Enum,
+            [
+                "ReflexRedDot",
+                "Holographic",
+                "Lpvo",
+                "FixedPrism",
+                "PrecisionScope",
+                "Binocular",
+            ]
+        ),
+        field!(objective_diameter_mm, Number),
+        field!(true_fov_deg_at_1x, Number),
+        field!(eye_relief_mm, Number),
+        field!(quality, Enum, ["Low", "Balanced", "Ultra"]),
     ]
 }
 
@@ -415,6 +456,7 @@ fn schema_exhaustiveness(o: crate::scene::GameObject) {
         particle_emitter,
         effect,
         laser,
+        optic,
         spawn_point,
         teleportal,
         reflection_probe,
@@ -439,7 +481,7 @@ mod tests {
 
     #[test]
     fn schema_has_every_authorable_component() {
-        assert_eq!(game_object_schema().components.len(), 29);
+        assert_eq!(game_object_schema().components.len(), 30);
     }
 
     #[test]
@@ -497,6 +539,7 @@ mod tests {
             "slider_joint",
             "terrain_collider",
             "sound",
+            "optic",
         ] {
             assert!(names.contains(&must), "schema missing '{must}'");
         }
@@ -550,7 +593,7 @@ mod tests {
     fn schema_serializes_and_round_trips_as_json() {
         let json = game_object_schema().to_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["components"].as_array().unwrap().len(), 29);
+        assert_eq!(v["components"].as_array().unwrap().len(), 30);
         assert_eq!(v["components"][0]["name"], "cuboid");
         assert_eq!(v["components"][0]["cardinality"], "required");
     }
