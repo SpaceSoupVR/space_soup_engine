@@ -53,7 +53,7 @@ pub fn load_brush_layers(game_dir: &Path, scene_name: &str) -> Option<BrushLayer
     let (lamps, w, h) = read(BRUSH_LAMPS_ID)?;
     let (sky, sw, sh) = read(BRUSH_SKY_ID)?;
     let (sun, uw, uh) = read(BRUSH_SUN_ID)?;
-    ((sw, sh) == (w, h) && (uw, uh) == (w, h)).then_some(BrushLayers { width: w, height: h, lamps, sky, sun })
+    ((sw, sh) == (w, h) && (uw, uh) == (w, h)).then_some(BrushLayers { width: w, height: h, lamps, sky, sun, sun_keys: Vec::new() })
 }
 
 #[cfg(test)]
@@ -67,6 +67,7 @@ mod tests {
             lamps: vec![0.1, 0.1, 0.1, 1.0, 0.0, 0.0, 0.0, 0.5],
             sky: vec![0.2, 0.3, 0.4, 1.0, 0.1, 0.1, 0.1, 0.5],
             sun: vec![1.0, 0.9, 0.8, 1.0, 0.0, 0.0, 0.0, 0.5],
+            sun_keys: Vec::new(),
         }
     }
 

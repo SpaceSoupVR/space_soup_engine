@@ -337,6 +337,7 @@ impl TimeOfDayDef {
             star_density: self.star_density.max(0.0),
             light_pollution: self.light_pollution.max(0.0),
             turbidity: self.turbidity.max(0.05),
+            clouds: space_soup_sky::clouds::CloudParams::default(),
         };
         match (self.north_deg, photographed_sun) {
             (None, Some(sun)) => p.with_sun_azimuth_of(sun),
