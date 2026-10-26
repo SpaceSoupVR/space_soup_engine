@@ -234,13 +234,13 @@ fn authored_layout(order: &[&MeshPart]) -> Option<MeshLightmapLayout> {
             let corners = at.map(|c| [c[0] - x as f32, c[1] - y as f32]);
             let e1 = [corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]];
             let e2 = [corners[2][0] - corners[0][0], corners[2][1] - corners[0][1]];
-            let (big1, big2) = (sub(pos[1], pos[0]), sub(pos[2], pos[0]));
+            let (edge_a, edge_b) = (sub(pos[1], pos[0]), sub(pos[2], pos[0]));
             let den = e1[0] * e2[1] - e2[0] * e1[1];
-            let normal = norm(cross(big1, big2));
+            let normal = norm(cross(edge_a, edge_b));
             let mut chart = MeshChart { x, y, w: 0, h: 0, origin: pos[0], du: [0.0; 3], dv: [0.0; 3], normal, corners };
             if den.abs() > 1e-9 {
-                chart.du = mul(sub(mul(big1, e2[1]), mul(big2, e1[1])), 1.0 / den);
-                chart.dv = mul(sub(mul(big2, e1[0]), mul(big1, e2[0])), 1.0 / den);
+                chart.du = mul(sub(mul(edge_a, e2[1]), mul(edge_b, e1[1])), 1.0 / den);
+                chart.dv = mul(sub(mul(edge_b, e1[0]), mul(edge_a, e2[0])), 1.0 / den);
                 chart.origin = sub(pos[0], add(mul(chart.du, corners[0][0]), mul(chart.dv, corners[0][1])));
                 chart.w = x1 - x + 1;
                 chart.h = y1 - y + 1;

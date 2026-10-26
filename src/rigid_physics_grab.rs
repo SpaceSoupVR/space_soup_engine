@@ -131,20 +131,20 @@ impl PhysicsWorld {
 
     fn create_driven_joint(
         foundation: &mut PxFoundation,
-        actor0: *mut physx_sys::PxRigidActor,
-        frame0: &physx_sys::PxTransform,
-        actor1: *mut physx_sys::PxRigidActor,
-        frame1: &physx_sys::PxTransform,
+        first_actor: *mut physx_sys::PxRigidActor,
+        first_frame: &physx_sys::PxTransform,
+        second_actor: *mut physx_sys::PxRigidActor,
+        second_frame: &physx_sys::PxTransform,
         linear: Drive,
         angular: Option<Drive>,
     ) -> *mut physx_sys::PxJoint {
         unsafe {
             let joint = physx_sys::phys_PxD6JointCreate(
                 foundation.as_mut_ptr(),
-                actor0,
-                frame0,
-                actor1,
-                frame1,
+                first_actor,
+                first_frame,
+                second_actor,
+                second_frame,
             );
             if joint.is_null() {
                 return std::ptr::null_mut();

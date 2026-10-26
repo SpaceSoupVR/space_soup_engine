@@ -207,13 +207,13 @@ impl ScriptHost {
         self.asts.contains_key(object_id)
     }
 
-    pub fn call(&self, object_id: &str, fn_name: &str, args: impl rhai::FuncArgs) -> Result<()> {
+    pub fn call(&self, object_id: &str, function_name: &str, args: impl rhai::FuncArgs) -> Result<()> {
         let Some(ast) = self.asts.get(object_id) else {
             return Ok(());
         };
 
         let mut scope = Scope::new();
-        let outcome: Result<Dynamic, _> = self.engine.call_fn(&mut scope, ast, fn_name, args);
+        let outcome: Result<Dynamic, _> = self.engine.call_fn(&mut scope, ast, function_name, args);
 
         match outcome {
             Ok(_) => Ok(()),
@@ -222,7 +222,7 @@ impl ScriptHost {
                     Ok(())
                 } else {
                     Err(anyhow::anyhow!(
-                        "script error in {object_id}::{fn_name}: {e}"
+                        "script error in {object_id}::{function_name}: {e}"
                     ))
                 }
             }

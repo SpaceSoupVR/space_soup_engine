@@ -363,8 +363,8 @@ fn orca_line(pos: DVec2, vel: DVec2, other_pos: DVec2, other_vel: DVec2, combine
     if dist_sq > r_sq {
         let w = rel_vel - inv_h * rel_pos;
         let w_len_sq = w.length_squared();
-        let dot1 = w.dot(rel_pos);
-        if dot1 < 0.0 && dot1 * dot1 > r_sq * w_len_sq {
+        let dot_rel_pos = w.dot(rel_pos);
+        if dot_rel_pos < 0.0 && dot_rel_pos * dot_rel_pos > r_sq * w_len_sq {
             let w_len = w_len_sq.sqrt();
             let unit_w = w / w_len;
             direction = DVec2::new(unit_w.y, -unit_w.x);
@@ -376,8 +376,8 @@ fn orca_line(pos: DVec2, vel: DVec2, other_pos: DVec2, other_vel: DVec2, combine
             } else {
                 -DVec2::new(rel_pos.x * leg + rel_pos.y * combined, -rel_pos.x * combined + rel_pos.y * leg) / dist_sq
             };
-            let dot2 = rel_vel.dot(direction);
-            u = dot2 * direction - rel_vel;
+            let dot_rel_vel = rel_vel.dot(direction);
+            u = dot_rel_vel * direction - rel_vel;
         }
     } else {
         let inv_dt = 1.0 / dt;

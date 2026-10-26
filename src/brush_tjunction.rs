@@ -9,7 +9,7 @@ fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
-fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
+fn lerp_point2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
 
@@ -31,11 +31,11 @@ fn vertex_index(polys: &[BrushPolygon]) -> Vec<[f32; 3]> {
 fn points_inside_edge(index: &[[f32; 3]], a: [f32; 3], b: [f32; 3]) -> Vec<(f32, [f32; 3])> {
     let tol = T_JUNCTION_TOLERANCE;
     let ab = sub(b, a);
-    let len2 = dot(ab, ab);
-    if len2 <= tol * tol {
+    let len_sq = dot(ab, ab);
+    if len_sq <= tol * tol {
         return Vec::new();
     }
-    let len = len2.sqrt();
+    let len = len_sq.sqrt();
     let (lo, hi) = (a[0].min(b[0]) - tol, a[0].max(b[0]) + tol);
     let start = index.partition_point(|p| p[0] < lo);
     let mut found: Vec<(f32, [f32; 3])> = Vec::new();
@@ -43,7 +43,7 @@ fn points_inside_edge(index: &[[f32; 3]], a: [f32; 3], b: [f32; 3]) -> Vec<(f32,
         if c[0] > hi {
             break;
         }
-        let t = dot(sub(*c, a), ab) / len2;
+        let t = dot(sub(*c, a), ab) / len_sq;
 
         if t * len <= tol || (1.0 - t) * len <= tol {
             continue;
@@ -99,8 +99,8 @@ pub fn fix_t_junctions(polys: &[BrushPolygon]) -> Vec<(BrushPolygon, bool)> {
                     changed = true;
 
                     out.positions.push(c);
-                    out.uvs.push(lerp2(p.uvs[k], p.uvs[next], t));
-                    out.uv2.push(lerp2(p.uv2[k], p.uv2[next], t));
+                    out.uvs.push(lerp_point2(p.uvs[k], p.uvs[next], t));
+                    out.uv2.push(lerp_point2(p.uv2[k], p.uv2[next], t));
                 }
             }
             (out, changed)
@@ -168,12 +168,12 @@ pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
 
 fn on_segment(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> bool {
     let ab = sub(b, a);
-    let len2 = dot(ab, ab);
-    if len2 <= T_JUNCTION_TOLERANCE * T_JUNCTION_TOLERANCE {
+    let len_sq = dot(ab, ab);
+    if len_sq <= T_JUNCTION_TOLERANCE * T_JUNCTION_TOLERANCE {
         return false;
     }
-    let t = dot(sub(p, a), ab) / len2;
-    let len = len2.sqrt();
+    let t = dot(sub(p, a), ab) / len_sq;
+    let len = len_sq.sqrt();
     if t * len <= T_JUNCTION_TOLERANCE || (1.0 - t) * len <= T_JUNCTION_TOLERANCE {
         return false;
     }

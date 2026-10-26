@@ -239,9 +239,9 @@ impl GameRuntime {
                 self.volume_fired.insert(id.clone());
             }
 
-            if let Some(variable) = &def.var {
+            if let Some(flag_name) = &def.var {
                 self.script_host
-                    .set_var(variable, if entered { "1" } else { "0" });
+                    .set_var(flag_name, if entered { "1" } else { "0" });
             }
 
             for action in if entered { &def.on_enter } else { &def.on_exit } {

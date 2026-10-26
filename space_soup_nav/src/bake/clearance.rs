@@ -188,16 +188,16 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
             if *thi < ylo || *tlo > yhi {
                 continue;
             }
-            let lerp3 = |a: &[f64; 3], b: &[f64; 3], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+            let lerp_point3 = |a: &[f64; 3], b: &[f64; 3], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
             let mut p: Vec<[f64; 3]> = v.to_vec();
-            p = clip(&p, |q| q[1] - ylo, lerp3);
-            p = clip(&p, |q| yhi - q[1], lerp3);
-            let lerp2 = |a: &P2, b: &P2, t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            p = clip(&p, |q| q[1] - ylo, lerp_point3);
+            p = clip(&p, |q| yhi - q[1], lerp_point3);
+            let lerp_point2 = |a: &P2, b: &P2, t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
             let mut f: Vec<P2> = p.iter().map(|q| [q[0], q[2]]).collect();
-            f = clip(&f, |q| q[0] - x0, lerp2);
-            f = clip(&f, |q| x1 - q[0], lerp2);
-            f = clip(&f, |q| q[1] - z0, lerp2);
-            f = clip(&f, |q| z1 - q[1], lerp2);
+            f = clip(&f, |q| q[0] - x0, lerp_point2);
+            f = clip(&f, |q| x1 - q[0], lerp_point2);
+            f = clip(&f, |q| q[1] - z0, lerp_point2);
+            f = clip(&f, |q| z1 - q[1], lerp_point2);
             if !f.is_empty() {
                 site.footprints.push(f);
             }

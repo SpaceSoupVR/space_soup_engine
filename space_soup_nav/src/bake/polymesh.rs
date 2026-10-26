@@ -67,20 +67,20 @@ fn next(i: usize, n: usize) -> usize {
 type P = [i32; 4];
 
 #[inline]
-fn area2(a: &P, b: &P, c: &P) -> i32 {
+fn twice_area(a: &P, b: &P, c: &P) -> i32 {
     (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2])
 }
 #[inline]
 fn left(a: &P, b: &P, c: &P) -> bool {
-    area2(a, b, c) < 0
+    twice_area(a, b, c) < 0
 }
 #[inline]
 fn left_on(a: &P, b: &P, c: &P) -> bool {
-    area2(a, b, c) <= 0
+    twice_area(a, b, c) <= 0
 }
 #[inline]
 fn collinear(a: &P, b: &P, c: &P) -> bool {
-    area2(a, b, c) == 0
+    twice_area(a, b, c) == 0
 }
 fn intersect_prop(a: &P, b: &P, c: &P, d: &P) -> bool {
     if collinear(a, b, c) || collinear(a, b, d) || collinear(c, d, a) || collinear(c, d, b) {
@@ -138,11 +138,11 @@ fn in_cone(i: usize, j: usize, n: usize, verts: &[P], indices: &[u32], strict: b
     let pi = pt(verts, indices, i);
     let pj = pt(verts, indices, j);
     let pi1 = pt(verts, indices, next(i, n));
-    let pin1 = pt(verts, indices, prev(i, n));
-    if left_on(pin1, pi, pi1) {
-        return if strict { left(pi, pj, pin1) && left(pj, pi, pi1) } else { left_on(pi, pj, pin1) && left_on(pj, pi, pi1) };
+    let next_pin = pt(verts, indices, prev(i, n));
+    if left_on(next_pin, pi, pi1) {
+        return if strict { left(pi, pj, next_pin) && left(pj, pi, pi1) } else { left_on(pi, pj, next_pin) && left_on(pj, pi, pi1) };
     }
-    !(left_on(pi, pj, pi1) && left_on(pj, pi, pin1))
+    !(left_on(pi, pj, pi1) && left_on(pj, pi, next_pin))
 }
 
 fn diagonal(i: usize, j: usize, n: usize, verts: &[P], indices: &[u32]) -> bool {

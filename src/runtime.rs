@@ -285,11 +285,11 @@ impl GameRuntime {
         for (entity_id, joint_name, offset) in defs {
             match JointId::from_name(&joint_name) {
                 Some(joint_id) => {
-                    let offset_vec = Vec3::from(offset);
-                    let att = if offset_vec == Vec3::ZERO {
+                    let offset_world = Vec3::from(offset);
+                    let att = if offset_world == Vec3::ZERO {
                         Attachment::rigid(joint_id)
                     } else {
-                        Attachment::with_offset(joint_id, offset_vec, Quat::IDENTITY)
+                        Attachment::with_offset(joint_id, offset_world, Quat::IDENTITY)
                     };
                     self.attachments.attach(&entity_id, PlayerId::local(), att);
                     info!("setup_scene_attachments: '{entity_id}' → '{joint_name}'");

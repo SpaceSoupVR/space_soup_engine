@@ -44,7 +44,7 @@ pub struct WeatherDef {
     #[serde(default = "default_intensity")]
     pub intensity: f32,
 
-    #[serde(default, skip_serializing_if = "is_zero2")]
+    #[serde(default, skip_serializing_if = "is_zero_pair")]
     pub wind: [f32; 2],
 
     #[serde(default = "default_one")]
@@ -68,7 +68,7 @@ pub struct WeatherDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
 
-    #[serde(default, skip_serializing_if = "is_zero2")]
+    #[serde(default, skip_serializing_if = "is_zero_pair")]
     pub cycle: [f32; 2],
 
     #[serde(default, skip_serializing_if = "WeatherStart::is_dry")]
@@ -81,7 +81,7 @@ fn default_one() -> f32 { 1.0 }
 fn default_puddle_depth() -> f32 { 0.03 }
 fn default_relief() -> f32 { 0.04 }
 fn default_snow_depth() -> f32 { 0.15 }
-fn is_zero2(v: &[f32; 2]) -> bool { v[0] == 0.0 && v[1] == 0.0 }
+fn is_zero_pair(v: &[f32; 2]) -> bool { v[0] == 0.0 && v[1] == 0.0 }
 
 pub const RAIN_MM_PER_HOUR: f32 = 8.0;
 
@@ -283,7 +283,7 @@ pub fn thirst(slope_deg: f32, proud: f32, relief: f32, in_hollow: bool) -> f32 {
     THIRST_MOST * steep.max(crown)
 }
 
-fn hash2(x: i32, z: i32, seed: u32) -> f32 {
+fn hash_cell(x: i32, z: i32, seed: u32) -> f32 {
     let mut h = (x as u32).wrapping_mul(0x8da6_b343) ^ (z as u32).wrapping_mul(0xd816_3841) ^ seed.wrapping_mul(0xcb1a_b31f);
     h ^= h >> 13;
     h = h.wrapping_mul(0x5bd1_e995);
@@ -298,10 +298,10 @@ fn value_noise(x: f32, z: f32, w: f32, seed: u32) -> f32 {
     let s = |t: f32| t * t * (3.0 - 2.0 * t);
     let (su, sv) = (s(fu), s(fv));
     let (i, j) = (i as i32, j as i32);
-    let a = hash2(i, j, seed);
-    let b = hash2(i + 1, j, seed);
-    let c = hash2(i, j + 1, seed);
-    let d = hash2(i + 1, j + 1, seed);
+    let a = hash_cell(i, j, seed);
+    let b = hash_cell(i + 1, j, seed);
+    let c = hash_cell(i, j + 1, seed);
+    let d = hash_cell(i + 1, j + 1, seed);
     let top = a + (b - a) * su;
     let bottom = c + (d - c) * su;
     (top + (bottom - top) * sv) * 2.0 - 1.0

@@ -298,20 +298,20 @@ fn next(i: usize, n: usize) -> usize {
     if i + 1 < n { i + 1 } else { 0 }
 }
 #[inline]
-fn area2(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4]) -> i32 {
+fn twice_area(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4]) -> i32 {
     (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2])
 }
 #[inline]
 fn left(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4]) -> bool {
-    area2(a, b, c) < 0
+    twice_area(a, b, c) < 0
 }
 #[inline]
 fn left_on(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4]) -> bool {
-    area2(a, b, c) <= 0
+    twice_area(a, b, c) <= 0
 }
 #[inline]
 fn collinear(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4]) -> bool {
-    area2(a, b, c) == 0
+    twice_area(a, b, c) == 0
 }
 fn intersect_prop(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4], d: &[i32; 4]) -> bool {
     if collinear(a, b, c) || collinear(a, b, d) || collinear(c, d, a) || collinear(c, d, b) {
@@ -358,11 +358,11 @@ fn in_cone(i: usize, verts: &[[i32; 4]], pj: &[i32; 4]) -> bool {
     let n = verts.len();
     let pi = &verts[i];
     let pi1 = &verts[next(i, n)];
-    let pin1 = &verts[prev(i, n)];
-    if left_on(pin1, pi, pi1) {
-        return left(pi, pj, pin1) && left(pj, pi, pi1);
+    let next_pin = &verts[prev(i, n)];
+    if left_on(next_pin, pi, pi1) {
+        return left(pi, pj, next_pin) && left(pj, pi, pi1);
     }
-    !(left_on(pi, pj, pi1) && left_on(pj, pi, pin1))
+    !(left_on(pi, pj, pi1) && left_on(pj, pi, next_pin))
 }
 
 fn remove_degenerate_segments(simplified: &mut Vec<[i32; 4]>) {

@@ -35,7 +35,7 @@ struct HeightPatch {
 type V = [f32; 3];
 
 #[inline]
-fn vdot2(a: &V, b: &V) -> f32 {
+fn vdot_xz(a: &V, b: &V) -> f32 {
     a[0] * b[0] + a[2] * b[2]
 }
 #[inline]
@@ -45,11 +45,11 @@ fn vdist_sq2(p: &V, q: &V) -> f32 {
     dx * dx + dy * dy
 }
 #[inline]
-fn vdist2(p: &V, q: &V) -> f32 {
+fn vdist_xz(p: &V, q: &V) -> f32 {
     vdist_sq2(p, q).sqrt()
 }
 #[inline]
-fn vcross2(p1: &V, p2: &V, p3: &V) -> f32 {
+fn vcross_xz(p1: &V, p2: &V, p3: &V) -> f32 {
     let u1 = p2[0] - p1[0];
     let v1 = p2[2] - p1[2];
     let u2 = p3[0] - p1[0];
@@ -66,15 +66,15 @@ fn circum_circle(p1: &V, p2: &V, p3: &V, c: &mut V, r: &mut f32) -> bool {
     let v1 = [0.0f32; 3];
     let v2 = vsub(p2, p1);
     let v3 = vsub(p3, p1);
-    let cp = vcross2(&v1, &v2, &v3);
+    let cp = vcross_xz(&v1, &v2, &v3);
     if cp.abs() > EPS {
-        let v1sq = vdot2(&v1, &v1);
-        let v2sq = vdot2(&v2, &v2);
-        let v3sq = vdot2(&v3, &v3);
+        let v1sq = vdot_xz(&v1, &v1);
+        let v2sq = vdot_xz(&v2, &v2);
+        let v3sq = vdot_xz(&v3, &v3);
         c[0] = (v1sq * (v2[2] - v3[2]) + v2sq * (v3[2] - v1[2]) + v3sq * (v1[2] - v2[2])) / (2.0 * cp);
         c[1] = 0.0;
         c[2] = (v1sq * (v3[0] - v2[0]) + v2sq * (v1[0] - v3[0]) + v3sq * (v2[0] - v1[0])) / (2.0 * cp);
-        *r = vdist2(c, &v1);
+        *r = vdist_xz(c, &v1);
         *c = [c[0] + p1[0], c[1] + p1[1], c[2] + p1[2]];
         return true;
     }
@@ -87,14 +87,14 @@ fn dist_pt_tri(p: &V, a: &V, b: &V, c: &V) -> f32 {
     let v0 = vsub(c, a);
     let v1 = vsub(b, a);
     let v2 = vsub(p, a);
-    let dot00 = vdot2(&v0, &v0);
-    let dot01 = vdot2(&v0, &v1);
-    let dot02 = vdot2(&v0, &v2);
-    let dot11 = vdot2(&v1, &v1);
-    let dot12 = vdot2(&v1, &v2);
-    let inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
-    let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
-    let v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
+    let dot_v0_v0 = vdot_xz(&v0, &v0);
+    let dot_v0_v1 = vdot_xz(&v0, &v1);
+    let dot_v0_v2 = vdot_xz(&v0, &v2);
+    let dot_v1_v1 = vdot_xz(&v1, &v1);
+    let dot_v1_v2 = vdot_xz(&v1, &v2);
+    let inv_denom = 1.0 / (dot_v0_v0 * dot_v1_v1 - dot_v0_v1 * dot_v0_v1);
+    let u = (dot_v1_v1 * dot_v0_v2 - dot_v0_v1 * dot_v1_v2) * inv_denom;
+    let v = (dot_v0_v0 * dot_v1_v2 - dot_v0_v1 * dot_v0_v2) * inv_denom;
     const EPS: f32 = 1e-4;
     if u >= -EPS && v >= -EPS && (u + v) <= 1.0 + EPS {
         let y = a[1] + v0[1] * u + v1[1] * v;
@@ -244,10 +244,10 @@ fn update_left_face(e: &mut [i32; 4], s: i32, t: i32, f: i32) {
 }
 
 fn overlap_seg_seg_2d(a: &V, b: &V, c: &V, d: &V) -> bool {
-    let a1 = vcross2(a, b, d);
-    let a2 = vcross2(a, b, c);
+    let a1 = vcross_xz(a, b, d);
+    let a2 = vcross_xz(a, b, c);
     if a1 * a2 < 0.0 {
-        let a3 = vcross2(c, d, a);
+        let a3 = vcross_xz(c, d, a);
         let a4 = a3 + a2 - a1;
         if a3 * a4 < 0.0 {
             return true;
@@ -283,31 +283,31 @@ fn complete_facet(pts: &[V], edges: &mut Vec<[i32; 4]>, max_edges: usize, nfaces
     let mut pt = npts;
     let mut c = [0.0f32; 3];
     let mut r = -1.0f32;
-    let (ps, pt_) = (&pts[s as usize], &pts[t as usize]);
+    let (ps, point_t) = (&pts[s as usize], &pts[t as usize]);
     for u in 0..npts {
         if u == s || u == t {
             continue;
         }
         let pu = &pts[u as usize];
-        if vcross2(ps, pt_, pu) > EPS {
+        if vcross_xz(ps, point_t, pu) > EPS {
             if r < 0.0 {
                 pt = u;
-                circum_circle(ps, pt_, pu, &mut c, &mut r);
+                circum_circle(ps, point_t, pu, &mut c, &mut r);
                 continue;
             }
-            let d = vdist2(&c, pu);
+            let d = vdist_xz(&c, pu);
             let tol = 0.001f32;
             if d > r * (1.0 + tol) {
                 continue;
             } else if d < r * (1.0 - tol) {
                 pt = u;
-                circum_circle(ps, pt_, pu, &mut c, &mut r);
+                circum_circle(ps, point_t, pu, &mut c, &mut r);
             } else {
                 if overlap_edges(pts, edges, s, u) || overlap_edges(pts, edges, t, u) {
                     continue;
                 }
                 pt = u;
-                circum_circle(ps, pt_, pu, &mut c, &mut r);
+                circum_circle(ps, point_t, pu, &mut c, &mut r);
             }
         }
     }
@@ -428,7 +428,7 @@ fn triangulate_hull(verts: &[V], hull: &[i32], nin: usize, tris: &mut Vec<[i32; 
         let pi = prev(i, nhull);
         let ni = next(i, nhull);
         let (pv, cv, nv) = (&verts[hull[pi] as usize], &verts[hull[i] as usize], &verts[hull[ni] as usize]);
-        let d = vdist2(pv, cv) + vdist2(cv, nv) + vdist2(nv, pv);
+        let d = vdist_xz(pv, cv) + vdist_xz(cv, nv) + vdist_xz(nv, pv);
         if d < dmin {
             start = i;
             left = ni;
@@ -444,8 +444,8 @@ fn triangulate_hull(verts: &[V], hull: &[i32], nin: usize, tris: &mut Vec<[i32; 
         let nvleft = &verts[hull[nleft] as usize];
         let cvright = &verts[hull[right] as usize];
         let nvright = &verts[hull[nright] as usize];
-        let dleft = vdist2(cvleft, nvleft) + vdist2(nvleft, cvright);
-        let dright = vdist2(cvright, nvright) + vdist2(cvleft, nvright);
+        let dleft = vdist_xz(cvleft, nvleft) + vdist_xz(nvleft, cvright);
+        let dright = vdist_xz(cvright, nvright) + vdist_xz(cvleft, nvright);
         if dleft < dright {
             tris.push([hull[left], hull[nleft], hull[right], 0]);
             left = nleft;

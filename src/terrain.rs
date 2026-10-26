@@ -1161,10 +1161,10 @@ impl GroundPatch {
                 return Err("truncated".into());
             }
             let f32_at = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
-            let vec_at = |o: usize| Vec3::new(f32_at(o), f32_at(o + 4), f32_at(o + 8));
+            let vec3_at = |o: usize| Vec3::new(f32_at(o), f32_at(o + 4), f32_at(o + 8));
             let base = out.positions.len() as u32;
-            out.positions.extend((0..nv).map(|i| vec_at(o + i * 12)));
-            out.normals.extend((0..nv).map(|i| vec_at(o + nv * 12 + i * 12)));
+            out.positions.extend((0..nv).map(|i| vec3_at(o + i * 12)));
+            out.normals.extend((0..nv).map(|i| vec3_at(o + nv * 12 + i * 12)));
             o += nv * 24;
             for i in 0..ni {
                 let idx = u32_at(o + i * 4)?;

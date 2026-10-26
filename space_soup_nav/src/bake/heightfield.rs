@@ -100,7 +100,7 @@ pub fn mark_walkable_triangles(slope_deg: f32, verts: &[[f32; 3]], tris: &[[u32;
 
 /// `dividePoly`: splits a convex polygon (at most 12 vertices) by the plane `v[axis] = offset`.
 /// Returns the counts written to `out1` (the side below `offset`) and `out2` (above).
-fn divide_poly(input: &[[f32; 3]], out1: &mut [[f32; 3]; 12], out2: &mut [[f32; 3]; 12], offset: f32, axis: usize) -> (usize, usize) {
+fn divide_poly(input: &[[f32; 3]], out_near: &mut [[f32; 3]; 12], out_far: &mut [[f32; 3]; 12], offset: f32, axis: usize) -> (usize, usize) {
     let n = input.len();
     if n == 0 {
         return (0, 0);
@@ -117,26 +117,26 @@ fn divide_poly(input: &[[f32; 3]], out1: &mut [[f32; 3]; 12], out2: &mut [[f32; 
             let s = delta[b] / (delta[b] - delta[a]);
             let (va, vb) = (input[a], input[b]);
             let p = [vb[0] + (va[0] - vb[0]) * s, vb[1] + (va[1] - vb[1]) * s, vb[2] + (va[2] - vb[2]) * s];
-            out1[m] = p;
-            out2[k] = p;
+            out_near[m] = p;
+            out_far[k] = p;
             m += 1;
             k += 1;
             if delta[a] > 0.0 {
-                out1[m] = input[a];
+                out_near[m] = input[a];
                 m += 1;
             } else if delta[a] < 0.0 {
-                out2[k] = input[a];
+                out_far[k] = input[a];
                 k += 1;
             }
         } else {
             let mut to_second = true;
             if delta[a] >= 0.0 {
-                out1[m] = input[a];
+                out_near[m] = input[a];
                 m += 1;
                 to_second = delta[a] == 0.0;
             }
             if to_second {
-                out2[k] = input[a];
+                out_far[k] = input[a];
                 k += 1;
             }
         }
