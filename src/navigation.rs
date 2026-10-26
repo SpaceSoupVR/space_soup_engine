@@ -1,6 +1,6 @@
 //! NAVIGATION: a scene's navmesh, baked from what its players collide with, and the paths a
 //! creature walks on it. The navmesh itself is `space_soup_nav` (a Recast port matching C++
-//! Recast's output, its own crate); this is the engine's side of it.
+//! Recast's output, its own crate); the engine's side of it lives here.
 //!
 //! - BAKED OFFLINE, from every static collider (`PhysicsWorld::static_collision_triangles`):
 //!   cuboids, brushes, models' mesh colliders and the terrain alike, so a creature walks exactly

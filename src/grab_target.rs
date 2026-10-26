@@ -32,7 +32,7 @@
 //!
 //! What is offered comes from the caller -- a grid query round the hand
 //! (`GrabGrid::each_within`), never a walk over the level's objects -- and
-//! this module is pure arithmetic over it, host-tested.
+//! the code here is pure arithmetic over it, host-tested.
 
 use glam::{Quat, Vec3};
 

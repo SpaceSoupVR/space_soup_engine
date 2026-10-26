@@ -26,36 +26,6 @@ mod runtime_dispatch;
 mod runtime_script_commands;
 mod runtime_locomotion;
 mod runtime_render;
-#[cfg(test)]
-mod runtime_test_support;
-#[cfg(test)]
-mod runtime_tests_multiplayer;
-#[cfg(test)]
-mod runtime_tests_physics;
-#[cfg(test)]
-mod rigid_physics_brush_tests;
-#[cfg(test)]
-mod rigid_physics_water_tests;
-#[cfg(test)]
-mod rigid_physics_mesh_collider_tests;
-#[cfg(test)]
-mod navigation_tests;
-#[cfg(test)]
-mod rigid_physics_hold_tests;
-#[cfg(test)]
-mod rigid_physics_level_tests;
-#[cfg(test)]
-mod runtime_tests_scripting;
-#[cfg(test)]
-mod runtime_tests_teleport;
-#[cfg(test)]
-mod breach_physics_tests;
-#[cfg(test)]
-mod visibility_collision_tests;
-#[cfg(test)]
-mod trigger_volume_tests;
-#[cfg(test)]
-mod fracture_damage_tests;
 pub mod brush;
 pub mod door;
 pub mod trigger_volume;
@@ -78,26 +48,12 @@ pub mod scene_light;
 pub mod stationary;
 mod scene_physics;
 mod scene_rig;
-#[cfg(test)]
-mod scene_tests_hierarchy;
-#[cfg(test)]
-mod scene_tests_shipped;
 pub mod scatter;
-#[cfg(test)]
-mod scatter_tests;
 pub mod schema;
 pub mod terrain;
 pub mod walk_area;
 pub mod water;
 pub mod weather;
-#[cfg(test)]
-mod terrain_tests;
-#[cfg(test)]
-mod terrain_physics_tests;
-#[cfg(test)]
-mod scatter_physics_tests;
-#[cfg(test)]
-mod terrain_collider_tests;
 pub mod script;
 mod script_fns_input;
 mod script_fns_interact;
@@ -136,3 +92,48 @@ pub use scene::{
     PlayMode, RigAttachmentDef, RigidBodyDef, Scene, SliderJointDef, SoundSourceDef,
     BINDING_BUTTONS,
 };
+
+#[cfg(test)]
+mod runtime_test_support;
+#[cfg(test)]
+mod runtime_tests_multiplayer;
+#[cfg(test)]
+mod runtime_tests_physics;
+#[cfg(test)]
+mod rigid_physics_brush_tests;
+#[cfg(test)]
+mod rigid_physics_water_tests;
+#[cfg(test)]
+mod rigid_physics_mesh_collider_tests;
+#[cfg(test)]
+mod navigation_tests;
+#[cfg(test)]
+mod rigid_physics_hold_tests;
+#[cfg(test)]
+mod rigid_physics_level_tests;
+#[cfg(test)]
+mod runtime_tests_scripting;
+#[cfg(test)]
+mod runtime_tests_teleport;
+#[cfg(test)]
+mod breach_physics_tests;
+#[cfg(test)]
+mod visibility_collision_tests;
+#[cfg(test)]
+mod trigger_volume_tests;
+#[cfg(test)]
+mod fracture_damage_tests;
+#[cfg(test)]
+mod scene_tests_hierarchy;
+#[cfg(test)]
+mod scene_tests_shipped;
+#[cfg(test)]
+mod scatter_tests;
+#[cfg(test)]
+mod terrain_tests;
+#[cfg(test)]
+mod terrain_physics_tests;
+#[cfg(test)]
+mod scatter_physics_tests;
+#[cfg(test)]
+mod terrain_collider_tests;

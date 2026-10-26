@@ -135,7 +135,7 @@ pub const LATCH_PLAY_DEG: f32 = 0.15;
 /// is from the hand, N/m, damped (N s/m), and never more than
 /// [`DOOR_PULL_MAX`] newtons -- an arm's steady pull. The cap is what keeps a
 /// hand that goes on past the leaf's stop from fighting it: at the stop the
-/// pull is one steady force the hinge's limit simply holds.
+/// pull is one steady force the hinge's limit holds.
 pub const DOOR_PULL_STIFFNESS: f32 = 2500.0;
 pub const DOOR_PULL_DAMPING: f32 = 140.0;
 pub const DOOR_PULL_MAX: f32 = 120.0;

@@ -490,7 +490,7 @@ fn set_tri_flags(tris: &mut [[i32; 4]], hull: &[i32]) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "mirrors the native call it wraps; a params struct would only move the list")]
 fn build_poly_detail(
     input: &[V],
     sample_dist: f32,
@@ -767,7 +767,7 @@ fn dir_for_offset(x: i32, z: i32) -> usize {
     DIRS[(((z + 1) << 1) + x) as usize] as usize
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "mirrors the native call it wraps; a params struct would only move the list")]
 fn get_height_data(chf: &CompactHeightfield, poly: &[u16], verts: &[[u16; 3]], bs: i32, hp: &mut HeightPatch, queue: &mut Vec<i32>, region: u16) {
     queue.clear();
     for d in hp.data.iter_mut() {

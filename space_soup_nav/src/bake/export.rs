@@ -207,7 +207,7 @@ pub fn agent_class(s: &Settings) -> AgentClass {
 }
 
 /// Most voxel columns one piece may bake into: 8.4 million, a 290 m square at 0.1 m cells. A room
-/// piece is tens of metres; anything near this is a broken export, refused before it is allocated.
+/// piece is tens of metres; a count near this means a broken export, refused before it is allocated.
 pub const MAX_BAKE_COLUMNS: f64 = (1u64 << 23) as f64;
 
 /// Refuses input the baker cannot bake sensibly: non-finite numbers, triangles naming missing
@@ -528,7 +528,7 @@ fn key(v: IVec3) -> IVec3Key {
     (v.x, v.y, v.z)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "mirrors the native call it wraps; a params struct would only move the list")]
 fn assemble(
     input: &PieceInput,
     settings: &Settings,

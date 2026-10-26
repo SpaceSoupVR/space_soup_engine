@@ -350,7 +350,7 @@ fn lp3(lines: &[Line], num_obstacle: usize, begin: usize, radius: f64, result: &
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "mirrors the native call it wraps; a params struct would only move the list")]
 /// The ORCA half-plane agent `a` must keep its velocity in to avoid `b` for `horizon` seconds,
 /// taking `share` of the avoidance (0.5 between equals, 1 against a player who will not yield).
 fn orca_line(pos: DVec2, vel: DVec2, other_pos: DVec2, other_vel: DVec2, combined: f64, horizon: f64, dt: f64, share: f64) -> Line {
@@ -505,7 +505,7 @@ impl Crowd {
     /// A crowd taking over from another host: the same agents under the same ids, in the same
     /// turns and slots, each finding its path again. Two headsets building from the same snapshot
     /// and world get the same crowd, tick for tick. A turn or slot naming a narrow place or player
-    /// this crowd does not have is dropped, and that agent simply asks again.
+    /// this crowd does not have is dropped, and that agent asks again.
     pub fn from_snapshot(world: &NavWorld, settings: CrowdSettings, agents: &[AgentSnapshot], players: &[Player]) -> Crowd {
         let mut c = Crowd::new(world, settings);
         for a in agents {

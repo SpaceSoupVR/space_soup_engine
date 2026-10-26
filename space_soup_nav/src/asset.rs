@@ -558,7 +558,7 @@ impl NavPieceAsset {
 ///
 /// Looking down from +Y in a right-handed frame, +X points right and +Z points DOWN the view
 /// (X x Y = Z, and Y points at the viewer), so the screen's "up" is -Z. The usual 2D cross product
-/// in (right, up) = (x, -z) is therefore `abx * (-acz) - (-abz) * acx`. This is the y component of
+/// in (right, up) = (x, -z) is therefore `abx * (-acz) - (-abz) * acx`. That is the y component of
 /// (ab x ac), which is positive exactly when the turn is counter-clockwise from above.
 pub fn ccw_from_above(a: IVec3, b: IVec3, c: IVec3) -> i64 {
     let (abx, abz) = (b.x as i64 - a.x as i64, b.z as i64 - a.z as i64);

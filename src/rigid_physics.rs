@@ -173,8 +173,8 @@ pub(crate) struct DynamicActor {
     /// free grab holds it at the surface of (`grab_free`).
     pub(crate) half: Vec3,
     pub(crate) volume: f32,
-    /// Where its object was in `Scene::objects` when last looked for: tried
-    /// first, so writing a body's pose back is not a search of the level.
+    /// Where its object was in `Scene::objects` when last looked for: checked
+    /// before any search, so writing a body's pose back is not a search of the level.
     pub(crate) object: usize,
     /// Asleep when last stepped: its pose has been written back already.
     pub(crate) asleep: bool,

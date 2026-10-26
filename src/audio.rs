@@ -256,7 +256,7 @@ impl SoundEngine {
         }
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, reason = "one-off tuple type, a named alias adds nothing")]
     pub fn active_sounds(
         &self,
         objects: &[GameObject],

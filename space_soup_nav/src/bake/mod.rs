@@ -5,20 +5,20 @@
 //! against C++ Recast's output on the same inputs (`tests/parity.rs`, data in
 //! `tests/data/golden`). Watershed partitioning is deliberately absent (see the design report).
 
-#[allow(clippy::needless_range_loop)]
+#[allow(clippy::needless_range_loop, reason = "index is used for several parallel arrays")]
 pub mod clearance;
-#[allow(clippy::needless_range_loop, clippy::manual_clamp)]
+#[allow(clippy::needless_range_loop, clippy::manual_clamp, reason = "index is used for several parallel arrays; NaN-safe min/max order is intended")]
 pub mod compact;
-#[allow(clippy::needless_range_loop, clippy::manual_clamp)]
+#[allow(clippy::needless_range_loop, clippy::manual_clamp, reason = "index is used for several parallel arrays; NaN-safe min/max order is intended")]
 pub mod contour;
-#[allow(clippy::needless_range_loop, clippy::manual_clamp)]
+#[allow(clippy::needless_range_loop, clippy::manual_clamp, reason = "index is used for several parallel arrays; NaN-safe min/max order is intended")]
 pub mod detail;
 pub mod export;
-#[allow(clippy::needless_range_loop, clippy::manual_clamp)]
+#[allow(clippy::needless_range_loop, clippy::manual_clamp, reason = "index is used for several parallel arrays; NaN-safe min/max order is intended")]
 pub mod heightfield;
-#[allow(clippy::needless_range_loop, clippy::manual_clamp)]
+#[allow(clippy::needless_range_loop, clippy::manual_clamp, reason = "index is used for several parallel arrays; NaN-safe min/max order is intended")]
 pub mod polymesh;
-#[allow(clippy::needless_range_loop, clippy::manual_clamp)]
+#[allow(clippy::needless_range_loop, clippy::manual_clamp, reason = "index is used for several parallel arrays; NaN-safe min/max order is intended")]
 pub mod region;
 
 pub use region::Partition;

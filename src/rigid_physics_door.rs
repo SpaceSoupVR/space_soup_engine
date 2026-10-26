@@ -628,7 +628,7 @@ mod tests {
     /// stops them (`Locomotion::apply_collision`). The hall's swing doors open
     /// under their body, and the closers bring them home behind them. THE
     /// BRICK HALL'S DOOR IS LATCHED: their body alone leans on it and it
-    /// stays shut; with a hand at its handle the bolt is drawn, and the same
+    /// stays shut; with a hand at its latch the bolt is drawn, and the same
     /// walk opens it and comes out the far side past the leaf that is bolted.
     #[test]
     fn walking_down_the_hallway_opens_the_swing_doors_by_body_and_the_latched_door_by_its_handle() {

@@ -258,7 +258,7 @@ pub const THIRST_SLOPE_DEG: (f32, f32) = (8.0, 25.0);
 /// WHERE AN AREA'S WETNESS SHOWS. Rain wets ground evenly, but water does not
 /// stay evenly: it drains off slopes and off the crowns of the ground's own
 /// relief into the hollows beside them, so as an area wets its hollows darken
-/// first, and as it dries its ridges pale first and its hollows last, in
+/// earliest, and as it dries its ridges pale earliest and its hollows last, in
 /// patches a metre or so across. One number a texel, fixed at load, taken from
 /// the area's wetness before it is shown ([`surface`]): nothing in a hollow
 /// (where water would stand) or on flat ground, up to [`THIRST_MOST`] on a

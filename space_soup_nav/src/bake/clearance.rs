@@ -103,8 +103,8 @@ fn dist_point_seg(p: P2, a: P2, b: P2) -> f64 {
     (qx * qx + qz * qz).sqrt()
 }
 
-/// Distance from `p` to a convex polygon on the floor plane (0 inside). Handles the degenerate
-/// polygons a vertical wall projects to.
+/// Distance from `p` to a convex polygon on the floor plane (0 inside). Degenerate
+/// polygons, which a vertical wall projects to, are measured too.
 fn dist_point_poly(p: P2, poly: &[P2]) -> f64 {
     match poly.len() {
         0 => f64::MAX,

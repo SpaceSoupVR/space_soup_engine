@@ -183,7 +183,7 @@ pub fn game_object_schema() -> SchemaDescriptor {
 }
 
 fn trigger_volume_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(t: crate::trigger_volume::TriggerVolumeDef) {
         let crate::trigger_volume::TriggerVolumeDef {
             enabled,
@@ -203,7 +203,7 @@ fn trigger_volume_fields() -> Vec<FieldDescriptor> {
 }
 
 fn sound_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(s: crate::scene::SoundSourceDef) {
         let crate::scene::SoundSourceDef {
             clip,
@@ -231,7 +231,7 @@ fn sound_fields() -> Vec<FieldDescriptor> {
 }
 
 fn walk_area_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(w: crate::walk_area::WalkAreaDef) {
         let crate::walk_area::WalkAreaDef { fence_height, lift, flat: _, bumps: _ } = w;
     }
@@ -239,7 +239,7 @@ fn walk_area_fields() -> Vec<FieldDescriptor> {
 }
 
 fn terrain_collider_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(t: crate::scene::TerrainColliderDef) {
         let crate::scene::TerrainColliderDef { node_filter } = t;
     }
@@ -247,7 +247,7 @@ fn terrain_collider_fields() -> Vec<FieldDescriptor> {
 }
 
 fn laser_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(l: crate::scene::LaserDef) {
         let crate::scene::LaserDef { color, max_distance, beam_width } = l;
     }
@@ -259,7 +259,7 @@ fn laser_fields() -> Vec<FieldDescriptor> {
 }
 
 fn particle_emitter_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(p: crate::scene::ParticleEmitterDef) {
         let crate::scene::ParticleEmitterDef {
             particle_size,
@@ -283,7 +283,7 @@ fn particle_emitter_fields() -> Vec<FieldDescriptor> {
 }
 
 fn effect_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(e: crate::scene::EffectDef) {
         let crate::scene::EffectDef {
             kind,
@@ -325,7 +325,7 @@ fn reflection_probe_fields() -> Vec<FieldDescriptor> {
 }
 
 fn door_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(d: crate::door::DoorDef) {
         let crate::door::DoorDef {
             hinge,
@@ -361,7 +361,7 @@ fn door_fields() -> Vec<FieldDescriptor> {
 }
 
 fn teleportal_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(t: crate::scene::TeleportalDef) {
         let crate::scene::TeleportalDef { target_id, target_scene } = t;
     }
@@ -369,11 +369,11 @@ fn teleportal_fields() -> Vec<FieldDescriptor> {
 }
 
 fn breakable_fields() -> Vec<FieldDescriptor> {
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive(b: crate::scene::BreakableDef) {
         let crate::scene::BreakableDef { health, stages } = b;
     }
-    #[allow(dead_code, unused_variables)]
+    #[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
     fn exhaustive_stage(s: crate::scene::DamageStage) {
         let crate::scene::DamageStage { at, hidden_parts, solid, removed } = s;
     }
@@ -381,7 +381,7 @@ fn breakable_fields() -> Vec<FieldDescriptor> {
     vec![field!(health, Number)]
 }
 
-#[allow(dead_code, unused_variables)]
+#[allow(dead_code, unused_variables, reason = "schema mirror kept in step with the scripting API, not every field is read yet")]
 fn schema_exhaustiveness(o: crate::scene::GameObject) {
     let crate::scene::GameObject {
         id,

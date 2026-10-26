@@ -453,7 +453,7 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
     compress_ids(&mut regions, src, max_region_id);
 }
 
-/// `mergeAndFilterLayerRegions`.
+/// Recast's `mergeAndFilterLayerRegions`.
 fn merge_and_filter_layer_regions(chf: &CompactHeightfield, src: &mut [u16], min_region_area: i32, max_region_id: &mut u16) {
     let (w, h) = (chf.width, chf.height);
     let nreg = *max_region_id as usize + 1;

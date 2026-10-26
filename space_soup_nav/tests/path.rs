@@ -52,8 +52,7 @@ fn random_point(w: &NavWorld, rng: &mut Lcg) -> DVec3 {
     unreachable!()
 }
 
-/// Every point of the leg is on the floor (within 1 mm), sampled every 50 mm. Stricter and more
-/// robust than a raycast for legs that run exactly along a wall.
+/// Every point of the leg is on the floor (within 1 mm), sampled every 50 mm. Stricter than a raycast for legs that run exactly along a wall.
 fn on_floor(w: &NavWorld, a: DVec3, b: DVec3) -> bool {
     let steps = ((b - a).length() / 50.0).ceil().max(1.0) as usize;
     (0..=steps).all(|k| {

@@ -1,6 +1,6 @@
 //! Shared by the integration tests: the agent configs as baker settings, the real kit baked,
 //! and generated levels.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test binary uses a different subset of the shared helpers")]
 
 use std::sync::Arc;
 
