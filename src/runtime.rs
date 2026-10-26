@@ -549,14 +549,6 @@ impl GameRuntime {
         &self.scene
     }
 
-    /// The scene's rigid-body world. Exposed so a process that runs this
-    /// `GameRuntime` with no server -- local_sim in quest_app -- can drive
-    /// player wall/floor collision from this same `PhysicsWorld` rather than
-    /// standing up a second one: PhysX permits only one Foundation per
-    /// process, and a second `PhysicsWorld::new()` returns a null pointer.
-    pub fn physics(&self) -> &PhysicsWorld {
-        &self.rigid_physics
-    }
     pub fn scene_mut(&mut self) -> &mut Scene {
         &mut self.scene
     }
