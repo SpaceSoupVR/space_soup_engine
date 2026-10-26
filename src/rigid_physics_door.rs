@@ -51,13 +51,13 @@ fn hands_of(rigs: &HashMap<PlayerId, PlayerRig>) -> impl Iterator<Item = Vec3> +
 
 impl PhysicsWorld {
 
-    pub(crate) fn spawn_door(&mut self, game_object: &GameObject, def: &DoorDef) {
-        let geom = DoorGeom::new(game_object.cuboid.position, game_object.cuboid.rotation, game_object.cuboid.half_size, def);
+    pub(crate) fn spawn_door(&mut self, entity: &GameObject, def: &DoorDef) {
+        let geom = DoorGeom::new(entity.cuboid.position, entity.cuboid.rotation, entity.cuboid.half_size, def);
         let start = def.start_deg.to_radians().clamp(geom.lo, geom.hi);
         let (pos, rot) = geom.pose_at(start);
         if geom.fixed() {
-            if self.statics.contains_key(&game_object.id) || self.dynamic.contains_key(&game_object.id) || self.kinematic.contains_key(&game_object.id) {
-                log::warn!("rigid_physics: door '{}' already has a collider", game_object.id);
+            if self.statics.contains_key(&entity.id) || self.dynamic.contains_key(&entity.id) || self.kinematic.contains_key(&entity.id) {
+                log::warn!("rigid_physics: door '{}' already has a collider", entity.id);
                 return;
             }
             let h = geom.half;
@@ -71,22 +71,22 @@ impl PhysicsWorld {
             {
                 let ptr: *mut crate::rigid_physics::PxRigidStatic = &raw mut *actor;
                 self.scene.add_static_actor(actor);
-                self.statics.insert(game_object.id.clone(), ptr);
+                self.statics.insert(entity.id.clone(), ptr);
                 self.materials.push(material);
                 self.note_floor(pos.y - crate::water::world_half_extents(h, rot).y);
-                self.doors.insert(game_object.id.clone(), geom);
+                self.doors.insert(entity.id.clone(), geom);
             }
             return;
         }
-        if !self.dynamic.contains_key(&game_object.id) {
-            if self.statics.contains_key(&game_object.id) || self.kinematic.contains_key(&game_object.id) {
-                log::warn!("rigid_physics: door '{}' already has a non-dynamic collider", game_object.id);
+        if !self.dynamic.contains_key(&entity.id) {
+            if self.statics.contains_key(&entity.id) || self.kinematic.contains_key(&entity.id) {
+                log::warn!("rigid_physics: door '{}' already has a non-dynamic collider", entity.id);
                 return;
             }
             let Some(mut material) =
                 self.foundation.create_material(def.surface_friction, def.surface_friction, 0.0, ())
             else {
-                log::warn!("rigid_physics: failed to create a material for door '{}'", game_object.id);
+                log::warn!("rigid_physics: failed to create a material for door '{}'", entity.id);
                 return;
             };
             let h = geom.half;
@@ -99,7 +99,7 @@ impl PhysicsWorld {
                 PxTransform::default(),
                 (),
             ) else {
-                log::warn!("rigid_physics: failed to create door '{}'", game_object.id);
+                log::warn!("rigid_physics: failed to create door '{}'", entity.id);
                 return;
             };
             actor.set_mass(def.mass.max(0.5));
@@ -124,10 +124,10 @@ impl PhysicsWorld {
             }
             self.scene.add_dynamic_actor(actor);
             self.materials.push(material);
-            self.dynamic.insert(game_object.id.clone(), DynamicActor::new(ptr, pos, rot, h, 8.0 * h.element_product()));
+            self.dynamic.insert(entity.id.clone(), DynamicActor::new(ptr, pos, rot, h, 8.0 * h.element_product()));
             self.note_floor(pos.y - crate::water::world_half_extents(h, rot).y);
         }
-        let Some(child) = self.dynamic.get(&game_object.id) else { return };
+        let Some(child) = self.dynamic.get(&entity.id) else { return };
 
         let frame = hinge_frame();
         let world_frame = raw(geom.hinge(), geom.closed_rot * frame);
@@ -142,7 +142,7 @@ impl PhysicsWorld {
             )
         };
         if joint.is_null() {
-            log::warn!("rigid_physics: hinge creation failed for door '{}'", game_object.id);
+            log::warn!("rigid_physics: hinge creation failed for door '{}'", entity.id);
             return;
         }
         unsafe {
@@ -155,10 +155,10 @@ impl PhysicsWorld {
             physx_sys::PxD6Joint_setTwistLimit_mut(joint, &raw const limit);
 
         }
-        self.doors.insert(game_object.id.clone(), geom);
-        self.door_hinges.insert(game_object.id.clone(), (def.closer.max(0.0), def.friction.max(0.0)));
+        self.doors.insert(entity.id.clone(), geom);
+        self.door_hinges.insert(entity.id.clone(), (def.closer.max(0.0), def.friction.max(0.0)));
         if let Some(latch) = DoorLatch::of(def) {
-            self.door_latches.insert(game_object.id.clone(), LatchState { latch, bolted: false, joint });
+            self.door_latches.insert(entity.id.clone(), LatchState { latch, bolted: false, joint });
         }
     }
 

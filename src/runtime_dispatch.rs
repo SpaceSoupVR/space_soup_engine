@@ -17,13 +17,13 @@ impl GameRuntime {
     }
 
     pub(crate) fn update_object_position_cache(&self) {
-        for game_object in &self.scene.objects {
-            let p = game_object.cuboid.position;
-            self.script_host.set_object_position(&game_object.id, p.x, p.y, p.z);
-            let r = game_object.cuboid.rotation;
-            self.script_host.set_object_rotation(&game_object.id, r.x, r.y, r.z, r.w);
-            let h = game_object.cuboid.half_size;
-            self.script_host.set_object_half_size(&game_object.id, h.x, h.y, h.z);
+        for entity in &self.scene.objects {
+            let p = entity.cuboid.position;
+            self.script_host.set_object_position(&entity.id, p.x, p.y, p.z);
+            let r = entity.cuboid.rotation;
+            self.script_host.set_object_rotation(&entity.id, r.x, r.y, r.z, r.w);
+            let h = entity.cuboid.half_size;
+            self.script_host.set_object_half_size(&entity.id, h.x, h.y, h.z);
         }
     }
 
@@ -60,15 +60,15 @@ impl GameRuntime {
 
     pub(crate) fn apply_attachments(&mut self) {
         let results = self.attachments.resolve_all_with_visibility(&self.rigs);
-        for (game_object_id, maybe_tf) in results {
-            if let Some(game_object) = self.scene.find_object_mut(&game_object_id) {
+        for (entity_id, maybe_tf) in results {
+            if let Some(entity) = self.scene.find_object_mut(&entity_id) {
                 match maybe_tf {
                     Some(tf) => {
-                        game_object.cuboid.position = tf.position;
-                        game_object.cuboid.rotation = tf.rotation;
+                        entity.cuboid.position = tf.position;
+                        entity.cuboid.rotation = tf.rotation;
                     }
 
-                    None => game_object.hidden = true,
+                    None => entity.hidden = true,
                 }
             }
         }
@@ -402,12 +402,12 @@ impl GameRuntime {
             self.part_transforms = input
                 .part_transforms
                 .iter()
-                .map(|(game_object, parts)| {
+                .map(|(entity, parts)| {
                     let m = parts
                         .iter()
                         .map(|(p, (pos, rot))| (p.clone(), (Vec3::from(*pos), Quat::from_array(*rot))))
                         .collect();
-                    (game_object.clone(), m)
+                    (entity.clone(), m)
                 })
                 .collect();
         }
@@ -441,31 +441,31 @@ impl GameRuntime {
     pub(crate) fn dispatch_animation_bindings(&mut self, input: &InputFrame) {
         let mut to_play: Vec<(String, String, PlayMode)> = Vec::new();
         for press in &input.button_presses {
-            for game_object in &self.scene.objects {
-                for binding in &game_object.animation_bindings {
+            for entity in &self.scene.objects {
+                for binding in &entity.animation_bindings {
                     if binding.button != press.button || binding.animation.is_empty() {
                         continue;
                     }
                     let in_scope = match binding.scope {
                         BindingScope::GlobalAnywhere => true,
                         BindingScope::ContextualHold => {
-                            press.object_id.as_deref() == Some(game_object.id.as_str())
+                            press.object_id.as_deref() == Some(entity.id.as_str())
                         }
                     };
                     if in_scope {
-                        to_play.push((game_object.id.clone(), binding.animation.clone(), binding.play_mode));
+                        to_play.push((entity.id.clone(), binding.animation.clone(), binding.play_mode));
                     }
                 }
             }
         }
-        for (game_object_id, anim, mode) in to_play {
+        for (entity_id, anim, mode) in to_play {
             match mode {
-                PlayMode::Simultaneous => self.play_animation(&game_object_id, &anim),
+                PlayMode::Simultaneous => self.play_animation(&entity_id, &anim),
                 PlayMode::Sequential => {
-                    if self.players.contains_key(&game_object_id) {
-                        self.anim_queues.entry(game_object_id).or_default().push(anim);
+                    if self.players.contains_key(&entity_id) {
+                        self.anim_queues.entry(entity_id).or_default().push(anim);
                     } else {
-                        self.play_animation(&game_object_id, &anim);
+                        self.play_animation(&entity_id, &anim);
                     }
                 }
             }
@@ -473,9 +473,9 @@ impl GameRuntime {
     }
 
     pub(crate) fn dispatch_update_hook(&self, dt: f32) {
-        for game_object in &self.scene.objects {
-            if self.script_host.has_script(&game_object.id) {
-                let _ = self.script_host.call(&game_object.id, "on_update", (f64::from(dt),));
+        for entity in &self.scene.objects {
+            if self.script_host.has_script(&entity.id) {
+                let _ = self.script_host.call(&entity.id, "on_update", (f64::from(dt),));
             }
         }
     }
@@ -489,8 +489,8 @@ impl GameRuntime {
 
         let mut fired: Vec<(String, PartTriggerAction)> = Vec::new();
         for (object_id, clips) in &input.part_blends {
-            let Some(game_object) = self.scene.find_object(object_id) else { continue };
-            for pa in &game_object.part_animations {
+            let Some(entity) = self.scene.find_object(object_id) else { continue };
+            for pa in &entity.part_animations {
                 let Some(&blend) = clips.get(&pa.clip) else { continue };
                 let prev = self
                     .prev_part_blends
@@ -538,13 +538,13 @@ impl GameRuntime {
         match action {
             A::DetachPart { part, template, impulse } => {
 
-                let Some(game_object) = self.scene.find_object(object_id) else { return };
+                let Some(entity) = self.scene.find_object(object_id) else { return };
 
                 let at = self
                     .part_transforms
                     .get(object_id)
                     .and_then(|m| m.get(&part))
-                    .map_or(game_object.cuboid.position, |(p, _)| *p);
+                    .map_or(entity.cuboid.position, |(p, _)| *p);
                 let new_id = format!("{object_id}#{part}#{}", self.next_detached_id);
                 self.next_detached_id += 1;
                 self.script_host.push_command(EngineCommand::SpawnObject {

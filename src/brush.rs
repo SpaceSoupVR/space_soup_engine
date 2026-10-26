@@ -586,7 +586,7 @@ pub struct BrushPolygon {
 pub fn brush_polygons_in_atlas(
     brush: &BrushDef,
     layout: &crate::brush_lightmap::BrushLightmapLayout,
-    scene_object: usize,
+    entity: usize,
 ) -> Vec<BrushPolygon> {
     let mut out = Vec::new();
     let solids = brush.evaluate();
@@ -613,7 +613,7 @@ pub fn brush_polygons_in_atlas(
                 tangent: [u_axis[0] as f32, u_axis[1] as f32, u_axis[2] as f32, handed],
                 ..Default::default()
             };
-            let chart = layout.chart(scene_object, si, i);
+            let chart = layout.chart(entity, si, i);
             for q in &ordered {
                 p.positions.push([q[0] as f32, q[1] as f32, q[2] as f32]);
                 let uv = face.uv(*q);
@@ -633,12 +633,12 @@ pub fn brush_polygons_in_atlas(
 pub fn brush_mesh_in_atlas(
     brush: &BrushDef,
     layout: &crate::brush_lightmap::BrushLightmapLayout,
-    scene_object: usize,
+    entity: usize,
 ) -> Vec<BrushMeshGroup> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: BTreeMap<String, BrushMeshGroup> = BTreeMap::new();
 
-    for poly in brush_polygons_in_atlas(brush, layout, scene_object) {
+    for poly in brush_polygons_in_atlas(brush, layout, entity) {
         if !groups.contains_key(&poly.material) {
             order.push(poly.material.clone());
             groups.insert(

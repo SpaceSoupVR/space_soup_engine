@@ -37,15 +37,15 @@ impl DamageLedger {
         self.taken.get(object_id).copied().unwrap_or(0.0)
     }
 
-    pub fn apply(&mut self, scene_object: &GameObject, amount: f32) -> Option<StageChange> {
-        let breakable = scene_object.breakable.as_ref()?;
+    pub fn apply(&mut self, entity: &GameObject, amount: f32) -> Option<StageChange> {
+        let breakable = entity.breakable.as_ref()?;
         if !(amount > 0.0) {
             return None;
         }
 
-        let before = self.damage_for(&scene_object.id);
+        let before = self.damage_for(&entity.id);
         let after = before + amount;
-        self.taken.insert(scene_object.id.clone(), after);
+        self.taken.insert(entity.id.clone(), after);
 
         let from = stage_index(breakable, before);
         let to = stage_index(breakable, after);
@@ -54,7 +54,7 @@ impl DamageLedger {
         }
 
         Some(StageChange {
-            object_id: scene_object.id.clone(),
+            object_id: entity.id.clone(),
             from,
             to,
             solid: breakable.is_solid_at(after),
@@ -62,27 +62,27 @@ impl DamageLedger {
     }
 
     #[must_use]
-    pub fn hidden_parts_for<'a>(&self, scene_object: &'a GameObject) -> &'a [String] {
-        match &scene_object.breakable {
-            Some(b) => b.hidden_parts_at(self.damage_for(&scene_object.id), &scene_object.hidden_parts),
-            None => &scene_object.hidden_parts,
+    pub fn hidden_parts_for<'a>(&self, entity: &'a GameObject) -> &'a [String] {
+        match &entity.breakable {
+            Some(b) => b.hidden_parts_at(self.damage_for(&entity.id), &entity.hidden_parts),
+            None => &entity.hidden_parts,
         }
     }
 
     #[must_use]
-    pub fn is_removed(&self, scene_object: &GameObject) -> bool {
-        match &scene_object.breakable {
+    pub fn is_removed(&self, entity: &GameObject) -> bool {
+        match &entity.breakable {
             Some(b) => b
-                .stage_for(self.damage_for(&scene_object.id))
+                .stage_for(self.damage_for(&entity.id))
                 .is_some_and(|s| s.removed),
             None => false,
         }
     }
 
     #[must_use]
-    pub fn is_solid(&self, scene_object: &GameObject) -> bool {
-        match &scene_object.breakable {
-            Some(b) => b.is_solid_at(self.damage_for(&scene_object.id)),
+    pub fn is_solid(&self, entity: &GameObject) -> bool {
+        match &entity.breakable {
+            Some(b) => b.is_solid_at(self.damage_for(&entity.id)),
             None => true,
         }
     }
@@ -122,15 +122,15 @@ pub struct ImpactTarget {
 #[must_use]
 pub fn impact_targets(objects: &[GameObject], point: Vec3, radius: f32) -> Vec<ImpactTarget> {
     let mut out = Vec::new();
-    for (index, scene_object) in objects.iter().enumerate() {
+    for (index, entity) in objects.iter().enumerate() {
 
-        if scene_object.breakable.is_none() {
+        if entity.breakable.is_none() {
             continue;
         }
         let distance = distance_to_oriented_box(
-            scene_object.cuboid.position,
-            scene_object.cuboid.rotation,
-            scene_object.cuboid.half_size,
+            entity.cuboid.position,
+            entity.cuboid.rotation,
+            entity.cuboid.half_size,
             point,
         );
         let share = if radius > 0.0 {

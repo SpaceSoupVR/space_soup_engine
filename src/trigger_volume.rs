@@ -67,17 +67,17 @@ pub enum VolumeShape {
 impl VolumeShape {
 
     #[must_use]
-    pub fn of(scene_object: &GameObject) -> Self {
-        if let Some(def) = &scene_object.brush {
+    pub fn of(entity: &GameObject) -> Self {
+        if let Some(def) = &entity.brush {
             let solids = def.evaluate();
             if !solids.is_empty() {
                 return Self::Solids(solids);
             }
         }
         Self::Obb {
-            center: scene_object.cuboid.position,
-            half_size: scene_object.cuboid.half_size,
-            rotation: scene_object.cuboid.rotation,
+            center: entity.cuboid.position,
+            half_size: entity.cuboid.half_size,
+            rotation: entity.cuboid.rotation,
         }
     }
 

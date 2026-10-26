@@ -266,10 +266,10 @@ impl PhysicsWorld {
 
     pub fn step(&mut self, dt: f32, scene: &mut Scene, rigs: &HashMap<PlayerId, PlayerRig>) {
         for (id, &ptr) in &self.kinematic {
-            let Some(game_object) = scene.find_object(id) else {
+            let Some(entity) = scene.find_object(id) else {
                 continue;
             };
-            let target = to_px_transform(game_object.cuboid.position, game_object.cuboid.rotation);
+            let target = to_px_transform(entity.cuboid.position, entity.cuboid.rotation);
 
             unsafe { (*ptr).set_kinematic_target(&target) };
         }

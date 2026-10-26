@@ -15,7 +15,7 @@ impl GameRuntime {
             if let Some(point) = self
                 .scene
                 .find_object(id)
-                .and_then(|game_object| game_object.grip_point(point_name).map(|p| (game_object, p)))
+                .and_then(|entity| entity.grip_point(point_name).map(|p| (entity, p)))
             {
                 return Some(point);
             }
@@ -24,9 +24,9 @@ impl GameRuntime {
         let (id, point_name) = self
             .attachments
             .grip_point_at_joint(player, JointId::HandGrip(hand))?;
-        let game_object = self.scene.find_object(id)?;
-        let point = game_object.grip_point(point_name)?;
-        Some((game_object, point))
+        let entity = self.scene.find_object(id)?;
+        let point = entity.grip_point(point_name)?;
+        Some((entity, point))
     }
 
     pub(crate) fn collect_render_cuboids(&self) -> Vec<RenderCuboid> {

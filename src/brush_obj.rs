@@ -241,11 +241,11 @@ pub fn export_scene(scene: &Scene, opts: &ObjExportOptions) -> ObjExport {
 
     let mut vertex_base = 0usize;
     let mut uv_base = 0usize;
-    for scene_object in &scene.objects {
-        let Some(brush) = scene_object.brush.as_ref() else { continue };
+    for entity in &scene.objects {
+        let Some(brush) = entity.brush.as_ref() else { continue };
         write_object(
             &mut obj,
-            &scene_object.id,
+            &entity.id,
             brush,
             opts,
             &mut vertex_base,

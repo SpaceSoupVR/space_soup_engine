@@ -282,7 +282,7 @@ impl GameRuntime {
             })
             .collect();
 
-        for (game_object_id, joint_name, offset) in defs {
+        for (entity_id, joint_name, offset) in defs {
             match JointId::from_name(&joint_name) {
                 Some(joint_id) => {
                     let offset_vec = Vec3::from(offset);
@@ -291,21 +291,21 @@ impl GameRuntime {
                     } else {
                         Attachment::with_offset(joint_id, offset_vec, Quat::IDENTITY)
                     };
-                    self.attachments.attach(&game_object_id, PlayerId::local(), att);
-                    info!("setup_scene_attachments: '{game_object_id}' → '{joint_name}'");
+                    self.attachments.attach(&entity_id, PlayerId::local(), att);
+                    info!("setup_scene_attachments: '{entity_id}' → '{joint_name}'");
                 }
                 None => {
-                    warn!("setup_scene_attachments: unknown joint '{joint_name}' for '{game_object_id}'");
+                    warn!("setup_scene_attachments: unknown joint '{joint_name}' for '{entity_id}'");
                 }
             }
         }
     }
 
     fn compile_scripts(&mut self) {
-        for game_object in &self.scene.objects {
-            if let Some(src) = &game_object.script {
-                if let Err(e) = self.script_host.compile(&game_object.id, src) {
-                    warn!("Failed to compile script for '{}': {e}", game_object.id);
+        for entity in &self.scene.objects {
+            if let Some(src) = &entity.script {
+                if let Err(e) = self.script_host.compile(&entity.id, src) {
+                    warn!("Failed to compile script for '{}': {e}", entity.id);
                 }
             }
         }
@@ -523,8 +523,8 @@ impl GameRuntime {
         object_id: &str,
         amount: f32,
     ) -> Option<crate::damage::StageChange> {
-        let scene_object = self.scene.objects.iter().find(|o| o.id == object_id)?;
-        let change = self.damage.apply(scene_object, amount)?;
+        let entity = self.scene.objects.iter().find(|o| o.id == object_id)?;
+        let change = self.damage.apply(entity, amount)?;
 
         if change.breached() {
             let removed_static = self.rigid_physics.despawn_static(&change.object_id);

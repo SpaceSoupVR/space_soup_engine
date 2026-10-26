@@ -235,9 +235,9 @@ impl PhysicsWorld {
                 let Some(index) = scene.objects.iter().position(|o| o.id == *id) else { continue };
                 state.object = index;
             }
-            let game_object = &mut scene.objects[state.object];
-            game_object.cuboid.position = pos;
-            game_object.cuboid.rotation = rot;
+            let entity = &mut scene.objects[state.object];
+            entity.cuboid.position = pos;
+            entity.cuboid.rotation = rot;
             if self.water.is_empty() {
                 continue;
             }

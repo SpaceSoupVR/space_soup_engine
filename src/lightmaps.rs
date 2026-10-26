@@ -77,8 +77,8 @@ const MESH_STATIONARY_SEPARATOR: &str = "#stationary_";
 
 #[must_use]
 pub fn mesh_stationary_of(id: &str) -> Option<(&str, usize)> {
-    let (scene_object, layer) = id.rsplit_once(MESH_STATIONARY_SEPARATOR)?;
-    Some((scene_object, layer.parse().ok()?))
+    let (entity, layer) = id.rsplit_once(MESH_STATIONARY_SEPARATOR)?;
+    Some((entity, layer.parse().ok()?))
 }
 
 #[cfg(test)]

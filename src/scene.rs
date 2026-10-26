@@ -358,13 +358,13 @@ impl Scene {
             .with_context(|| format!("failed to read scene {}", path.display()))?;
         let mut scene: Scene = serde_json::from_str(&text)
             .with_context(|| format!("failed to parse scene {}", path.display()))?;
-        for game_object in &mut scene.objects {
-            if let Some(legacy) = game_object.grip_pose_legacy.take() {
-                if game_object.grip_pose_left.is_none() {
-                    game_object.grip_pose_left = Some(legacy.clone());
+        for entity in &mut scene.objects {
+            if let Some(legacy) = entity.grip_pose_legacy.take() {
+                if entity.grip_pose_left.is_none() {
+                    entity.grip_pose_left = Some(legacy.clone());
                 }
-                if game_object.grip_pose_right.is_none() {
-                    game_object.grip_pose_right = Some(legacy);
+                if entity.grip_pose_right.is_none() {
+                    entity.grip_pose_right = Some(legacy);
                 }
             }
         }
@@ -472,12 +472,12 @@ impl Scene {
 
 fn dedupe_object_ids(objects: &mut [GameObject], source: &str) {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for game_object in objects.iter_mut() {
-        if seen.insert(game_object.id.clone()) {
+    for entity in objects.iter_mut() {
+        if seen.insert(entity.id.clone()) {
             continue;
         }
-        let stem = game_object.id.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_');
-        let stem = if stem.is_empty() { game_object.id.as_str() } else { stem };
+        let stem = entity.id.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_');
+        let stem = if stem.is_empty() { entity.id.as_str() } else { stem };
         let mut n = 2;
         let new_id = loop {
             let candidate = format!("{stem}_{n}");
@@ -488,10 +488,10 @@ fn dedupe_object_ids(objects: &mut [GameObject], source: &str) {
         };
         log::warn!(
             "scene {source}: duplicate object id '{}' — renamed to '{new_id}'",
-            game_object.id
+            entity.id
         );
         seen.insert(new_id.clone());
-        game_object.id = new_id;
+        entity.id = new_id;
     }
 }
 
@@ -701,19 +701,19 @@ mod breakable_tests {
 
     #[test]
     fn the_component_is_skipped_when_absent() {
-        let game_object = GameObject { id: "wall".into(), ..Default::default() };
-        let json = serde_json::to_string(&game_object).expect("serialize");
+        let entity = GameObject { id: "wall".into(), ..Default::default() };
+        let json = serde_json::to_string(&entity).expect("serialize");
         assert!(!json.contains("breakable"), "absent component must not be written: {json}");
     }
 
     #[test]
     fn it_round_trips_through_json() {
-        let game_object = GameObject {
+        let entity = GameObject {
             id: "wall".into(),
             breakable: Some(wall()),
             ..Default::default()
         };
-        let json = serde_json::to_string(&game_object).expect("serialize");
+        let json = serde_json::to_string(&entity).expect("serialize");
         let back: GameObject = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.breakable, Some(wall()));
     }

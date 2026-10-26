@@ -117,35 +117,35 @@ impl GripPointDef {
     #[must_use]
     pub fn base(
         &self,
-        game_object_position: Vec3,
-        game_object_rotation: Quat,
+        entity_position: Vec3,
+        entity_rotation: Quat,
         part: Option<(Vec3, Quat)>,
     ) -> (Vec3, Quat) {
         match (self.part.as_ref(), part) {
             (Some(_), Some(p)) => p,
-            _ => (game_object_position, game_object_rotation),
+            _ => (entity_position, entity_rotation),
         }
     }
 
     #[must_use]
     pub fn anchor_world(
         &self,
-        game_object_position: Vec3,
-        game_object_rotation: Quat,
+        entity_position: Vec3,
+        entity_rotation: Quat,
         part: Option<(Vec3, Quat)>,
     ) -> (Vec3, Quat) {
-        let (bp, br) = self.base(game_object_position, game_object_rotation, part);
+        let (bp, br) = self.base(entity_position, entity_rotation, part);
         (bp + br * Vec3::from(self.local_pos), br * Quat::from_array(self.local_rot))
     }
 
     #[must_use]
     pub fn hand_world(
         &self,
-        game_object_position: Vec3,
-        game_object_rotation: Quat,
+        entity_position: Vec3,
+        entity_rotation: Quat,
         part: Option<(Vec3, Quat)>,
     ) -> (Vec3, Quat) {
-        let (bp, br) = self.base(game_object_position, game_object_rotation, part);
+        let (bp, br) = self.base(entity_position, entity_rotation, part);
         let local_pos = Vec3::from(self.hand_offset_pos.unwrap_or(self.local_pos));
         let local_rot = Quat::from_array(self.hand_offset_rot.unwrap_or(self.local_rot));
         (bp + br * local_pos, br * local_rot)
