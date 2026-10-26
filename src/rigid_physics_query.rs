@@ -298,6 +298,7 @@ impl PhysicsWorld {
         self.float_bodies(dt);
         self.drop_far_grabs();
         self.part_hands();
+        self.drop_far_ragdoll_grips();
 
         if let Err(e) = self.scene.step(
             dt,
@@ -308,6 +309,7 @@ impl PhysicsWorld {
             log::warn!("rigid_physics: simulation step failed: {e:?}");
             return;
         }
+        self.tear_strained_limbs(dt);
 
         self.settle_bodies(scene);
     }

@@ -18,6 +18,7 @@ mod rigid_physics_query;
 mod rigid_physics_spawn;
 mod rigid_physics_door;
 pub mod rigid_physics_water;
+pub mod rigid_physics_ragdoll;
 pub mod rigid_physics_nav;
 pub mod navigation;
 pub mod runtime;
@@ -103,6 +104,8 @@ mod runtime_tests_physics;
 mod rigid_physics_brush_tests;
 #[cfg(test)]
 mod rigid_physics_water_tests;
+#[cfg(test)]
+mod rigid_physics_ragdoll_tests;
 #[cfg(test)]
 mod rigid_physics_mesh_collider_tests;
 #[cfg(test)]

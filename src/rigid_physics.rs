@@ -240,6 +240,13 @@ pub(crate) struct Drive {
 pub struct PhysicsWorld {
     pub(crate) scene: Owner<PxScene>,
     pub(crate) materials: Vec<Owner<PxMaterial>>,
+    /// The one material every ragdoll limb and hand anchor uses, by its place in `materials`.
+    pub(crate) ragdoll_material: Option<usize>,
+    /// The ragdolls (corpses), by id, and the hands holding them. Raw pointers into the scene,
+    /// like `kinematic`; joints are released before the bodies (`release_all_ragdolls`).
+    pub(crate) ragdolls: crate::rigid_physics_ragdoll::RagdollMap,
+    pub(crate) ragdoll_grips: crate::rigid_physics_ragdoll::RagdollGripMap,
+    pub(crate) next_ragdoll_grip: u32,
     pub(crate) dynamic: HashMap<String, DynamicActor>,
     pub(crate) kinematic: HashMap<String, *mut PxRigidDynamic>,
 
@@ -377,6 +384,10 @@ impl PhysicsWorld {
             foundation,
             scene,
             materials: Vec::new(),
+            ragdoll_material: None,
+            ragdolls: HashMap::new(),
+            ragdoll_grips: HashMap::new(),
+            next_ragdoll_grip: 1,
             dynamic: HashMap::new(),
             kinematic: HashMap::new(),
             statics: HashMap::new(),
@@ -546,6 +557,8 @@ impl PhysicsWorld {
     }
 
     pub fn rebuild(&mut self, scene: &Scene, game_dir: &Path) {
+        self.release_all_ragdolls();
+        self.ragdoll_material = None;
         self.dynamic.clear();
         self.kinematic.clear();
         self.statics.clear();

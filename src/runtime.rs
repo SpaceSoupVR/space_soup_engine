@@ -385,6 +385,18 @@ impl GameRuntime {
         &self.game_dir
     }
 
+    pub fn physics(&self) -> &PhysicsWorld {
+        &self.rigid_physics
+    }
+
+    pub fn physics_mut(&mut self) -> &mut PhysicsWorld {
+        &mut self.rigid_physics
+    }
+
+    pub fn rebuild_physics(&mut self) {
+        self.rigid_physics.rebuild(&self.scene, &self.game_dir);
+    }
+
     pub fn update(
         &mut self,
         dt: f32,
