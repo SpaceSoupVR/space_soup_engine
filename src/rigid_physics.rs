@@ -129,7 +129,7 @@ pub(crate) const KILL_MARGIN: f32 = 5.0;
 /// (`PhysicsWorld::spawn_scene_terrain`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerrainCollider {
-    /// A PhysX height field: four bytes a sample, built in one pass over the
+    /// A `PhysX` height field: four bytes a sample, built in one pass over the
     /// samples with nothing to cook. Its holes are the terrain's, its cells
     /// are split along the diagonals the mesher draws, and the ground the
     /// caves put back -- triangles that are not on the grid -- is small
@@ -155,7 +155,7 @@ impl TerrainCollider {
     /// for one world.
     pub fn from_env() -> Self {
         match std::env::var("SS_TERRAIN_COLLIDER").as_deref() {
-            Ok("mesh") | Ok("trimesh") | Ok("triangle_mesh") => Self::TriangleMesh,
+            Ok("mesh" | "trimesh" | "triangle_mesh") => Self::TriangleMesh,
             _ => Self::HeightField,
         }
     }
@@ -292,7 +292,7 @@ pub struct PhysicsWorld {
     /// valley or cave floor lay deeper than that, each tick, for ever.
     pub(crate) kill_y: f32,
 
-    /// How the next `rebuild` gives the ground to PhysX.
+    /// How the next `rebuild` gives the ground to `PhysX`.
     pub(crate) terrain_collider: TerrainCollider,
 
     pub(crate) terrain_meshes: Vec<Owner<TriangleMesh>>,
@@ -360,7 +360,7 @@ pub(crate) fn create_hand_anchor(
     for shape in actor.get_shapes_mut() {
         shape.set_flag(ShapeFlag::SceneQueryShape, false);
     }
-    let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
+    let ptr: *mut PxRigidDynamic = &raw mut *actor;
     scene.add_dynamic_actor(actor);
     materials.push(material);
     Some(ptr)
@@ -402,7 +402,7 @@ impl PhysicsWorld {
         }
     }
 
-    /// Choose how this world's ground is given to PhysX, from the next
+    /// Choose how this world's ground is given to `PhysX`, from the next
     /// `rebuild` on.
     pub fn set_terrain_collider(&mut self, kind: TerrainCollider) {
         self.terrain_collider = kind;
@@ -534,7 +534,7 @@ impl PhysicsWorld {
             }
             unsafe {
                 self.scene.remove_actor(&mut *ptr, false);
-                physx_sys::PxActor_release_mut(ptr as *mut physx_sys::PxActor);
+                physx_sys::PxActor_release_mut(ptr.cast::<physx_sys::PxActor>());
             }
         }
     }
@@ -625,7 +625,7 @@ impl PhysicsWorld {
                 crate::water::WaterFootprint::new(def, |x, z| terrain.as_ref().and_then(|t| t.height_at(x, z)))
             })
             .collect();
-        for height in self.water.iter().filter_map(|w| w.surface_height()).collect::<Vec<_>>() {
+        for height in self.water.iter().filter_map(super::water::WaterFootprint::surface_height).collect::<Vec<_>>() {
             self.note_floor(height);
         }
     }

@@ -70,7 +70,7 @@ impl BrushChart {
     pub fn texel_world(&self, tx: u32, ty: u32) -> Vec3 {
         add(
             self.origin,
-            add(mul(self.du, tx as f64), mul(self.dv, ty as f64)),
+            add(mul(self.du, f64::from(tx)), mul(self.dv, f64::from(ty))),
         )
     }
 
@@ -82,8 +82,8 @@ impl BrushChart {
         let ty = if lv > 0.0 { dot(rel, self.dv) / lv } else { 0.0 };
 
         [
-            ((self.x as f64 + tx + 0.5) / atlas_w as f64) as f32,
-            ((self.y as f64 + ty + 0.5) / atlas_h as f64) as f32,
+            ((f64::from(self.x) + tx + 0.5) / f64::from(atlas_w)) as f32,
+            ((f64::from(self.y) + ty + 0.5) / f64::from(atlas_h)) as f32,
         ]
     }
 }
@@ -108,7 +108,7 @@ pub const STATIONARY_MASK_DISTANCE_TEXELS: f32 = 4.0;
 impl BrushLightmapLayout {
 
     pub fn scaled(&self, s: u32) -> Self {
-        let f = s as f64;
+        let f = f64::from(s);
         let back = 0.5 / f - 0.5;
         Self {
             width: self.width * s,
@@ -218,7 +218,7 @@ fn span_per_texel(metres: f64, count: u32) -> f64 {
     if count == 0 || metres <= 0.0 {
         return metres.max(1.0);
     }
-    metres / count as f64
+    metres / f64::from(count)
 }
 
 fn chart_at(m: &Measured, x: u32, y: u32, w: u32, h: u32) -> BrushChart {
@@ -301,7 +301,7 @@ fn try_pack(measured: &[Measured], density_scale: f64) -> Option<BrushLightmapLa
 
     let area: u64 = sized
         .iter()
-        .map(|(w, h)| ((w + 2 * GUTTER) as u64) * ((h + 2 * GUTTER) as u64))
+        .map(|(w, h)| u64::from(w + 2 * GUTTER) * u64::from(h + 2 * GUTTER))
         .sum();
     let mut width = (area as f64).sqrt().ceil().max(4.0) as u32;
     width = width.next_power_of_two().min(MAX_ATLAS);
@@ -573,8 +573,8 @@ mod tests {
         assert!(layout.charts.iter().any(|c| c.object == 1));
         for (i, x) in layout.charts.iter().enumerate() {
             for y in layout.charts.iter().skip(i + 1) {
-                let apart_x = x.x + x.w + 1 <= y.x || y.x + y.w + 1 <= x.x;
-                let apart_y = x.y + x.h + 1 <= y.y || y.y + y.h + 1 <= x.y;
+                let apart_x = x.x + x.w < y.x || y.x + y.w < x.x;
+                let apart_y = x.y + x.h < y.y || y.y + y.h < x.y;
                 assert!(apart_x || apart_y, "charts of different brushes overlap:\n{x:?}\n{y:?}");
             }
         }

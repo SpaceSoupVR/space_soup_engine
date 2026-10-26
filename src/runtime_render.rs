@@ -190,8 +190,7 @@ impl GameRuntime {
                 let end = self
                     .rigid_physics
                     .raycast(origin, direction, laser.max_distance)
-                    .map(|(hit_point, _normal)| hit_point)
-                    .unwrap_or(origin + direction * laser.max_distance);
+                    .map_or(origin + direction * laser.max_distance, |(hit_point, _normal)| hit_point);
                 Some(RenderLaser {
                     id: o.id.clone(),
                     origin,

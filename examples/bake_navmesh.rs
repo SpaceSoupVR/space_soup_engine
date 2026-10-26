@@ -1,6 +1,6 @@
 //! Bakes scenes' navmeshes from their colliders (`navigation`), into the game folder beside them.
 //!
-//!   cargo run --release --example bake_navmesh -- <game dir> [scene ...]
+//!   cargo run --release --example `bake_navmesh` -- <game dir> [scene ...]
 //!
 //! With no scenes named, every scene in the manifest. Each is written to
 //! `<game dir>/navmesh/scenes/<scene>.human.ssnav` with its `.json`, and the runtime loads it with

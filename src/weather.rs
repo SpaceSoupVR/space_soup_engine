@@ -141,7 +141,7 @@ impl WeatherDef {
         if on <= 0.0 || off <= 0.0 {
             return i;
         }
-        let period = (on + off) as f64;
+        let period = f64::from(on + off);
         let phase = t.rem_euclid(period) as f32;
         let ramp = 15.0f32.min(0.5 * on);
         let up = (phase / ramp).clamp(0.0, 1.0);
@@ -218,7 +218,7 @@ impl WeatherState {
         while now < t {
             let step = ((t - now) as f32).min(dt);
             s.step(def, now, step);
-            now += step as f64;
+            now += f64::from(step);
         }
         s.falling = def.intensity_at(t);
         s
@@ -439,8 +439,8 @@ impl WeatherGround {
         let relief_at = |x: isize, z: isize| relief[z.clamp(0, nz as isize - 1) as usize * nx + x.clamp(0, nx as isize - 1) as usize];
         for z in 0..nz {
             for x in 0..nx {
-                let gx = (at(x + 1, z) - at(x.saturating_sub(1), z)) / (cx * (1 + (x > 0) as usize) as f32);
-                let gz = (at(x, z + 1) - at(x, z.saturating_sub(1))) / (cz * (1 + (z > 0) as usize) as f32);
+                let gx = (at(x + 1, z) - at(x.saturating_sub(1), z)) / (cx * (1 + usize::from(x > 0)) as f32);
+                let gz = (at(x, z + 1) - at(x, z.saturating_sub(1))) / (cz * (1 + usize::from(z > 0)) as f32);
                 let slope = (gx * gx + gz * gz).sqrt().atan().to_degrees();
                 let i = z * nx + x;
                 let mut round = 0.0;

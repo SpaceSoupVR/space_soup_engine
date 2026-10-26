@@ -397,13 +397,13 @@ fn face_inheriting(pl: Plane, from: Option<&BrushFace>) -> BrushFace {
     let (u, v) = default_axes(pl.n);
     BrushFace {
         plane: [pl.n[0], pl.n[1], pl.n[2], pl.d],
-        material: from.map(|f| f.material.clone()).unwrap_or_else(default_material),
+        material: from.map_or_else(default_material, |f| f.material.clone()),
         u_axis: Some(u),
         v_axis: Some(v),
-        scale: from.map(|f| f.scale).unwrap_or_else(default_scale),
-        shift: from.map(|f| f.shift).unwrap_or([0.0, 0.0]),
+        scale: from.map_or_else(default_scale, |f| f.scale),
+        shift: from.map_or([0.0, 0.0], |f| f.shift),
         rotation: 0.0,
-        lightmap_scale: from.map(|f| f.lightmap_scale).unwrap_or_else(default_lightmap),
+        lightmap_scale: from.map_or_else(default_lightmap, |f| f.lightmap_scale),
         smoothing: 0,
     }
 }
@@ -751,10 +751,10 @@ pub fn brush_checksum(brush: &BrushDef) -> u32 {
     };
     for g in brush_mesh(brush) {
         for x in &g.positions {
-            mix(*x as f64);
+            mix(f64::from(*x));
         }
         for i in &g.indices {
-            mix(*i as f64);
+            mix(f64::from(*i));
         }
     }
     h

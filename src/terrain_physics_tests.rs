@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use glam::Vec3;
 use space_soup_protocol::PlayerId;
 
 use crate::events::InputFrame;

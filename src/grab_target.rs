@@ -173,7 +173,7 @@ impl GrabTargets {
             if l.1.id == r.1.id {
                 let had_left = self.hands[0].as_ref().is_some_and(|c| c.id == l.1.id);
                 let left_keeps = l.0 < r.0 || (l.0 == r.0 && had_left);
-                let other = if left_keeps { 1 } else { 0 };
+                let other = usize::from(left_keeps);
                 picks[other] = pick(other, Some(&l.1.id));
             }
         }
@@ -181,7 +181,7 @@ impl GrabTargets {
         for h in 0..2 {
             let next = picks[h].map(|(c, o)| Choice { id: o.id.clone(), glow: o.glow.clone(), kind: o.kind, cost: c });
             changed[h] = next.as_ref().is_some_and(|n| self.hands[h].as_ref().map(|c| &c.id) != Some(&n.id));
-            self.acquired += changed[h] as u64;
+            self.acquired += u64::from(changed[h]);
             self.hands[h] = next;
         }
         changed
@@ -222,7 +222,7 @@ impl GlowFade {
                 self.lit.push((w.to_string(), 0.0));
             }
         }
-        let breathe = GLOW_LOW + (1.0 - GLOW_LOW) * (0.5 + 0.5 * (std::f64::consts::TAU * GLOW_HZ as f64 * time).cos() as f32);
+        let breathe = GLOW_LOW + (1.0 - GLOW_LOW) * (0.5 + 0.5 * (std::f64::consts::TAU * f64::from(GLOW_HZ) * time).cos() as f32);
         let mut out = Vec::with_capacity(self.lit.len());
         self.lit.retain_mut(|(id, level)| {
             let on = wanted.contains(&id.as_str());

@@ -17,8 +17,10 @@ pub enum LightmapEncoding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LightmapTarget {
 
+    #[default]
     Object,
 
     Brush,
@@ -26,11 +28,6 @@ pub enum LightmapTarget {
     Terrain,
 }
 
-impl Default for LightmapTarget {
-    fn default() -> Self {
-        Self::Object
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightmapEntry {
@@ -216,8 +213,8 @@ pub fn linear_to_srgb(l: f32) -> f32 {
 
 pub fn f16_bits_to_f32(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
-    let exp = ((h >> 10) & 0x1f) as i32;
-    let mant = (h & 0x3ff) as f32;
+    let exp = i32::from((h >> 10) & 0x1f);
+    let mant = f32::from(h & 0x3ff);
     match exp {
         0 => sign * mant * 2f32.powi(-24),
         31 => if mant == 0.0 { sign * f32::INFINITY } else { f32::NAN },

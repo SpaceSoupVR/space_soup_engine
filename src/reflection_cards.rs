@@ -12,7 +12,7 @@ pub const CARD_MISS: f32 = 2.0;
 
 pub fn card_axes(face: usize) -> (usize, usize, usize, f32) {
     let a = (face / 2).min(2);
-    let sign = if face % 2 == 0 { 1.0 } else { -1.0 };
+    let sign = if face.is_multiple_of(2) { 1.0 } else { -1.0 };
     (a, (a + 1) % 3, (a + 2) % 3, sign)
 }
 
@@ -47,7 +47,7 @@ pub fn encode_texel(rgb: Vec3, t: Option<f32>, range: f32) -> [u16; 4] {
 pub fn encode_normal(n: Option<Vec3>) -> [u16; 4] {
     match n {
         Some(n) => {
-            let unit = |v: f32| (((v.clamp(-1.0, 1.0) + 1.0) * 0.5) * 65535.0).round() as u16;
+            let unit = |v: f32| (f32::midpoint(v.clamp(-1.0, 1.0), 1.0) * 65535.0).round() as u16;
             [unit(n.x), unit(n.y), unit(n.z), u16::MAX]
         }
         None => [0; 4],
@@ -58,7 +58,7 @@ pub fn decode_normal(texel: [u16; 4]) -> [f32; 3] {
     if texel[3] == 0 {
         return [0.0; 3];
     }
-    let c = |v: u16| v as f32 / 65535.0 * 2.0 - 1.0;
+    let c = |v: u16| f32::from(v) / 65535.0 * 2.0 - 1.0;
     [c(texel[0]), c(texel[1]), c(texel[2])]
 }
 
@@ -76,15 +76,15 @@ pub fn decode_albedo(texel: [u16; 4]) -> [f32; 3] {
     if texel[3] == 0 {
         return [0.0; 3];
     }
-    [texel[0], texel[1], texel[2]].map(|v| v as f32 / 65535.0)
+    [texel[0], texel[1], texel[2]].map(|v| f32::from(v) / 65535.0)
 }
 
 pub fn decode_texel(texel: [u16; 4], range: f32) -> [f32; 4] {
     let linear = |v: u16| {
-        let c = v as f32 / 65535.0;
+        let c = f32::from(v) / 65535.0;
         c * c * range
     };
-    let t = if texel[3] == 0 { CARD_MISS } else { (texel[3] - 1) as f32 / 65534.0 };
+    let t = if texel[3] == 0 { CARD_MISS } else { f32::from(texel[3] - 1) / 65534.0 };
     [linear(texel[0]), linear(texel[1]), linear(texel[2]), t]
 }
 
@@ -156,7 +156,7 @@ impl GlareAir {
         (dims.iter().all(|&d| d >= 2) && seen.len() == dims[0] * dims[1] * dims[2])
             .then_some(())?;
 
-        let reach = v.get("reach").and_then(|r| r.as_f64()).map_or(0.0, |r| r as f32).max(0.0);
+        let reach = v.get("reach").and_then(serde_json::Value::as_f64).map_or(0.0, |r| r as f32).max(0.0);
         Some(Self { min: vec3("min")?, max: vec3("max")?, dims, bulb: vec3("bulb")?, seen, reach })
     }
 }
@@ -185,7 +185,7 @@ pub struct GlareBulbRows {
 impl GlareTable {
 
     pub fn to_json(&self) -> serde_json::Value {
-        let flat = |v: &[Vec3]| v.iter().flat_map(|c| c.to_array()).collect::<Vec<f32>>();
+        let flat = |v: &[Vec3]| v.iter().flat_map(glam::Vec3::to_array).collect::<Vec<f32>>();
         let mut out = serde_json::json!({
             "rows": self.rows,
             "cols": self.cols,
@@ -199,7 +199,7 @@ impl GlareTable {
             out["lit_spread"] = serde_json::json!(split.lit_spread);
             if let Some(fine) = &split.bulb_fine {
 
-                let short = |v: &[f32]| v.iter().map(|x| (*x as f64 * 1e4).round() / 1e4).collect::<Vec<f64>>();
+                let short = |v: &[f32]| v.iter().map(|x| (f64::from(*x) * 1e4).round() / 1e4).collect::<Vec<f64>>();
                 out["bulb_rows"] = serde_json::json!(fine.rows);
                 out["bulb_fine"] = serde_json::json!(short(&fine.flux));
                 out["bulb_fine_centre"] = serde_json::json!(short(&flat(&fine.centre)));
@@ -223,7 +223,7 @@ impl GlareTable {
         if n == 0 || flux.len() != n || flat.len() != 3 * n {
             return None;
         }
-        let points = |flat: Vec<f32>| -> Vec<Vec3> { flat.chunks_exact(3).map(|c| Vec3::new(c[0], c[1], c[2])).collect() };
+        let points = |flat: Vec<f32>| -> Vec<Vec3> { flat.as_chunks::<3>().0.iter().map(|c| Vec3::new(c[0], c[1], c[2])).collect() };
         let centre = points(flat);
 
         let split = (|| {
@@ -280,7 +280,7 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
                     return None;
                 }
             };
-            let range = e.get("range").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            let range = e.get("range").and_then(serde_json::Value::as_f64).unwrap_or(1.0) as f32;
             let img = image::open(dir.join(e.get("file")?.as_str()?)).ok()?.to_rgba16();
             let res = img.width();
             if res == 0 || img.height() != blocks * res * CARD_FACES as u32 {

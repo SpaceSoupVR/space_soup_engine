@@ -3,18 +3,15 @@ use serde::{Deserialize, Serialize};
 use crate::scene_cuboid::Color3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum LightKind {
+    #[default]
     Point,
     Spot,
 
     Directional,
 }
 
-impl Default for LightKind {
-    fn default() -> Self {
-        Self::Point
-    }
-}
 
 fn default_light_color() -> Color3 {
     Color3(255, 255, 255, 255)

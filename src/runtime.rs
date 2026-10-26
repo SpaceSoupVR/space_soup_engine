@@ -295,7 +295,7 @@ impl GameRuntime {
                     info!("setup_scene_attachments: '{obj_id}' → '{joint_name}'");
                 }
                 None => {
-                    warn!("setup_scene_attachments: unknown joint '{joint_name}' for '{obj_id}'")
+                    warn!("setup_scene_attachments: unknown joint '{joint_name}' for '{obj_id}'");
                 }
             }
         }
@@ -494,8 +494,7 @@ impl GameRuntime {
                 .iter()
                 .enumerate()
                 .min_by(|a, b| a.1.entry.energy().total_cmp(&b.1.entry.energy()))
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
             self.water_entries.remove(least);
         }
     }
@@ -569,8 +568,7 @@ impl GameRuntime {
             .objects
             .iter()
             .find(|o| o.id == object_id)
-            .map(|o| self.damage.is_solid(o))
-            .unwrap_or(true)
+            .map_or(true, |o| self.damage.is_solid(o))
     }
 
     pub fn reset_damage(&mut self) {

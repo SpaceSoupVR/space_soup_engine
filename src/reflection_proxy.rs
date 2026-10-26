@@ -51,7 +51,7 @@ pub fn model_field(path: &Path, scale: Vec3, samples: u32) -> Option<ProxyField>
 
     for part in &parts {
         let local = |i: u32| scale * (Vec3::from(part.positions[i as usize]) - mid);
-        for tri in part.indices.chunks_exact(3) {
+        for tri in part.indices.as_chunks::<3>().0 {
             let t = [local(tri[0]), local(tri[1]), local(tri[2])];
             let lo = t[0].min(t[1]).min(t[2]) - Vec3::splat(max_distance);
             let hi = t[0].max(t[1]).max(t[2]) + Vec3::splat(max_distance);

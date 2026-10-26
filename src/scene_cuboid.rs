@@ -11,29 +11,23 @@ impl Default for Color3 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum CuboidStyle {
+    #[default]
     Solid,
     Wireframe,
     SolidAndWire,
 }
 
-impl Default for CuboidStyle {
-    fn default() -> Self {
-        Self::Solid
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum CuboidShape {
+    #[default]
     Box,
     Cylinder,
 }
 
-impl Default for CuboidShape {
-    fn default() -> Self {
-        Self::Box
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CuboidDef {

@@ -360,7 +360,7 @@ fn try_pack(measured: &[Measured], texel: f32, density_scale: f32) -> Option<Mes
 
     let area: u64 = sized
         .iter()
-        .map(|(w, h)| ((w + 2 * GUTTER) as u64) * ((h + 2 * GUTTER) as u64))
+        .map(|(w, h)| u64::from(w + 2 * GUTTER) * u64::from(h + 2 * GUTTER))
         .sum();
     let mut width = (area as f64).sqrt().ceil().max(4.0) as u32;
     width = width.next_power_of_two().min(MAX_ATLAS);
@@ -456,11 +456,11 @@ fn authored_atlases(path: &std::path::Path) -> std::collections::HashMap<usize, 
     let Some(meshes) = json.get("meshes").and_then(|m| m.as_array()) else { return out };
     for (i, mesh) in meshes.iter().enumerate() {
         let Some(lm) = mesh.get("extras").and_then(|e| e.get("space_soup")).and_then(|s| s.get("lightmap")) else { continue };
-        if lm.get("set").and_then(|s| s.as_u64()) != Some(1) {
+        if lm.get("set").and_then(serde_json::Value::as_u64) != Some(1) {
             continue;
         }
         let size = lm.get("size").and_then(|s| s.as_array());
-        let dim = |k: usize| size.and_then(|s| s.get(k)).and_then(|v| v.as_u64()).filter(|v| (1..=8192).contains(v));
+        let dim = |k: usize| size.and_then(|s| s.get(k)).and_then(serde_json::Value::as_u64).filter(|v| (1..=8192).contains(v));
         if let (Some(w), Some(h)) = (dim(0), dim(1)) {
             out.insert(i, [w as u32, h as u32]);
         }
@@ -514,7 +514,7 @@ pub fn ground_model_blocking_triangles(path: &std::path::Path) -> Option<Vec<[gl
                     Some(i) => i.into_u32().collect(),
                     None => (0..positions.len() as u32).collect(),
                 };
-                for t in indices.chunks_exact(3) {
+                for t in indices.as_chunks::<3>().0 {
                     let [a, b, c] = [t[0] as usize, t[1] as usize, t[2] as usize];
                     if a >= positions.len() || b >= positions.len() || c >= positions.len() {
                         continue;
@@ -579,7 +579,7 @@ pub fn fixture_light_geometry(path: &std::path::Path) -> Option<FixtureLightGeom
                 (brightest > 0.0).then_some((map, brightest))
             })
             .as_ref();
-        for tri in part.indices.chunks_exact(3) {
+        for tri in part.indices.as_chunks::<3>().0 {
             if let Some((map, brightest)) = glow {
                 let uv = |i: u32| part.uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]);
                 let (a, b, c) = (uv(tri[0]), uv(tri[1]), uv(tri[2]));
@@ -603,7 +603,7 @@ fn material_passes_light(json: &serde_json::Value, material: Option<usize>) -> (
         .is_some_and(|t| t > 0.5);
     let glows_whole = m["emissiveFactor"]
         .as_array()
-        .is_some_and(|f| f.iter().filter_map(|v| v.as_f64()).any(|v| v > 0.0))
+        .is_some_and(|f| f.iter().filter_map(serde_json::Value::as_f64).any(|v| v > 0.0))
         && m.get("emissiveTexture").is_none();
     (transmissive || glows_whole, glows_whole)
 }
@@ -640,7 +640,7 @@ pub fn model_albedo(path: &std::path::Path) -> Option<glam::Vec3> {
         }
         let area: f32 = part
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>().0.iter()
             .map(|t| {
                 let v = |i: u32| glam::Vec3::from(part.positions[i as usize]);
                 0.5 * (v(t[1]) - v(t[0])).cross(v(t[2]) - v(t[0])).length()
@@ -694,8 +694,8 @@ impl GlowMap {
         let (x0, y0) = (x.floor(), y.floor());
         let (fx, fy) = (x - x0, y - y0);
         let texel = |xi: f32, yi: f32| {
-            let xi = (xi as i64).rem_euclid(self.width as i64) as usize;
-            let yi = (yi as i64).rem_euclid(self.height as i64) as usize;
+            let xi = (xi as i64).rem_euclid(i64::from(self.width)) as usize;
+            let yi = (yi as i64).rem_euclid(i64::from(self.height)) as usize;
             self.texels[yi * self.width as usize + xi]
         };
         let top = texel(x0, y0) * (1.0 - fx) + texel(x0 + 1.0, y0) * fx;
@@ -724,23 +724,20 @@ pub fn model_albedo_parts(path: &std::path::Path) -> Option<Vec<AlbedoPart>> {
         if passes_light && !glows_whole {
             continue;
         }
-        let at = match by_material.iter().position(|(m, _)| *m == material) {
-            Some(at) => at,
-            None => {
-                let albedo = material_base_colour(&json, material, &gltf.document, &buffers, path, &mut texture_means);
-                let emissive = if glows_whole { material_emissive_factor(&json, material) } else { glam::Vec3::ZERO };
-                let glow_map = if glows_whole { None } else { material_glow_map(&json, material, &gltf.document, &buffers, path) };
-                by_material.push((material, AlbedoPart { triangles: Vec::new(), albedo, emissive, glow_map }));
-                by_material.len() - 1
-            }
+        let at = if let Some(at) = by_material.iter().position(|(m, _)| *m == material) { at } else {
+            let albedo = material_base_colour(&json, material, &gltf.document, &buffers, path, &mut texture_means);
+            let emissive = if glows_whole { material_emissive_factor(&json, material) } else { glam::Vec3::ZERO };
+            let glow_map = if glows_whole { None } else { material_glow_map(&json, material, &gltf.document, &buffers, path) };
+            by_material.push((material, AlbedoPart { triangles: Vec::new(), albedo, emissive, glow_map }));
+            by_material.len() - 1
         };
         let v = |i: u32| glam::Vec3::from(part.positions[i as usize]);
         let into = &mut by_material[at].1;
-        into.triangles.extend(part.indices.chunks_exact(3).map(|t| [v(t[0]), v(t[1]), v(t[2])]));
+        into.triangles.extend(part.indices.as_chunks::<3>().0.iter().map(|t| [v(t[0]), v(t[1]), v(t[2])]));
         if let Some(map) = into.glow_map.as_mut() {
 
             let uv = |i: u32| part.uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]);
-            map.uvs.extend(part.indices.chunks_exact(3).map(|t| [uv(t[0]), uv(t[1]), uv(t[2])]));
+            map.uvs.extend(part.indices.as_chunks::<3>().0.iter().map(|t| [uv(t[0]), uv(t[1]), uv(t[2])]));
         }
     }
     Some(by_material.into_iter().map(|(_, p)| p).filter(|p| !p.triangles.is_empty()).collect())
@@ -762,7 +759,7 @@ fn material_glow_map(
     let image = json["textures"][texture as usize]["source"].as_u64()? as usize;
     let rgb = gltf_image_decode(doc, buffers, path, image)?.to_rgb8();
     let linear = |b: u8| {
-        let c = b as f32 / 255.0;
+        let c = f32::from(b) / 255.0;
         if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
     };
     let texels = rgb.pixels().map(|p| glam::Vec3::new(linear(p.0[0]), linear(p.0[1]), linear(p.0[2])) * factor).collect();
@@ -771,7 +768,7 @@ fn material_glow_map(
 
 fn material_emissive_factor(json: &serde_json::Value, material: Option<usize>) -> glam::Vec3 {
     let Some(f) = material.and_then(|i| json["materials"][i]["emissiveFactor"].as_array()) else { return glam::Vec3::ZERO };
-    let c = |k: usize| f.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let c = |k: usize| f.get(k).and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32;
     glam::Vec3::new(c(0), c(1), c(2))
 }
 
@@ -786,14 +783,13 @@ fn material_base_colour(
     let pbr = material.map(|i| &json["materials"][i]["pbrMetallicRoughness"]);
     let factor = pbr
         .and_then(|p| p["baseColorFactor"].as_array())
-        .map(|f| {
+        .map_or(glam::Vec3::ONE, |f| {
             glam::Vec3::new(
-                f.first().and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
-                f.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
-                f.get(2).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                f.first().and_then(serde_json::Value::as_f64).unwrap_or(1.0) as f32,
+                f.get(1).and_then(serde_json::Value::as_f64).unwrap_or(1.0) as f32,
+                f.get(2).and_then(serde_json::Value::as_f64).unwrap_or(1.0) as f32,
             )
-        })
-        .unwrap_or(glam::Vec3::ONE);
+        });
     let texture = pbr
         .and_then(|p| p["baseColorTexture"]["index"].as_u64())
         .and_then(|t| json["textures"][t as usize]["source"].as_u64())
@@ -813,7 +809,7 @@ fn gltf_image_mean(
 ) -> Option<glam::Vec3> {
     let rgb = gltf_image_decode(doc, buffers, path, index)?.to_rgb8();
     let linear = |b: u8| {
-        let c = b as f32 / 255.0;
+        let c = f32::from(b) / 255.0;
         if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
     };
     let (mut sum, mut n) = (glam::Vec3::ZERO, 0u32);
@@ -868,7 +864,7 @@ fn gltf_json_bytes(path: &std::path::Path) -> Option<Vec<u8>> {
     let bytes = std::fs::read(path).ok()?;
     if bytes.len() >= 20 && &bytes[0..4] == b"glTF" {
         let len = u32::from_le_bytes(bytes[12..16].try_into().ok()?) as usize;
-        return bytes.get(20..20 + len).map(|b| b.to_vec());
+        return bytes.get(20..20 + len).map(<[u8]>::to_vec);
     }
     Some(bytes)
 }

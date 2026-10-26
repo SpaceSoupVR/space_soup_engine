@@ -69,7 +69,7 @@ impl PhysicsWorld {
             if let Some(mut actor) =
                 self.foundation.create_rigid_static(to_px_transform(pos, rot), &geo, material.as_mut(), PxTransform::default(), ())
             {
-                let ptr: *mut crate::rigid_physics::PxRigidStatic = &mut *actor as *mut _;
+                let ptr: *mut crate::rigid_physics::PxRigidStatic = &raw mut *actor;
                 self.scene.add_static_actor(actor);
                 self.statics.insert(obj.id.clone(), ptr);
                 self.materials.push(material);
@@ -105,7 +105,7 @@ impl PhysicsWorld {
             actor.set_mass(def.mass.max(0.5));
             unsafe {
                 physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(
-                    &mut *actor as *mut crate::rigid_physics::PxRigidDynamic as *mut physx_sys::PxRigidBody,
+                    &raw mut *actor as *mut physx_sys::PxRigidBody,
                     def.mass.max(0.5),
                     std::ptr::null(),
                     false,
@@ -113,14 +113,14 @@ impl PhysicsWorld {
             }
             actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
             actor.set_solver_iteration_counts(16, 4);
-            let ptr: *mut crate::rigid_physics::PxRigidDynamic = &mut *actor as *mut _;
+            let ptr: *mut crate::rigid_physics::PxRigidDynamic = &raw mut *actor;
             unsafe {
-                let body = ptr as *mut physx_sys::PxRigidBody;
+                let body = ptr.cast::<physx_sys::PxRigidBody>();
                 physx_sys::PxRigidBody_setMaxDepenetrationVelocity_mut(body, 1.0);
                 physx_sys::PxRigidBody_setMaxAngularVelocity_mut(body, 20.0);
                 physx_sys::PxRigidBody_setAngularDamping_mut(body, 0.05);
 
-                physx_sys::PxRigidDynamic_setSleepThreshold_mut(ptr as *mut physx_sys::PxRigidDynamic, 1.0e-6);
+                physx_sys::PxRigidDynamic_setSleepThreshold_mut(ptr.cast::<physx_sys::PxRigidDynamic>(), 1.0e-6);
             }
             self.scene.add_dynamic_actor(actor);
             self.materials.push(material);
@@ -136,9 +136,9 @@ impl PhysicsWorld {
             physx_sys::phys_PxD6JointCreate(
                 self.foundation.as_mut_ptr(),
                 std::ptr::null_mut(),
-                &world_frame,
-                child.ptr as *mut physx_sys::PxRigidActor,
-                &leaf_frame,
+                &raw const world_frame,
+                child.ptr.cast::<physx_sys::PxRigidActor>(),
+                &raw const leaf_frame,
             )
         };
         if joint.is_null() {
@@ -152,7 +152,7 @@ impl PhysicsWorld {
             }
             physx_sys::PxD6Joint_setMotion_mut(joint, A::Twist, M::Limited);
             let limit = physx_sys::PxJointAngularLimitPair_new(geom.lo, geom.hi.max(geom.lo + 1e-3), 0.0);
-            physx_sys::PxD6Joint_setTwistLimit_mut(joint, &limit);
+            physx_sys::PxD6Joint_setTwistLimit_mut(joint, &raw const limit);
 
         }
         self.doors.insert(obj.id.clone(), geom);
@@ -179,7 +179,7 @@ impl PhysicsWorld {
     pub(crate) fn push_doors(&mut self, rigs: &HashMap<PlayerId, PlayerRig>) {
         for (id, geom) in &self.doors {
             let Some(state) = self.dynamic.get(id) else { continue };
-            let body = state.ptr as *mut physx_sys::PxRigidBody;
+            let body = state.ptr.cast::<physx_sys::PxRigidBody>();
             let (pos, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
             let angle = geom.angle_of(rot);
             let mut bolted = false;
@@ -194,8 +194,8 @@ impl PhysicsWorld {
                     let (lo, hi) = if now { (-play, play) } else { (geom.lo, geom.hi.max(geom.lo + 1e-3)) };
                     unsafe {
                         let limit = physx_sys::PxJointAngularLimitPair_new(lo, hi, 0.0);
-                        physx_sys::PxD6Joint_setTwistLimit_mut(latch.joint, &limit);
-                        physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr as *mut physx_sys::PxRigidDynamic);
+                        physx_sys::PxD6Joint_setTwistLimit_mut(latch.joint, &raw const limit);
+                        physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr.cast::<physx_sys::PxRigidDynamic>());
                     }
                     latch.bolted = now;
                 }
@@ -212,7 +212,7 @@ impl PhysicsWorld {
                 if allowed != spin {
                     let turning = w + geom.axis() * (allowed - spin);
                     let moving = turning.cross(pos - geom.hinge());
-                    let dynamic = state.ptr as *mut physx_sys::PxRigidDynamic;
+                    let dynamic = state.ptr.cast::<physx_sys::PxRigidDynamic>();
                     unsafe {
                         physx_sys::PxRigidDynamic_setAngularVelocity_mut(dynamic, &px(turning), false);
                         physx_sys::PxRigidDynamic_setLinearVelocity_mut(dynamic, &px(moving), false);
@@ -270,7 +270,7 @@ impl PhysicsWorld {
             }
             if torque != 0.0 {
                 let t = px(axis * torque);
-                unsafe { physx_sys::PxRigidBody_addTorque_mut(body, &t, physx_sys::PxForceMode::Force, true) };
+                unsafe { physx_sys::PxRigidBody_addTorque_mut(body, &raw const t, physx_sys::PxForceMode::Force, true) };
             }
         }
     }

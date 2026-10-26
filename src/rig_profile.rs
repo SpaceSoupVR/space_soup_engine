@@ -133,7 +133,7 @@ impl RigProfileDef {
         }
         let mut names: Vec<String> = std::fs::read_dir(&dir)
             .with_context(|| format!("failed to read {}", dir.display()))?
-            .filter_map(|entry| entry.ok())
+            .filter_map(std::result::Result::ok)
             .filter_map(|entry| entry.path().file_stem().map(|s| s.to_string_lossy().into_owned()))
             .collect();
         names.sort();

@@ -105,7 +105,7 @@ impl LocomotionSettings {
     pub fn from_manifest(manifest: &serde_json::Value, scene: &str) -> Self {
         let mut out = Self::default();
         for layer in [manifest.get("locomotion"), manifest.get("locomotion_scenes").and_then(|s| s.get(scene))].into_iter().flatten() {
-            let speed = |key: &str| layer.get(key).and_then(|v| v.as_f64()).map(|v| v as f32).filter(|v| v.is_finite() && *v > 0.0 && *v <= 12.0);
+            let speed = |key: &str| layer.get(key).and_then(serde_json::Value::as_f64).map(|v| v as f32).filter(|v| v.is_finite() && *v > 0.0 && *v <= 12.0);
             if let Some(v) = speed("walk_speed") {
                 out.walk_speed = v;
             }
@@ -273,8 +273,7 @@ impl Locomotion {
 
     pub fn collision_start(&self, head: Option<Vec3>) -> CollisionStart {
         let head_rel = head
-            .map(|h| Vec3::new(h.x - self.player_offset.x, 0.0, h.z - self.player_offset.z))
-            .unwrap_or(Vec3::ZERO);
+            .map_or(Vec3::ZERO, |h| Vec3::new(h.x - self.player_offset.x, 0.0, h.z - self.player_offset.z));
         CollisionStart {
             offset: self.player_offset,
             yaw: self.player_yaw,

@@ -6,7 +6,7 @@ use crate::runtime::GameRuntime;
 
 impl GameRuntime {
     pub fn world_head_transform(&self, player: PlayerId) -> (Vec3, Quat) {
-        let head = self.rigs.get(&player).map(|r| r.head()).unwrap_or_default();
+        let head = self.rigs.get(&player).map(super::rig::PlayerRig::head).unwrap_or_default();
         (head.position, head.rotation)
     }
 

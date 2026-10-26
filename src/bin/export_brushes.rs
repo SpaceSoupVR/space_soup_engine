@@ -32,9 +32,7 @@ fn main() {
     }
 
     let stem = obj_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "brushes".to_string());
+        .file_stem().map_or_else(|| "brushes".to_string(), |s| s.to_string_lossy().to_string());
     opts.material_library = format!("{stem}.mtl");
     let mtl_path = obj_path.with_extension("mtl");
 
@@ -56,7 +54,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    if let Err(e) = write(&obj_path, &export.obj).and_then(|_| write(&mtl_path, &export.mtl)) {
+    if let Err(e) = write(&obj_path, &export.obj).and_then(|()| write(&mtl_path, &export.mtl)) {
         eprintln!("could not write {}: {e}", obj_path.display());
         std::process::exit(1);
     }

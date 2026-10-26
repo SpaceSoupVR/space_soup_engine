@@ -89,7 +89,7 @@ impl VolumeShape {
             } => point_in_obb(p, *center, *half_size, *rotation),
 
             Self::Solids(solids) => {
-                let at: brush::Vec3 = [p.x as f64, p.y as f64, p.z as f64];
+                let at: brush::Vec3 = [f64::from(p.x), f64::from(p.y), f64::from(p.z)];
                 solids.iter().any(|s| brush::contains_point(s, at, 0.0))
             }
         }

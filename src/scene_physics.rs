@@ -14,7 +14,9 @@ fn default_body_mode() -> BodyMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ColliderShape {
+    #[default]
     Box,
     Sphere { radius: f32 },
     Capsule { radius: f32, half_height: f32 },
@@ -25,11 +27,6 @@ pub enum ColliderShape {
     Hull,
 }
 
-impl Default for ColliderShape {
-    fn default() -> Self {
-        Self::Box
-    }
-}
 
 fn default_friction() -> f32 {
     0.5

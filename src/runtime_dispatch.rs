@@ -183,8 +183,7 @@ impl GameRuntime {
                 .iter()
                 .find(|o| &o.id == id)
                 .and_then(|o| o.trigger_volume.as_ref())
-                .map(|v| v.enabled)
-                .unwrap_or(false);
+                .is_some_and(|v| v.enabled);
 
             let now: HashSet<PlayerId> = if enabled {
                 probes
@@ -285,8 +284,7 @@ impl GameRuntime {
     pub fn volume_occupied(&self, id: &str) -> bool {
         self.volume_occupants
             .get(id)
-            .map(|o| !o.is_empty())
-            .unwrap_or(false)
+            .is_some_and(|o| !o.is_empty())
     }
 
     pub(crate) fn dispatch_teleportals(&mut self) {
@@ -477,7 +475,7 @@ impl GameRuntime {
     pub(crate) fn dispatch_update_hook(&self, dt: f32) {
         for obj in &self.scene.objects {
             if self.script_host.has_script(&obj.id) {
-                let _ = self.script_host.call(&obj.id, "on_update", (dt as f64,));
+                let _ = self.script_host.call(&obj.id, "on_update", (f64::from(dt),));
             }
         }
     }
@@ -517,7 +515,7 @@ impl GameRuntime {
                     let when_ok = trig
                         .when
                         .as_ref()
-                        .map_or(true, |c| c.holds(&|k| self.script_host.var_string(k)));
+                        .is_none_or(|c| c.holds(&|k| self.script_host.var_string(k)));
                     if rearmed {
                         self.latched_triggers.remove(&key);
                     } else if crossed && when_ok && !self.latched_triggers.contains(&key) {
@@ -546,8 +544,7 @@ impl GameRuntime {
                     .part_transforms
                     .get(object_id)
                     .and_then(|m| m.get(&part))
-                    .map(|(p, _)| *p)
-                    .unwrap_or(obj.cuboid.position);
+                    .map_or(obj.cuboid.position, |(p, _)| *p);
                 let new_id = format!("{object_id}#{part}#{}", self.next_detached_id);
                 self.next_detached_id += 1;
                 self.script_host.push_command(EngineCommand::SpawnObject {
@@ -621,7 +618,7 @@ impl GameRuntime {
             A::SpawnParticleBurst { id, count } => {
 
                 self.script_host
-                    .push_command(EngineCommand::SpawnParticleBurst { id, count: count as i64 })
+                    .push_command(EngineCommand::SpawnParticleBurst { id, count: i64::from(count) })
             }
         }
     }

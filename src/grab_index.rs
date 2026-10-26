@@ -61,7 +61,7 @@ fn span(position: Vec3, rotation: Quat, half: Vec3) -> Option<(Cell, Cell)> {
         return None;
     }
     let (lo, hi) = (cell_of(position - extent), cell_of(position + extent));
-    let count = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
+    let count = i64::from(hi.0 - lo.0 + 1) * i64::from(hi.1 - lo.1 + 1) * i64::from(hi.2 - lo.2 + 1);
     (count <= MAX_CELLS as i64).then_some((lo, hi))
 }
 

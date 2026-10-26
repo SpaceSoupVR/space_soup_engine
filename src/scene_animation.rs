@@ -4,18 +4,15 @@ use serde::{Deserialize, Serialize};
 use crate::scene_cuboid::Color3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Easing {
+    #[default]
     Linear,
     EaseIn,
     EaseOut,
     EaseInOut,
 }
 
-impl Default for Easing {
-    fn default() -> Self {
-        Self::Linear
-    }
-}
 
 impl Easing {
     pub fn apply(self, t: f32) -> f32 {
@@ -63,20 +60,17 @@ impl Animation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PartDriver {
     HoldTrigger,
     HoldGrip,
     HandPull,
+    #[default]
     Manual,
 
     Cyclic { cycles_per_second: f32 },
 }
 
-impl Default for PartDriver {
-    fn default() -> Self {
-        Self::Manual
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PartAnimationDef {
@@ -213,28 +207,22 @@ pub enum PartTriggerAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PlayMode {
+    #[default]
     Simultaneous,
     Sequential,
 }
 
-impl Default for PlayMode {
-    fn default() -> Self {
-        Self::Simultaneous
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum BindingScope {
+    #[default]
     ContextualHold,
     GlobalAnywhere,
 }
 
-impl Default for BindingScope {
-    fn default() -> Self {
-        Self::ContextualHold
-    }
-}
 
 pub const BINDING_BUTTONS: [&str; 6] = ["btn_a", "btn_b", "btn_x", "btn_y", "trigger", "grip"];
 

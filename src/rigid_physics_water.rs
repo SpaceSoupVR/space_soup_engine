@@ -4,7 +4,7 @@
 //! started (`respawn_round`).
 //!
 //! WHAT A STEP COSTS, BY DESIGN. Everything here is per AWAKE body: a body
-//! PhysX has put to sleep is not read, floated, watched or written back (its
+//! `PhysX` has put to sleep is not read, floated, watched or written back (its
 //! pose went to the scene on the step it fell asleep), so a beach of a
 //! thousand rocks nobody is throwing costs one flag read each. An awake body
 //! costs its pose, one lookup of each water footprint (a grid cell: no ray,
@@ -107,11 +107,11 @@ impl PhysicsWorld {
             if self.doors.contains_key(id) {
                 continue;
             }
-            let dynamic = state.ptr as *mut physx_sys::PxRigidDynamic;
+            let dynamic = state.ptr.cast::<physx_sys::PxRigidDynamic>();
             if unsafe { physx_sys::PxRigidDynamic_isSleeping(dynamic) } {
                 continue;
             }
-            let body = state.ptr as *mut physx_sys::PxRigidBody;
+            let body = state.ptr.cast::<physx_sys::PxRigidBody>();
             let (pos, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
             let Some(surface) = self.water.iter().filter_map(|w| w.surface_at(pos.x, pos.z)).reduce(f32::max) else { continue };
             let extent = crate::water::world_half_extents(state.half, rot);
@@ -130,7 +130,7 @@ impl PhysicsWorld {
                 }
                 under += share / 8.0;
                 let lift = px(Vec3::Y * (WATER_DENSITY * g * part * share));
-                unsafe { physx_sys::PxRigidBodyExt_addForceAtPos(body, &lift, &px(at), physx_sys::PxForceMode::Force, false) };
+                unsafe { physx_sys::PxRigidBodyExt_addForceAtPos(body, &raw const lift, &px(at), physx_sys::PxForceMode::Force, false) };
             }
             if under <= 0.0 {
                 continue;
@@ -143,8 +143,8 @@ impl PhysicsWorld {
             let w = v3(unsafe { physx_sys::PxRigidBody_getAngularVelocity(body) });
             let turned = px(w / (1.0 + under * WATER_SPIN_DAMPING * dt));
             unsafe {
-                physx_sys::PxRigidDynamic_setLinearVelocity_mut(dynamic, &slowed, false);
-                physx_sys::PxRigidDynamic_setAngularVelocity_mut(dynamic, &turned, false);
+                physx_sys::PxRigidDynamic_setLinearVelocity_mut(dynamic, &raw const slowed, false);
+                physx_sys::PxRigidDynamic_setAngularVelocity_mut(dynamic, &raw const turned, false);
             }
         }
     }
@@ -225,7 +225,7 @@ impl PhysicsWorld {
             stats.awake += 1;
             let pose = unsafe { (*state.ptr).get_global_pose() };
             let (pos, rot) = from_px_transform(&pose);
-            if scene.objects.get(state.object).map_or(true, |o| o.id != *id) {
+            if scene.objects.get(state.object).is_none_or(|o| o.id != *id) {
                 let Some(index) = scene.objects.iter().position(|o| o.id == *id) else { continue };
                 state.object = index;
             }
@@ -242,7 +242,7 @@ impl PhysicsWorld {
                 e.id = id.clone();
                 entries.push(e);
             }
-            stats.in_water += state.water.is_in() as usize;
+            stats.in_water += usize::from(state.water.is_in());
         }
         stats.entries_seen = entries.len();
         crate::water::keep_most_energetic(&mut entries, crate::water::MAX_ENTRIES_A_STEP);

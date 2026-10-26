@@ -1,7 +1,7 @@
 use glam::Vec3;
 
 use crate::scatter::{
-    resolve, slot_count, FlatGround, Ground, ScatterKey, ScatterLayer, ScatterOverride,
+    resolve, slot_count, FlatGround, Ground, ScatterLayer, ScatterOverride,
     ScatterPrototype, ScatterStroke,
 };
 

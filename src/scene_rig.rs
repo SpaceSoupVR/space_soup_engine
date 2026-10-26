@@ -55,7 +55,9 @@ impl Default for GripPoseDef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum GripKind {
+    #[default]
     Snap,
 
     Free,
@@ -63,11 +65,6 @@ pub enum GripKind {
     Pinch,
 }
 
-impl Default for GripKind {
-    fn default() -> Self {
-        Self::Snap
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GripPointDef {

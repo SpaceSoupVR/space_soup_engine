@@ -371,7 +371,7 @@ impl DoorGeom {
         if depth <= 0.0 {
             return None;
         }
-        let y = ((y_range.0 + y_range.1) * 0.5).clamp(lo, hi);
+        let y = f32::midpoint(y_range.0, y_range.1).clamp(lo, hi);
         let point = Vec3::new(centre.x, y, centre.z) + rot * nearest;
         Some((point, rot * normal, depth))
     }

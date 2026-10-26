@@ -19,8 +19,7 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                 .unwrap()
                 .object_positions
                 .get(id)
-                .map(|p| p.0 as f64)
-                .unwrap_or(0.0)
+                .map_or(0.0, |p| f64::from(p.0))
         });
     }
     {
@@ -30,8 +29,7 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                 .unwrap()
                 .object_positions
                 .get(id)
-                .map(|p| p.1 as f64)
-                .unwrap_or(0.0)
+                .map_or(0.0, |p| f64::from(p.1))
         });
     }
     {
@@ -41,8 +39,7 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                 .unwrap()
                 .object_positions
                 .get(id)
-                .map(|p| p.2 as f64)
-                .unwrap_or(0.0)
+                .map_or(0.0, |p| f64::from(p.2))
         });
     }
 
@@ -53,8 +50,7 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                 .unwrap()
                 .rig_positions
                 .get(joint)
-                .map(|p| p.0 as f64)
-                .unwrap_or(0.0)
+                .map_or(0.0, |p| f64::from(p.0))
         });
     }
     {
@@ -64,8 +60,7 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                 .unwrap()
                 .rig_positions
                 .get(joint)
-                .map(|p| p.1 as f64)
-                .unwrap_or(0.0)
+                .map_or(0.0, |p| f64::from(p.1))
         });
     }
     {
@@ -75,33 +70,32 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                 .unwrap()
                 .rig_positions
                 .get(joint)
-                .map(|p| p.2 as f64)
-                .unwrap_or(0.0)
+                .map_or(0.0, |p| f64::from(p.2))
         });
     }
 
     {
         let ctx = context.clone();
         engine.register_fn("get_object_rot_x", move |id: &str| -> f64 {
-            ctx.lock().unwrap().object_rotations.get(id).map(|r| r.0 as f64).unwrap_or(0.0)
+            ctx.lock().unwrap().object_rotations.get(id).map_or(0.0, |r| f64::from(r.0))
         });
     }
     {
         let ctx = context.clone();
         engine.register_fn("get_object_rot_y", move |id: &str| -> f64 {
-            ctx.lock().unwrap().object_rotations.get(id).map(|r| r.1 as f64).unwrap_or(0.0)
+            ctx.lock().unwrap().object_rotations.get(id).map_or(0.0, |r| f64::from(r.1))
         });
     }
     {
         let ctx = context.clone();
         engine.register_fn("get_object_rot_z", move |id: &str| -> f64 {
-            ctx.lock().unwrap().object_rotations.get(id).map(|r| r.2 as f64).unwrap_or(0.0)
+            ctx.lock().unwrap().object_rotations.get(id).map_or(0.0, |r| f64::from(r.2))
         });
     }
     {
         let ctx = context.clone();
         engine.register_fn("get_object_rot_w", move |id: &str| -> f64 {
-            ctx.lock().unwrap().object_rotations.get(id).map(|r| r.3 as f64).unwrap_or(1.0)
+            ctx.lock().unwrap().object_rotations.get(id).map_or(1.0, |r| f64::from(r.3))
         });
     }
 
@@ -119,7 +113,7 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                 }
 
                 let mut best: Option<(String, f32)> = None;
-                for (id, &(px, py, pz)) in ctx.object_positions.iter() {
+                for (id, &(px, py, pz)) in &ctx.object_positions {
                     let center = Vec3::new(px, py, pz);
                     let (rx, ry, rz, rw) =
                         ctx.object_rotations.get(id).copied().unwrap_or((0.0, 0.0, 0.0, 1.0));
@@ -130,24 +124,21 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
                     if let Some(dist) =
                         ray_intersect_obb(origin, dir, center, half_size, rotation, max_dist as f32)
                     {
-                        if best.as_ref().map(|(_, d)| dist < *d).unwrap_or(true) {
+                        if best.as_ref().map_or(true, |(_, d)| dist < *d) {
                             best = Some((id.clone(), dist));
                         }
                     }
                 }
 
-                match best {
-                    Some((id, dist)) => {
-                        let hit = origin + dir * dist;
-                        ctx.last_raycast_hit = Some((hit.x, hit.y, hit.z));
-                        ctx.raycast_hit_object = id;
-                        true
-                    }
-                    None => {
-                        ctx.last_raycast_hit = None;
-                        ctx.raycast_hit_object.clear();
-                        false
-                    }
+                if let Some((id, dist)) = best {
+                    let hit = origin + dir * dist;
+                    ctx.last_raycast_hit = Some((hit.x, hit.y, hit.z));
+                    ctx.raycast_hit_object = id;
+                    true
+                } else {
+                    ctx.last_raycast_hit = None;
+                    ctx.raycast_hit_object.clear();
+                    false
                 }
             },
         );
@@ -162,19 +153,19 @@ pub(crate) fn register_position_query_fns(engine: &mut Engine, context: &SharedC
     {
         let ctx = context.clone();
         engine.register_fn("raycast_hit_x", move || -> f64 {
-            ctx.lock().unwrap().last_raycast_hit.map(|p| p.0 as f64).unwrap_or(0.0)
+            ctx.lock().unwrap().last_raycast_hit.map_or(0.0, |p| f64::from(p.0))
         });
     }
     {
         let ctx = context.clone();
         engine.register_fn("raycast_hit_y", move || -> f64 {
-            ctx.lock().unwrap().last_raycast_hit.map(|p| p.1 as f64).unwrap_or(0.0)
+            ctx.lock().unwrap().last_raycast_hit.map_or(0.0, |p| f64::from(p.1))
         });
     }
     {
         let ctx = context.clone();
         engine.register_fn("raycast_hit_z", move || -> f64 {
-            ctx.lock().unwrap().last_raycast_hit.map(|p| p.2 as f64).unwrap_or(0.0)
+            ctx.lock().unwrap().last_raycast_hit.map_or(0.0, |p| f64::from(p.2))
         });
     }
 }

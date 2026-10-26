@@ -50,7 +50,7 @@ fn raw_pose(at: Vec3) -> physx_sys::PxTransform {
 /// Static actors are the world; dynamic and kinematic ones move.
 fn actor_is_fixed(actor: *const physx_sys::PxRigidActor) -> bool {
     !actor.is_null()
-        && unsafe { physx_sys::PxActor_getType(actor as *const physx_sys::PxActor) }
+        && unsafe { physx_sys::PxActor_getType(actor.cast::<physx_sys::PxActor>()) }
             == physx_sys::PxActorType::RigidStatic
 }
 
@@ -76,12 +76,12 @@ impl PhysicsWorld {
         let found = unsafe {
             physx_sys::PxSceneQueryExt_raycastSingle(
                 self.scene.as_ptr(),
-                &origin_px,
-                &dir_px,
+                &raw const origin_px,
+                &raw const dir_px,
                 max_distance,
                 hit_flags,
-                &mut hit,
-                &filter_data,
+                &raw mut hit,
+                &raw const filter_data,
                 std::ptr::null_mut(),
                 std::ptr::null(),
             )
@@ -114,13 +114,13 @@ impl PhysicsWorld {
         let found = unsafe {
             physx_sys::PxSceneQueryExt_sweepSingle(
                 self.scene.as_ptr(),
-                &geometry as *const physx_sys::PxSphereGeometry as *const physx_sys::PxGeometry,
-                &pose,
-                &dir_px,
+                &raw const geometry as *const physx_sys::PxGeometry,
+                &raw const pose,
+                &raw const dir_px,
                 max_distance,
                 flags,
-                &mut hit,
-                &filter_data,
+                &raw mut hit,
+                &raw const filter_data,
                 std::ptr::null_mut(),
                 std::ptr::null(),
                 0.0,
@@ -141,7 +141,7 @@ impl PhysicsWorld {
     /// direction from that point back out to `center`.
     ///
     /// What a hand needs to push off a wall. Works on triangle-mesh colliders -- a room model --
-    /// because PhysX's point distance supports meshes (BVH34, the engine's cooking default).
+    /// because `PhysX`'s point distance supports meshes (BVH34, the engine's cooking default).
     /// Unity's `Collider.ClosestPoint` does not, and handed back the hand's own position for every
     /// concave mesh, which is why the Unity game needed a probe of its own for that case.
     ///
@@ -161,11 +161,11 @@ impl PhysicsWorld {
         let count = unsafe {
             physx_sys::PxSceneQueryExt_overlapMultiple(
                 self.scene.as_ptr(),
-                &geometry as *const physx_sys::PxSphereGeometry as *const physx_sys::PxGeometry,
-                &pose,
+                &raw const geometry as *const physx_sys::PxGeometry,
+                &raw const pose,
                 hits.as_mut_ptr(),
                 MAX_HITS as u32,
-                &filter_data,
+                &raw const filter_data,
                 std::ptr::null_mut(),
             )
         };
@@ -188,11 +188,11 @@ impl PhysicsWorld {
             let mut triangle: u32 = 0;
             let sq = unsafe {
                 physx_sys::PxGeometryQuery_pointDistance(
-                    &point,
+                    &raw const point,
                     geom,
-                    &shape_pose,
-                    &mut closest,
-                    &mut triangle,
+                    &raw const shape_pose,
+                    &raw mut closest,
+                    &raw mut triangle,
                     physx_sys::PxGeometryQueryFlags::SimdGuard,
                 )
             };
@@ -231,7 +231,7 @@ impl PhysicsWorld {
         }
         unsafe {
             self.scene.remove_actor(&mut *ptr, false);
-            physx_sys::PxActor_release_mut(ptr as *mut physx_sys::PxActor);
+            physx_sys::PxActor_release_mut(ptr.cast::<physx_sys::PxActor>());
         }
         true
     }
@@ -254,7 +254,7 @@ impl PhysicsWorld {
         }
         unsafe {
             self.scene.remove_actor(&mut *state.ptr, false);
-            physx_sys::PxActor_release_mut(state.ptr as *mut physx_sys::PxActor);
+            physx_sys::PxActor_release_mut(state.ptr.cast::<physx_sys::PxActor>());
         }
     }
 
@@ -285,7 +285,7 @@ impl PhysicsWorld {
             unsafe { (*ptr).set_kinematic_target(&target) };
         }
 
-        self.clock += dt as f64;
+        self.clock += f64::from(dt);
         self.respawn_round();
 
         self.push_doors(rigs);

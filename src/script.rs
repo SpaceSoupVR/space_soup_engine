@@ -277,7 +277,7 @@ impl ScriptHost {
 
     pub fn var_string(&self, key: &str) -> Option<String> {
         let ctx = self.context.lock().unwrap();
-        ctx.vars.get(key).map(|v| v.to_string())
+        ctx.vars.get(key).map(std::string::ToString::to_string)
     }
 
     pub fn set_input_axes(&self, axes: &InputAxes) {

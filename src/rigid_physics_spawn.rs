@@ -109,11 +109,11 @@ fn cook_triangle_mesh(
     let mut desc = PxTriangleMeshDesc::new();
     desc.obj.points.count = points.len() as u32;
     desc.obj.points.stride = std::mem::size_of::<PxVec3>() as u32;
-    desc.obj.points.data = points.as_ptr() as *const std::ffi::c_void;
+    desc.obj.points.data = points.as_ptr().cast::<std::ffi::c_void>();
 
     desc.obj.triangles.count = (indices.len() / 3) as u32;
     desc.obj.triangles.stride = (std::mem::size_of::<u32>() * 3) as u32;
-    desc.obj.triangles.data = indices.as_ptr() as *const std::ffi::c_void;
+    desc.obj.triangles.data = indices.as_ptr().cast::<std::ffi::c_void>();
 
     match create_triangle_mesh(foundation, &params, &desc) {
         TriangleMeshCookingResult::Success(mesh) => Some(mesh),
@@ -182,7 +182,7 @@ pub(crate) fn ground_patch_batches(extra: &crate::terrain::GroundPatch, region: 
     let mut slot = vec![NONE; extra.positions.len()];
     for tri in &triangles {
         let (points, indices) = &mut batches[batch_of_piece[root(&mut piece, tri[0]) as usize] as usize];
-        for &v in tri.iter() {
+        for &v in *tri {
             if slot[v as usize] == NONE {
                 let p = extra.positions[v as usize];
                 slot[v as usize] = points.len() as u32;
@@ -211,8 +211,7 @@ impl PhysicsWorld {
             .unwrap_or_else(|| calculated_mass(obj.cuboid.half_size, DEFAULT_DENSITY));
         let collider_half = def
             .collider_half_size
-            .map(Vec3::from)
-            .unwrap_or(obj.cuboid.half_size);
+            .map_or(obj.cuboid.half_size, Vec3::from);
         let shape_transform = to_px_transform(Vec3::from(def.collider_offset), Quat::IDENTITY);
 
         let Some(mut material) =
@@ -279,7 +278,7 @@ impl PhysicsWorld {
                 match created {
                     Some(mut actor) => {
 
-                        let ptr: *mut PxRigidStatic = &mut *actor as *mut PxRigidStatic;
+                        let ptr: *mut PxRigidStatic = &raw mut *actor;
                         self.scene.add_static_actor(actor);
                         self.statics.insert(obj.id.clone(), ptr);
                     }
@@ -359,7 +358,7 @@ impl PhysicsWorld {
                         actor.set_mass(mass);
                         unsafe {
                             physx_sys::PxRigidBodyExt_setMassAndUpdateInertia_1(
-                                &mut *actor as *mut PxRigidDynamic as *mut physx_sys::PxRigidBody,
+                                &raw mut *actor as *mut physx_sys::PxRigidBody,
                                 mass,
                                 std::ptr::null(),
                                 false,
@@ -367,7 +366,7 @@ impl PhysicsWorld {
                         }
                         if def.mode == BodyMode::Kinematic {
                             actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
-                            let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
+                            let ptr: *mut PxRigidDynamic = &raw mut *actor;
                             self.scene.add_dynamic_actor(actor);
                             self.kinematic.insert(obj.id.clone(), ptr);
                         } else {
@@ -376,13 +375,13 @@ impl PhysicsWorld {
                             actor.set_solver_iteration_counts(8, 2);
                             unsafe {
                                 physx_sys::PxRigidBody_setMaxDepenetrationVelocity_mut(
-                                    &mut *actor as *mut PxRigidDynamic as *mut physx_sys::PxRigidBody,
+                                    &raw mut *actor as *mut physx_sys::PxRigidBody,
                                     2.0,
                                 );
                             }
                             let vel = to_px_vec3(def.linear_velocity);
                             actor.set_linear_velocity(&vel, true);
-                            let ptr: *mut PxRigidDynamic = &mut *actor as *mut PxRigidDynamic;
+                            let ptr: *mut PxRigidDynamic = &raw mut *actor;
                             self.scene.add_dynamic_actor(actor);
                             let mut body = DynamicActor::new(ptr, obj.cuboid.position, obj.cuboid.rotation, bounds_half, volume);
                             body.respawn_interval = def.respawn_interval;
@@ -405,7 +404,7 @@ impl PhysicsWorld {
     /// scale however many objects use it: its index in `hull_meshes`, the
     /// centre and half extents of the box round it in the object's frame, and
     /// its volume. The model's points are taken as the renderer draws them
-    /// (scaled, then turned by the mesh's own offset) and PhysX keeps at most
+    /// (scaled, then turned by the mesh's own offset) and `PhysX` keeps at most
     /// 32 of the hull's corners. `None`, with a warning, where there is no
     /// model or it will not cook.
     fn hull_for(&mut self, obj: &GameObject) -> Option<(usize, Vec3, Vec3, f32)> {
@@ -440,7 +439,7 @@ impl PhysicsWorld {
         let mut desc = PxConvexMeshDesc::new();
         desc.obj.points.count = points.len() as u32;
         desc.obj.points.stride = std::mem::size_of::<PxVec3>() as u32;
-        desc.obj.points.data = points.as_ptr() as *const std::ffi::c_void;
+        desc.obj.points.data = points.as_ptr().cast::<std::ffi::c_void>();
         desc.obj.flags = physx_sys::PxConvexFlags::ComputeConvex;
         desc.obj.vertexLimit = 32;
         let ConvexMeshCookingResult::Success(hull) = create_convex_mesh(&mut self.foundation, &params, &desc) else {
@@ -457,7 +456,7 @@ impl PhysicsWorld {
         unsafe {
             let mut inertia: physx_sys::PxMat33 = std::mem::zeroed();
             let mut centre: physx_sys::PxVec3 = std::mem::zeroed();
-            physx_sys::PxConvexMesh_getMassInformation(hull.as_ptr(), &mut volume, &mut inertia, &mut centre);
+            physx_sys::PxConvexMesh_getMassInformation(hull.as_ptr(), &raw mut volume, &raw mut inertia, &raw mut centre);
         }
         self.hull_meshes.push(hull);
         let found = (self.hull_meshes.len() - 1, (lo + hi) * 0.5, (hi - lo) * 0.5, volume.max(1e-9));
@@ -497,10 +496,10 @@ impl PhysicsWorld {
         let joint = unsafe {
             physx_sys::phys_PxD6JointCreate(
                 self.foundation.as_mut_ptr(),
-                parent.ptr as *mut physx_sys::PxRigidActor,
-                &frame,
-                child.ptr as *mut physx_sys::PxRigidActor,
-                &frame,
+                parent.ptr.cast::<physx_sys::PxRigidActor>(),
+                &raw const frame,
+                child.ptr.cast::<physx_sys::PxRigidActor>(),
+                &raw const frame,
             )
         };
         if joint.is_null() {
@@ -545,13 +544,13 @@ impl PhysicsWorld {
 
             let hard_spring = physx_sys::PxSpring_new(0.0, 0.0);
             let limit =
-                physx_sys::PxJointLinearLimitPair_new_1(0.0, def.travel.max(0.001), &hard_spring);
-            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::X, &limit);
+                physx_sys::PxJointLinearLimitPair_new_1(0.0, def.travel.max(0.001), &raw const hard_spring);
+            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::X, &raw const limit);
 
             let side_spring = physx_sys::PxSpring_new(4000.0, 120.0);
-            let side_limit = physx_sys::PxJointLinearLimitPair_new_1(-0.0005, 0.0005, &side_spring);
-            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::Y, &side_limit);
-            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::Z, &side_limit);
+            let side_limit = physx_sys::PxJointLinearLimitPair_new_1(-0.0005, 0.0005, &raw const side_spring);
+            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::Y, &raw const side_limit);
+            physx_sys::PxD6Joint_setLinearLimit_mut(joint, physx_sys::PxD6Axis::Z, &raw const side_limit);
 
             let drive = physx_sys::PxD6JointDrive_new_1(
                 def.spring_stiffness,
@@ -559,9 +558,9 @@ impl PhysicsWorld {
                 1.0e6,
                 false,
             );
-            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::X, &drive);
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::X, &raw const drive);
             let rest_pose = to_raw_transform(PxTransform::default());
-            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &rest_pose, true);
+            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &raw const rest_pose, true);
         }
     }
 
@@ -607,7 +606,7 @@ impl PhysicsWorld {
 
     /// Static collider for the scene's sculpted ground.
     ///
-    /// A PhysX HEIGHT FIELD where the ground is a grid of heights, which every
+    /// A `PhysX` HEIGHT FIELD where the ground is a grid of heights, which every
     /// scene's is today (`spawn_scene_height_field`): its memory and its build
     /// time follow the sample count, at four bytes and some tens of
     /// nanoseconds each. The triangle mesh it replaces
@@ -615,7 +614,7 @@ impl PhysicsWorld {
     /// sample and a BVH to cook -- 2.6 GB and over 3 s at 2049 samples a side,
     /// on the server and again on the headset (docs/scale-audit-2026-10-13.md,
     /// L3; the numbers at each size are on [`TerrainCollider::TriangleMesh`]).
-    /// The mesh stays for a source that is not a grid, for a grid PhysX will
+    /// The mesh stays for a source that is not a grid, for a grid `PhysX` will
     /// not take, and by choice ([`TerrainCollider`]).
     ///
     /// A failure warns and leaves the scene without ground rather than aborting
@@ -633,19 +632,19 @@ impl PhysicsWorld {
         self.spawn_scene_terrain_mesh(source);
     }
 
-    /// The ground as a PhysX height field. `false`, with nothing added to the
-    /// scene, if PhysX will not take it.
+    /// The ground as a `PhysX` height field. `false`, with nothing added to the
+    /// scene, if `PhysX` will not take it.
     ///
     /// THE SAME SURFACE AS `patch(bounds, 1)`, which is what is drawn and what
     /// the triangle mesh was cooked from, by the mesher's own answers rather
     /// than a second copy of its rules:
     ///
-    /// - HEIGHTS: the sixteen-bit samples themselves, moved to PhysX's signed
+    /// - HEIGHTS: the sixteen-bit samples themselves, moved to `PhysX`'s signed
     ///   range, with the height of a step as the scale -- no rounding, so a
     ///   vertex is where the mesher puts it to within float arithmetic
     ///   (hundredths of a millimetre on a level some hundreds of metres tall).
     /// - HOLES: a cell the mesher leaves out (`cell_is_open`, and the cells
-    ///   past `meshed_cells`) has PhysX's hole material on both its triangles.
+    ///   past `meshed_cells`) has `PhysX`'s hole material on both its triangles.
     /// - DIAGONALS: each cell's tessellation flag is the mesher's choice for
     ///   it (`cell_splits_through_first_sample`), so a ray lands on the
     ///   triangle that is drawn, not on the other half of the quad.
@@ -655,11 +654,11 @@ impl PhysicsWorld {
     ///   (`ground_patch_batches`). Their outline vertices are the grid's own
     ///   to the bit, so the two meet where the one mesh's triangles did.
     ///
-    /// PhysX lays a height field's rows along x and its columns along z, and
+    /// `PhysX` lays a height field's rows along x and its columns along z, and
     /// stores it a row at a time: the transpose of the terrain's own order.
     ///
     /// COST: one pass over the samples and four bytes each, twice while it is
-    /// built (this array, then PhysX's copy) and once after. The patch meshes
+    /// built (this array, then `PhysX`'s copy) and once after. The patch meshes
     /// follow the caves' triangles, not the level's size. A ray straight down
     /// reads one cell. A ray along the ground walks the cells under it, where
     /// a mesh's tree stepped over them: a ray the whole length of a level
@@ -674,7 +673,7 @@ impl PhysicsWorld {
         let [dx, dz] = field.cell_size();
         let [lo, hi] = field.height_range();
         let origin = field.origin();
-        let step = (hi - lo) / u16::MAX as f32;
+        let step = (hi - lo) / f32::from(u16::MAX);
         if !(step >= 0.0 && step.is_finite() && dx >= MIN_CELL && dz >= MIN_CELL && dx.is_finite() && dz.is_finite() && origin.is_finite()) {
             return false;
         }
@@ -690,7 +689,7 @@ impl PhysicsWorld {
         let (mut open_cells, mut cells) = (0usize, 0usize);
         for ix in 0..nx {
             for iz in 0..nz {
-                let height = if level { 0 } else { (raw[(iz * nx + ix) as usize] as i32 - 32768) as i16 };
+                let height = if level { 0 } else { (i32::from(raw[(iz * nx + ix) as usize]) - 32768) as i16 };
                 let is_cell = ix + 1 < nx && iz + 1 < nz;
                 let open = is_cell && (ix >= meshed_x || iz >= meshed_z || (holed && field.cell_is_open(ix, iz)));
                 let material = if open { HeightFieldMaterial::HOLE } else { solid };
@@ -706,7 +705,7 @@ impl PhysicsWorld {
         desc.obj.nbColumns = nz;
         desc.obj.format = physx_sys::PxHeightFieldFormat::S16Tm;
         desc.obj.samples.stride = std::mem::size_of::<HeightFieldSample>() as u32;
-        desc.obj.samples.data = samples.as_ptr() as *const std::ffi::c_void;
+        desc.obj.samples.data = samples.as_ptr().cast::<std::ffi::c_void>();
         if !desc.is_valid() {
             return false;
         }
@@ -810,18 +809,15 @@ impl PhysicsWorld {
         );
 
         let transform = to_px_transform(Vec3::ZERO, Quat::IDENTITY);
-        match self.foundation.create_rigid_static(
+        if let Some(actor) = self.foundation.create_rigid_static(
             transform,
             &geo,
             material.as_mut(),
             PxTransform::default(),
             (),
-        ) {
-            Some(actor) => self.scene.add_static_actor(actor),
-            None => {
-                log::warn!("rigid_physics: failed to create scene terrain actor");
-                return;
-            }
+        ) { self.scene.add_static_actor(actor) } else {
+            log::warn!("rigid_physics: failed to create scene terrain actor");
+            return;
         }
         self.materials.push(material);
         log::info!(
@@ -874,7 +870,7 @@ impl PhysicsWorld {
             (),
         ) {
             Some(mut actor) => {
-                let ptr: *mut PxRigidStatic = &mut *actor as *mut PxRigidStatic;
+                let ptr: *mut PxRigidStatic = &raw mut *actor;
                 self.scene.add_static_actor(actor);
                 self.statics.insert(obj.id.clone(), ptr);
             }
@@ -931,12 +927,9 @@ impl PhysicsWorld {
             MeshGeometryFlags::empty(),
         );
         let transform = to_px_transform(Vec3::ZERO, Quat::IDENTITY);
-        match self.foundation.create_rigid_static(transform, &geo, material.as_mut(), PxTransform::default(), ()) {
-            Some(actor) => self.scene.add_static_actor(actor),
-            None => {
-                log::warn!("rigid_physics: walk_area on '{}' failed to create static actor", obj.id);
-                return;
-            }
+        if let Some(actor) = self.foundation.create_rigid_static(transform, &geo, material.as_mut(), PxTransform::default(), ()) { self.scene.add_static_actor(actor) } else {
+            log::warn!("rigid_physics: walk_area on '{}' failed to create static actor", obj.id);
+            return;
         }
         self.materials.push(material);
         log::info!(
@@ -1016,26 +1009,23 @@ impl PhysicsWorld {
                     );
                     continue;
                 }
-                match cook_triangle_mesh(&mut self.foundation, &points, &tri_indices) {
-                    Some(owned) => {
-                        self.terrain_meshes.push(owned);
-                        let i = self.terrain_meshes.len() - 1;
-                        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-                        for p in &points {
-                            let p = Vec3::new(p.x(), p.y(), p.z());
-                            lo = lo.min(p);
-                            hi = hi.max(p);
-                        }
-                        cooked.insert(mesh_index, (i, lo, hi));
-                        (i, lo, hi)
+                if let Some(owned) = cook_triangle_mesh(&mut self.foundation, &points, &tri_indices) {
+                    self.terrain_meshes.push(owned);
+                    let i = self.terrain_meshes.len() - 1;
+                    let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+                    for p in &points {
+                        let p = Vec3::new(p.x(), p.y(), p.z());
+                        lo = lo.min(p);
+                        hi = hi.max(p);
                     }
-                    None => {
-                        log::warn!(
-                            "rigid_physics: terrain_collider on '{}' failed to cook mesh (index {mesh_index})",
-                            obj.id
-                        );
-                        continue;
-                    }
+                    cooked.insert(mesh_index, (i, lo, hi));
+                    (i, lo, hi)
+                } else {
+                    log::warn!(
+                        "rigid_physics: terrain_collider on '{}' failed to cook mesh (index {mesh_index})",
+                        obj.id
+                    );
+                    continue;
                 }
             };
 

@@ -115,7 +115,7 @@ fn lerp_opt_color(a: Option<Color3>, b: Option<Color3>, t: f32) -> Option<Color3
 }
 
 fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t)
+    (f32::from(a) + (f32::from(b) - f32::from(a)) * t)
         .round()
         .clamp(0.0, 255.0) as u8
 }

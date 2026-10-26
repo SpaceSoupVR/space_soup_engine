@@ -97,7 +97,7 @@ pub trait TerrainSource: Send + Sync {
     /// This source as the regular grid of heights it is, if it is one.
     ///
     /// For a consumer that can hold a grid far more cheaply than its
-    /// triangles: physics gives PhysX a height field, four bytes a sample,
+    /// triangles: physics gives `PhysX` a height field, four bytes a sample,
     /// instead of cooking `patch(bounds, 1)` into a triangle mesh
     /// (`PhysicsWorld::spawn_scene_terrain`). `None` for any other kind of
     /// source, which is then asked for triangles as before.
@@ -166,14 +166,14 @@ impl Heightfield {
         height_range: [f32; 2],
         origin: Vec3,
     ) -> Result<Self, String> {
-        if bytes.len() % 2 != 0 {
+        if !bytes.len().is_multiple_of(2) {
             return Err(format!(
                 "heightfield data is {} bytes, which is not a whole number of u16 samples",
                 bytes.len()
             ));
         }
         let samples = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         Self::new(samples, resolution, size, height_range, origin)
@@ -189,7 +189,7 @@ impl Heightfield {
     fn sample(&self, ix: u32, iz: u32) -> f32 {
         let ix = ix.min(self.resolution[0] - 1);
         let iz = iz.min(self.resolution[1] - 1);
-        let raw = self.samples[(iz * self.resolution[0] + ix) as usize] as f32 / u16::MAX as f32;
+        let raw = f32::from(self.samples[(iz * self.resolution[0] + ix) as usize]) / f32::from(u16::MAX);
         let [lo, hi] = self.height_range;
         self.origin.y + lo + raw * (hi - lo)
     }
@@ -226,7 +226,7 @@ impl TerrainSource for Heightfield {
             most = most.max(raw);
         }
         let [lo, hi] = self.height_range;
-        let at = |raw: u16| self.origin.y + lo + (raw as f32 / u16::MAX as f32) * (hi - lo);
+        let at = |raw: u16| self.origin.y + lo + (f32::from(raw) / f32::from(u16::MAX)) * (hi - lo);
         let ground = at(least).min(at(most));
         self.ground_patch.iter().flat_map(|p| p.positions.iter()).fold(ground, |low, p| low.min(p.y))
     }
@@ -309,27 +309,24 @@ impl TerrainSource for Heightfield {
             for tri in extra.triangles_in(region) {
                 for &i in tri {
                     let i = i as usize;
-                    let at = match mapped[i] {
-                        Some(at) => at,
-                        None => {
-                            let p = extra.positions[i];
-                            let on_grid = self.sample_index_at(p).and_then(|(ix, iz)| {
-                                let col = xs.binary_search(&ix).ok()?;
-                                let row = zs.binary_search(&iz).ok()?;
-                                Some(row as u32 * stride + col as u32)
-                            });
-                            let at = on_grid.unwrap_or_else(|| {
-                                patch.positions.push(p);
-                                (patch.positions.len() - 1) as u32
-                            });
-                            let n = extra.normals.get(i).copied().unwrap_or(Vec3::ZERO);
-                            if on_grid.is_none() && n != Vec3::ZERO {
-                                patch.normals.resize(patch.positions.len(), Vec3::ZERO);
-                                patch.normals[at as usize] = n;
-                            }
-                            mapped[i] = Some(at);
-                            at
+                    let at = if let Some(at) = mapped[i] { at } else {
+                        let p = extra.positions[i];
+                        let on_grid = self.sample_index_at(p).and_then(|(ix, iz)| {
+                            let col = xs.binary_search(&ix).ok()?;
+                            let row = zs.binary_search(&iz).ok()?;
+                            Some(row as u32 * stride + col as u32)
+                        });
+                        let at = on_grid.unwrap_or_else(|| {
+                            patch.positions.push(p);
+                            (patch.positions.len() - 1) as u32
+                        });
+                        let n = extra.normals.get(i).copied().unwrap_or(Vec3::ZERO);
+                        if on_grid.is_none() && n != Vec3::ZERO {
+                            patch.normals.resize(patch.positions.len(), Vec3::ZERO);
+                            patch.normals[at as usize] = n;
                         }
+                        mapped[i] = Some(at);
+                        at
                     };
                     patch.indices.push(at);
                 }
@@ -520,7 +517,7 @@ impl SplatMap {
         let [w, h] = self.resolution;
         let mut sheer = vec![0.0f32; (w * h) as usize];
         let patch = ground.patch(bounds, 1);
-        for tri in patch.indices.chunks_exact(3) {
+        for tri in patch.indices.as_chunks::<3>().0 {
             let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| patch.positions[i as usize]);
             let n = (b - a).cross(c - a).normalize_or_zero();
             let ny = n.y.abs();
@@ -556,11 +553,11 @@ impl SplatMap {
             let before = [texel[0], texel[1], texel[2], texel[3]];
             let mut moved = 0u32;
             for layer in SOIL {
-                let take = (texel[layer] as u32 * m as u32 + 127) / 255;
+                let take = (u32::from(texel[layer]) * u32::from(m) + 127) / 255;
                 texel[layer] -= take as u8;
                 moved += take;
             }
-            texel[ROCK] = (texel[ROCK] as u32 + moved).min(255) as u8;
+            texel[ROCK] = (u32::from(texel[ROCK]) + moved).min(255) as u8;
             if texel != before {
                 changed += 1;
             }
@@ -1294,7 +1291,7 @@ impl Heightfield {
             return false;
         }
         let (near, far) = (self.world_position(x0, z0), self.world_position(x1, z1));
-        self.is_hole_at((near.x + far.x) * 0.5, (near.z + far.z) * 0.5)
+        self.is_hole_at(f32::midpoint(near.x, far.x), f32::midpoint(near.z, far.z))
     }
 
     /// Whether cell (`ix`, `iz`) -- the quad whose lowest corner is that

@@ -68,7 +68,7 @@ pub fn cell_size_for(geometry: &CollisionTriangles) -> f32 {
     if lo.x > hi.x {
         return 0.1;
     }
-    let area = ((hi.x - lo.x + 2.0) * (hi.z - lo.z + 2.0)) as f64;
+    let area = f64::from((hi.x - lo.x + 2.0) * (hi.z - lo.z + 2.0));
     let fits = (area / (MAX_BAKE_COLUMNS * 0.9)).sqrt();
     ((fits * 1000.0).ceil() / 1000.0).max(0.1) as f32
 }
@@ -79,14 +79,14 @@ pub fn fingerprint(geometry: &CollisionTriangles) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |x: i64| {
         for b in x.to_le_bytes() {
-            h ^= b as u64;
+            h ^= u64::from(b);
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
     };
     for t in &geometry.triangles {
         for &i in t {
             for c in geometry.vertices[i as usize] {
-                eat((c as f64 * 1000.0).round() as i64);
+                eat((f64::from(c) * 1000.0).round() as i64);
             }
         }
     }

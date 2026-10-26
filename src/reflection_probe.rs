@@ -62,7 +62,7 @@ pub fn box_project(
     to_hit.normalize()
 }
 
-pub fn probe_for_point<'a, T>(point: Vec3, probes: &'a [(T, Vec3, Vec3)]) -> Option<&'a T> {
+pub fn probe_for_point<T>(point: Vec3, probes: &[(T, Vec3, Vec3)]) -> Option<&T> {
     probes
         .iter()
         .filter(|(_, min, max)| {
@@ -288,7 +288,7 @@ fn probe_faces_f16(img: &image::ImageBuffer<image::Rgba<u16>, Vec<u16>>, range: 
     let raw = img.as_raw();
     let mut out = Vec::with_capacity(raw.len() * 2);
     for (i, &v) in raw.iter().enumerate() {
-        let unit = v as f32 / u16::MAX as f32;
+        let unit = f32::from(v) / f32::from(u16::MAX);
 
         let linear = if i % 4 == 3 { unit } else { unit * unit * range };
         out.extend_from_slice(&f32_to_f16(linear).to_le_bytes());
@@ -409,10 +409,10 @@ pub fn decode_probe_depth(entry: &ProbeEntry, res: u32) -> Option<Vec<u16>> {
             out.extend_from_slice(&[0, 0, 0, h16(1.0)]);
             continue;
         }
-        let unit = |v: u16| v as f32 / 65535.0 * 2.0 - 1.0;
+        let unit = |v: u16| f32::from(v) / 65535.0 * 2.0 - 1.0;
         let n = [unit(r), unit(g), unit(b)];
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
-        let c = (a - 1) as f32 / 65534.0;
+        let c = f32::from(a - 1) / 65534.0;
         let h = -(c * c) * far;
         out.extend_from_slice(&[h16(n[0] / len), h16(n[1] / len), h16(n[2] / len), h16(h)]);
     }
@@ -463,11 +463,11 @@ pub fn load_scene_buildings(game_dir: &std::path::Path, scene_name: &str) -> Vec
                 object_id: id.to_string(),
                 volume: "building".to_string(),
                 path: dir.join(file),
-                resolution: e.get("resolution").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                range: e.get("range").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                resolution: e.get("resolution").and_then(serde_json::Value::as_u64).unwrap_or(0) as u32,
+                range: e.get("range").and_then(serde_json::Value::as_f64).unwrap_or(1.0) as f32,
                 min,
                 max,
-                centre: [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5],
+                centre: [f32::midpoint(min[0], max[0]), f32::midpoint(min[1], max[1]), f32::midpoint(min[2], max[2])],
                 cell: None,
                 cells: None,
                 depth: None,
@@ -504,7 +504,7 @@ pub fn load_scene_probe_index(game_dir: &std::path::Path, scene_name: &str) -> V
             );
             continue;
         }
-        let range = e.get("range").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+        let range = e.get("range").and_then(serde_json::Value::as_f64).unwrap_or(1.0) as f32;
         let vec3 = |key: &str| -> Option<[f32; 3]> {
             let a = e.get(key)?.as_array()?;
             if a.len() != 3 {
@@ -529,7 +529,7 @@ pub fn load_scene_probe_index(game_dir: &std::path::Path, scene_name: &str) -> V
                     "probe {id}: index carries no capture point; using the box centre, \
                      which is wrong for a subdivided volume -- re-bake this scene",
                 );
-                [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5]
+                [f32::midpoint(min[0], max[0]), f32::midpoint(min[1], max[1]), f32::midpoint(min[2], max[2])]
             }
         };
         let uvec3 = |key: &str| -> Option<[u32; 3]> {
@@ -545,14 +545,12 @@ pub fn load_scene_probe_index(game_dir: &std::path::Path, scene_name: &str) -> V
         };
         let volume = e
             .get("volume")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| id.split('#').next().unwrap_or(id).to_string());
+            .and_then(|v| v.as_str()).map_or_else(|| id.split('#').next().unwrap_or(id).to_string(), str::to_string);
         out.push(ProbeEntry {
             object_id: id.to_string(),
             volume,
             path: dir.join(file),
-            resolution: e.get("resolution").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            resolution: e.get("resolution").and_then(serde_json::Value::as_u64).unwrap_or(0) as u32,
             range,
             min,
             max,
@@ -564,7 +562,7 @@ pub fn load_scene_probe_index(game_dir: &std::path::Path, scene_name: &str) -> V
                 .get("depth")
                 .and_then(|v| v.as_str())
                 .filter(|_| e.get("depth_encoding").and_then(|v| v.as_str()) == Some(PROBE_DEPTH_ENCODING))
-                .zip(e.get("depth_far").and_then(|v| v.as_f64()))
+                .zip(e.get("depth_far").and_then(serde_json::Value::as_f64))
                 .map(|(f, far)| (dir.join(f), far as f32)),
             irradiance: e.get("irradiance").and_then(parse_probe_irradiance),
         });

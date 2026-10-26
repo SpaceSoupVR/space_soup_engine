@@ -62,7 +62,7 @@ impl RoomGraph {
     }
 
     pub fn neighbours(&self, room: usize) -> &[usize] {
-        self.neighbours.get(room).map(|v| v.as_slice()).unwrap_or(&[])
+        self.neighbours.get(room).map(std::vec::Vec::as_slice).unwrap_or(&[])
     }
 
     pub fn room_at(&self, p: Vec3) -> Option<usize> {

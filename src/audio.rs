@@ -117,7 +117,7 @@ impl SoundEngine {
         };
         let clip = clip
             .volume(linear_to_decibels(sound.volume))
-            .playback_rate(sound.pitch as f64);
+            .playback_rate(f64::from(sound.pitch));
         let clip = if sound.looping { clip.loop_region(..) } else { clip };
 
         let Some(manager) = self.manager.as_mut() else {
@@ -252,7 +252,7 @@ impl SoundEngine {
                 .set_volume(linear_to_decibels(sound.volume), Tween::default());
             active
                 .handle
-                .set_playback_rate(sound.pitch as f64, Tween::default());
+                .set_playback_rate(f64::from(sound.pitch), Tween::default());
         }
     }
 
@@ -290,7 +290,7 @@ impl SoundEngine {
         };
         let data = data
             .volume(linear_to_decibels(volume))
-            .playback_rate(pitch as f64);
+            .playback_rate(f64::from(pitch));
         if let Err(e) = manager.play(data) {
             log::warn!("SoundEngine: preview playback failed: {e}");
         }

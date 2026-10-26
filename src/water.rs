@@ -202,7 +202,7 @@ pub fn build_surface(
         ring.extend((1..nz).map(|iz| (iz * nx + nx - 1) as u32));
         ring.extend((0..nx - 1).rev().map(|ix| ((nz - 1) * nx + ix) as u32));
         ring.extend((1..nz - 1).rev().map(|iz| (iz * nx) as u32));
-        let (cx, cz) = ((x0 + x1) * 0.5, (z0 + z1) * 0.5);
+        let (cx, cz) = (f32::midpoint(x0, x1), f32::midpoint(z0, z1));
         let half = ((x1 - x0).min(z1 - z0) * 0.5).max(step);
         let far = 1.0 + def.skirt / half;
         let mut inner = ring.clone();

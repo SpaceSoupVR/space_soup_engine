@@ -876,7 +876,7 @@ fn per_trigger_condition_and_counter_gate_a_repeated_action() {
     let dt = 1.0 / 60.0;
     let player = PlayerId::new();
     let rig = PlayerRig::default();
-    let mut feed = |rt: &mut GameRuntime, blend: f32| {
+    let feed = |rt: &mut GameRuntime, blend: f32| {
         let mut i = InputFrame::default();
         let mut c = std::collections::HashMap::new();
         c.insert("feed".to_string(), blend);

@@ -99,8 +99,8 @@ impl PhysicsWorld {
             ),
         };
 
-        let anchor_ra = anchor_ptr as *mut physx_sys::PxRigidActor;
-        let object_ra = state.ptr as *mut physx_sys::PxRigidActor;
+        let anchor_ra = anchor_ptr.cast::<physx_sys::PxRigidActor>();
+        let object_ra = state.ptr.cast::<physx_sys::PxRigidActor>();
         let joint = Self::create_driven_joint(
             &mut self.foundation,
             anchor_ra,
@@ -163,29 +163,29 @@ impl PhysicsWorld {
 
             let linear_drive =
                 physx_sys::PxD6JointDrive_new_1(linear.stiffness, linear.damping, 1.0e6, false);
-            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::X, &linear_drive);
-            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::Y, &linear_drive);
-            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::Z, &linear_drive);
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::X, &raw const linear_drive);
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::Y, &raw const linear_drive);
+            physx_sys::PxD6Joint_setDrive_mut(joint, physx_sys::PxD6Drive::Z, &raw const linear_drive);
             if let Some(a) = angular {
                 let angular_drive =
                     physx_sys::PxD6JointDrive_new_1(a.stiffness, a.damping, 1.0e6, false);
                 physx_sys::PxD6Joint_setDrive_mut(
                     joint,
                     physx_sys::PxD6Drive::Slerp,
-                    &angular_drive,
+                    &raw const angular_drive,
                 );
             }
             let rest = to_raw_transform(PxTransform::default());
-            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &rest, true);
+            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &raw const rest, true);
 
             let zero = physx_sys::PxVec3 {
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,
             };
-            physx_sys::PxD6Joint_setDriveVelocity_mut(joint, &zero, &zero, false);
+            physx_sys::PxD6Joint_setDriveVelocity_mut(joint, &raw const zero, &raw const zero, false);
 
-            joint as *mut physx_sys::PxJoint
+            joint.cast::<physx_sys::PxJoint>()
         }
     }
 
@@ -223,15 +223,15 @@ impl PhysicsWorld {
         };
         let (pos, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
         let local = (rot.inverse() * (hand_pos - pos)).clamp(-state.half, state.half);
-        let body = state.ptr as *mut physx_sys::PxRigidBody;
+        let body = state.ptr.cast::<physx_sys::PxRigidBody>();
         let mass = unsafe { physx_sys::PxRigidBody_getMass(body) }.max(1e-3);
         let inertia = unsafe { physx_sys::PxRigidBody_getMassSpaceInertiaTensor(body) };
         let inertia = inertia.x.max(inertia.y).max(inertia.z).max(1e-7);
         let w = std::f32::consts::TAU * HOLD_HZ;
         let joint = Self::create_held_joint(
             &mut self.foundation,
-            anchor as *mut physx_sys::PxRigidActor,
-            state.ptr as *mut physx_sys::PxRigidActor,
+            anchor.cast::<physx_sys::PxRigidActor>(),
+            state.ptr.cast::<physx_sys::PxRigidActor>(),
             &to_raw_transform(to_px_transform(local, rot.inverse() * hand_rot)),
             (mass * w * w, 2.0 * mass * w, HAND_FORCE),
             Some((inertia * w * w, 2.0 * inertia * w, HAND_TORQUE)),
@@ -240,7 +240,7 @@ impl PhysicsWorld {
             log::warn!("rigid_physics: joint creation failed for a free grab of '{object_id}'");
             return false;
         }
-        unsafe { physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr as *mut physx_sys::PxRigidDynamic) };
+        unsafe { physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr.cast::<physx_sys::PxRigidDynamic>()) };
         self.grabs.insert(
             (player, object_id.to_string(), hand),
             GrabState { joint, point_name: format!("free_{}", hand.as_str()), local: Some(local) },
@@ -281,8 +281,8 @@ impl PhysicsWorld {
         let local = latch.hold_point(pose, geom.half.z, hand_pos);
         let joint = Self::create_held_joint(
             &mut self.foundation,
-            anchor as *mut physx_sys::PxRigidActor,
-            state.ptr as *mut physx_sys::PxRigidActor,
+            anchor.cast::<physx_sys::PxRigidActor>(),
+            state.ptr.cast::<physx_sys::PxRigidActor>(),
             &to_raw_transform(to_px_transform(local, Quat::IDENTITY)),
             (0.0, 0.0, 0.0),
             None,
@@ -290,7 +290,7 @@ impl PhysicsWorld {
         if joint.is_null() {
             return false;
         }
-        unsafe { physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr as *mut physx_sys::PxRigidDynamic) };
+        unsafe { physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr.cast::<physx_sys::PxRigidDynamic>()) };
         self.grabs.insert(
             (player, object_id.to_string(), hand),
             GrabState { joint, point_name: "handle".to_string(), local: Some(local) },
@@ -313,7 +313,7 @@ impl PhysicsWorld {
     ) -> *mut physx_sys::PxJoint {
         let anchor_frame = to_raw_transform(PxTransform::default());
         unsafe {
-            let joint = physx_sys::phys_PxD6JointCreate(foundation.as_mut_ptr(), anchor, &anchor_frame, object, object_frame);
+            let joint = physx_sys::phys_PxD6JointCreate(foundation.as_mut_ptr(), anchor, &raw const anchor_frame, object, object_frame);
             if joint.is_null() {
                 return std::ptr::null_mut();
             }
@@ -322,27 +322,27 @@ impl PhysicsWorld {
                 physx_sys::PxD6Joint_setMotion_mut(joint, axis, M::Free);
             }
             physx_sys::PxJoint_setConstraintFlag_mut(
-                joint as *mut physx_sys::PxJoint,
+                joint.cast::<physx_sys::PxJoint>(),
                 physx_sys::PxConstraintFlag::DriveLimitsAreForces,
                 true,
             );
             let drive = physx_sys::PxD6JointDrive_new_1(linear.0, linear.1, linear.2, false);
             for d in [D::X, D::Y, D::Z] {
-                physx_sys::PxD6Joint_setDrive_mut(joint, d, &drive);
+                physx_sys::PxD6Joint_setDrive_mut(joint, d, &raw const drive);
             }
             if let Some((stiffness, damping, most)) = angular {
                 let drive = physx_sys::PxD6JointDrive_new_1(stiffness, damping, most, false);
-                physx_sys::PxD6Joint_setDrive_mut(joint, D::Slerp, &drive);
+                physx_sys::PxD6Joint_setDrive_mut(joint, D::Slerp, &raw const drive);
             }
             let rest = to_raw_transform(PxTransform::default());
-            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &rest, true);
+            physx_sys::PxD6Joint_setDrivePosition_mut(joint, &raw const rest, true);
             let zero = physx_sys::PxVec3 { x: 0.0, y: 0.0, z: 0.0 };
-            physx_sys::PxD6Joint_setDriveVelocity_mut(joint, &zero, &zero, false);
-            joint as *mut physx_sys::PxJoint
+            physx_sys::PxD6Joint_setDriveVelocity_mut(joint, &raw const zero, &raw const zero, false);
+            joint.cast::<physx_sys::PxJoint>()
         }
     }
 
-    /// Have PhysX decide again which of a body's touching pairs collide. Two
+    /// Have `PhysX` decide again which of a body's touching pairs collide. Two
     /// bodies a joint ties do not collide -- but a pair ALREADY touching when
     /// the joint is made keeps its contact, and a hand always touches what it
     /// takes hold of: the anchor's sphere kept pushing a held pebble its own
@@ -351,7 +351,7 @@ impl PhysicsWorld {
     fn refilter(&mut self, object_id: &str) {
         if let Some(state) = self.dynamic.get(object_id) {
             unsafe {
-                physx_sys::PxScene_resetFiltering_mut(self.scene.as_mut_ptr(), state.ptr as *mut physx_sys::PxActor);
+                physx_sys::PxScene_resetFiltering_mut(self.scene.as_mut_ptr(), state.ptr.cast::<physx_sys::PxActor>());
             }
         }
     }
@@ -427,10 +427,10 @@ impl PhysicsWorld {
         };
         unsafe {
             let slack = physx_sys::PxD6JointDrive_new_1(0.0, 0.0, 0.0, false);
-            let joint = state.joint as *mut physx_sys::PxD6Joint;
+            let joint = state.joint.cast::<physx_sys::PxD6Joint>();
             use physx_sys::PxD6Drive as D;
             for d in [D::X, D::Y, D::Z, D::Slerp] {
-                physx_sys::PxD6Joint_setDrive_mut(joint, d, &slack);
+                physx_sys::PxD6Joint_setDrive_mut(joint, d, &raw const slack);
             }
         }
         self.parting.push(Parting { joint: state.joint, player, hand, id: object_id.to_string(), local, since: self.clock });

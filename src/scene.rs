@@ -388,17 +388,14 @@ impl Scene {
             .iter()
             .map(|o| {
                 let parent_uuid = o.parent.as_deref()?;
-                match index_of.get(parent_uuid) {
-                    Some(&i) => Some(i),
-                    None => {
-                        log::warn!(
-                            "scene '{}': object '{}' names a parent {parent_uuid} \
-                             that is not in this scene -- treating it as a root",
-                            self.name,
-                            o.id
-                        );
-                        None
-                    }
+                if let Some(&i) = index_of.get(parent_uuid) { Some(i) } else {
+                    log::warn!(
+                        "scene '{}': object '{}' names a parent {parent_uuid} \
+                         that is not in this scene -- treating it as a root",
+                        self.name,
+                        o.id
+                    );
+                    None
                 }
             })
             .collect();
@@ -569,7 +566,7 @@ impl BreakableDef {
 
     pub fn is_solid_at(&self, damage: f32) -> bool {
         self.stage_for(damage)
-            .map_or(true, |s| s.solid && !s.removed)
+            .is_none_or(|s| s.solid && !s.removed)
     }
 
     pub fn hidden_parts_at<'a>(&'a self, damage: f32, authored: &'a [String]) -> &'a [String] {

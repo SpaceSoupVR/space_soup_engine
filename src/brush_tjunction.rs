@@ -148,7 +148,7 @@ pub fn triangulate(poly: &BrushPolygon, repaired: bool) -> Triangulated {
                 continue;
             }
             let q = min_angle(pos[a], pos[b], pos[c]);
-            if best.map_or(true, |(_, bq)| q > bq) {
+            if best.is_none_or(|(_, bq)| q > bq) {
                 best = Some((k, q));
             }
         }

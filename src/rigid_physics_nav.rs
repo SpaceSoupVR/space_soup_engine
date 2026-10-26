@@ -1,4 +1,4 @@
-//! WHAT A NAVMESH IS BAKED FROM: every static collider in the scene, read back from PhysX as
+//! WHAT A NAVMESH IS BAKED FROM: every static collider in the scene, read back from `PhysX` as
 //! world-space triangles (`navigation`). What a player collides with is what a creature walks
 //! on, whatever made it -- a cuboid, a brush, a model's mesh collider, the terrain.
 //!
@@ -67,13 +67,13 @@ fn vec(v: &physx_sys::PxVec3) -> Vec3 {
     Vec3::new(v.x, v.y, v.z)
 }
 
-/// A mesh's scale (possibly about a rotated frame) as one matrix: PhysX's own `toMat33`.
+/// A mesh's scale (possibly about a rotated frame) as one matrix: `PhysX`'s own `toMat33`.
 fn mesh_scale(s: &physx_sys::PxMeshScale) -> Mat3 {
     let m = unsafe { physx_sys::PxMeshScale_toMat33(s) };
     Mat3::from_cols(vec(&m.column0), vec(&m.column1), vec(&m.column2))
 }
 
-/// PhysX's hole material on a height field triangle (`PxHeightFieldMaterial::eHOLE`).
+/// `PhysX`'s hole material on a height field triangle (`PxHeightFieldMaterial::eHOLE`).
 const HOLE: u8 = 127;
 
 impl PhysicsWorld {
@@ -117,20 +117,20 @@ impl PhysicsWorld {
         }
         match kind {
             G::Box => {
-                let g = &*(geometry as *const physx_sys::PxBoxGeometry);
+                let g = &*geometry.cast::<physx_sys::PxBoxGeometry>();
                 out.push_box(vec(&g.halfExtents), &world);
             }
             G::Sphere => {
-                let g = &*(geometry as *const physx_sys::PxSphereGeometry);
+                let g = &*geometry.cast::<physx_sys::PxSphereGeometry>();
                 out.push_box(Vec3::splat(g.radius), &world);
             }
             G::Capsule => {
-                let g = &*(geometry as *const physx_sys::PxCapsuleGeometry);
+                let g = &*geometry.cast::<physx_sys::PxCapsuleGeometry>();
                 out.push_box(Vec3::new(g.halfHeight + g.radius, g.radius, g.radius), &world);
             }
             G::Trianglemesh => {
-                let g = &*(geometry as *const physx_sys::PxTriangleMeshGeometry);
-                let mesh = g.triangleMesh as *const physx_sys::PxTriangleMesh;
+                let g = &*geometry.cast::<physx_sys::PxTriangleMeshGeometry>();
+                let mesh = g.triangleMesh.cast_const();
                 let scale = mesh_scale(&g.scale);
                 let mirrored = scale.determinant() < 0.0;
                 let nv = physx_sys::PxTriangleMesh_getNbVertices(mesh) as usize;
@@ -142,18 +142,18 @@ impl PhysicsWorld {
                 let raw = physx_sys::PxTriangleMesh_getTriangles(mesh);
                 for t in 0..nt {
                     let [a, b, c] = if small {
-                        let i = std::slice::from_raw_parts(raw as *const u16, nt * 3);
-                        [i[t * 3] as u32, i[t * 3 + 1] as u32, i[t * 3 + 2] as u32]
+                        let i = std::slice::from_raw_parts(raw.cast::<u16>(), nt * 3);
+                        [u32::from(i[t * 3]), u32::from(i[t * 3 + 1]), u32::from(i[t * 3 + 2])]
                     } else {
-                        let i = std::slice::from_raw_parts(raw as *const u32, nt * 3);
+                        let i = std::slice::from_raw_parts(raw.cast::<u32>(), nt * 3);
                         [i[t * 3], i[t * 3 + 1], i[t * 3 + 2]]
                     };
                     out.triangles.push(if mirrored { [base + a, base + c, base + b] } else { [base + a, base + b, base + c] });
                 }
             }
             G::Convexmesh => {
-                let g = &*(geometry as *const physx_sys::PxConvexMeshGeometry);
-                let mesh = g.convexMesh as *const physx_sys::PxConvexMesh;
+                let g = &*geometry.cast::<physx_sys::PxConvexMeshGeometry>();
+                let mesh = g.convexMesh.cast_const();
                 let scale = mesh_scale(&g.scale);
                 let nv = physx_sys::PxConvexMesh_getNbVertices(mesh) as usize;
                 let verts: Vec<Vec3> = std::slice::from_raw_parts(physx_sys::PxConvexMesh_getVertices(mesh), nv).iter().map(|v| world(scale * vec(v))).collect();
@@ -161,7 +161,7 @@ impl PhysicsWorld {
                 let middle = verts.iter().copied().sum::<Vec3>() / nv.max(1) as f32;
                 for k in 0..physx_sys::PxConvexMesh_getNbPolygons(mesh) {
                     let mut poly: physx_sys::PxHullPolygon = std::mem::zeroed();
-                    if !physx_sys::PxConvexMesh_getPolygonData(mesh, k, &mut poly) {
+                    if !physx_sys::PxConvexMesh_getPolygonData(mesh, k, &raw mut poly) {
                         continue;
                     }
                     let corners: Vec<Vec3> = (0..poly.mNbVerts as usize).map(|i| verts[*index.add(poly.mIndexBase as usize + i) as usize]).collect();
@@ -171,13 +171,13 @@ impl PhysicsWorld {
                 }
             }
             G::Heightfield => {
-                let g = &*(geometry as *const physx_sys::PxHeightFieldGeometry);
-                let field = g.heightField as *const physx_sys::PxHeightField;
+                let g = &*geometry.cast::<physx_sys::PxHeightFieldGeometry>();
+                let field = g.heightField.cast_const();
                 let (rows, cols) = (physx_sys::PxHeightField_getNbRows(field), physx_sys::PxHeightField_getNbColumns(field));
                 let at = |r: u32, c: u32| {
-                    let s = physx_sys::PxHeightField_getSample(field, r, c) as *const u8;
+                    let s = physx_sys::PxHeightField_getSample(field, r, c).cast::<u8>();
                     let height = i16::from_le_bytes([*s, *s.add(1)]);
-                    world(Vec3::new(r as f32 * g.rowScale, height as f32 * g.heightScale, c as f32 * g.columnScale))
+                    world(Vec3::new(r as f32 * g.rowScale, f32::from(height) * g.heightScale, c as f32 * g.columnScale))
                 };
                 let base = out.vertices.len() as u32;
                 for r in 0..rows {
@@ -189,7 +189,7 @@ impl PhysicsWorld {
                 for r in 0..rows.saturating_sub(1) {
                     for c in 0..cols.saturating_sub(1) {
                         let s = physx_sys::PxHeightField_getSample(field, r, c);
-                        let bytes = s as *const u8;
+                        let bytes = s.cast::<u8>();
                         let (m0, m1) = (*bytes.add(2) & 0x7f, *bytes.add(3) & 0x7f);
                         let (v0, v1, v2, v3) = (id(r, c), id(r, c + 1), id(r + 1, c), id(r + 1, c + 1));
                         let (t0, t1) = if physx_sys::PxHeightFieldSample_tessFlag(s) != 0 { ([v0, v1, v3], [v0, v3, v2]) } else { ([v0, v1, v2], [v1, v3, v2]) };

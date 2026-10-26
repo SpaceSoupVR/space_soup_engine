@@ -1,6 +1,5 @@
 use glam::Vec3;
 use space_soup_protocol::PlayerId;
-use std::collections::HashMap;
 
 use crate::events::InputFrame;
 use crate::rig::PlayerRig;
@@ -114,7 +113,7 @@ fn a_zone_opens_a_door_without_being_solid_itself() {
 #[test]
 fn the_zone_itself_never_blocks_anything() {
     let _guard = PHYSX_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut rt = runtime("passable");
+    let rt = runtime("passable");
 
     assert!(
         rt.rigid_physics

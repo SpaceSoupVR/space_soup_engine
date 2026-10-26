@@ -122,18 +122,16 @@ impl GameRuntime {
                                     continue;
                                 }
                             }
-                            let (offset_pos, offset_rot) = matched_point
-                                .map(|g| {
-                                    let local_rot = Quat::from_array(g.local_rot);
-                                    let inv_rot = local_rot.inverse();
-                                    (inv_rot * -Vec3::from(g.local_pos), inv_rot)
-                                })
-                                .unwrap_or_else(|| {
+                            let (offset_pos, offset_rot) = matched_point.map_or_else(|| {
                                     let inv_rot = joint_tf.rotation.inverse();
                                     (
                                         inv_rot * (obj.cuboid.position - joint_tf.position),
                                         inv_rot * obj.cuboid.rotation,
                                     )
+                                }, |g| {
+                                    let local_rot = Quat::from_array(g.local_rot);
+                                    let inv_rot = local_rot.inverse();
+                                    (inv_rot * -Vec3::from(g.local_pos), inv_rot)
                                 });
                             let attachment = match matched_point {
                                 Some(g) => Attachment::with_grip_point(
@@ -154,15 +152,12 @@ impl GameRuntime {
                     },
                     None => warn!("grab_at_joint: unknown joint name '{joint}'"),
                 },
-                EngineCommand::Detach { id, hand, player } => match hand {
-                    Some(h) => {
-                        self.attachments.detach_joint(&id, player, JointId::HandGrip(h));
-                        self.rigid_physics.release(player, &id, h);
-                    }
-                    None => {
-                        self.attachments.detach(&id);
-                        self.rigid_physics.release_all(&id);
-                    }
+                EngineCommand::Detach { id, hand, player } => if let Some(h) = hand {
+                    self.attachments.detach_joint(&id, player, JointId::HandGrip(h));
+                    self.rigid_physics.release(player, &id, h);
+                } else {
+                    self.attachments.detach(&id);
+                    self.rigid_physics.release_all(&id);
                 },
                 EngineCommand::GrabAtPoint {
                     id,
@@ -190,7 +185,7 @@ impl GameRuntime {
                 }
                 EngineCommand::SetLightIntensity { id, intensity } => {
                     if let Some(o) = self.scene.find_object_mut(&id) {
-                        for light in o.lights.iter_mut() {
+                        for light in &mut o.lights {
                             light.intensity = intensity;
                         }
                     }
