@@ -263,7 +263,7 @@ fn det(a: DVec2, b: DVec2) -> f64 {
 
 /// RVO2's `linearProgram1`: the best velocity on line `i` within the speed circle and lines
 /// before `i`.
-fn lp1(lines: &[Line], i: usize, radius: f64, opt: DVec2, direction_opt: bool, result: &mut DVec2) -> bool {
+fn lp1(lines: &[Line], i: usize, radius: f64, opt: DVec2, direction_opt: bool, outcome: &mut DVec2) -> bool {
     let dot = lines[i].point.dot(lines[i].direction);
     let disc = dot * dot + radius * radius - lines[i].point.length_squared();
     if disc < 0.0 {
@@ -290,7 +290,7 @@ fn lp1(lines: &[Line], i: usize, radius: f64, opt: DVec2, direction_opt: bool, r
             return false;
         }
     }
-    *result = if direction_opt {
+    *outcome = if direction_opt {
         if opt.dot(lines[i].direction) > 0.0 { lines[i].point + tr * lines[i].direction } else { lines[i].point + tl * lines[i].direction }
     } else {
         let t = lines[i].direction.dot(opt - lines[i].point);
@@ -301,8 +301,8 @@ fn lp1(lines: &[Line], i: usize, radius: f64, opt: DVec2, direction_opt: bool, r
 
 /// RVO2's `linearProgram2`: the velocity nearest `opt` inside the speed circle and every line;
 /// returns how many lines it satisfied before failing.
-fn lp2(lines: &[Line], radius: f64, opt: DVec2, direction_opt: bool, result: &mut DVec2) -> usize {
-    *result = if direction_opt {
+fn lp2(lines: &[Line], radius: f64, opt: DVec2, direction_opt: bool, outcome: &mut DVec2) -> usize {
+    *outcome = if direction_opt {
         opt * radius
     } else if opt.length_squared() > radius * radius {
         opt.normalize() * radius
@@ -310,10 +310,10 @@ fn lp2(lines: &[Line], radius: f64, opt: DVec2, direction_opt: bool, result: &mu
         opt
     };
     for i in 0..lines.len() {
-        if det(lines[i].direction, lines[i].point - *result) > 0.0 {
-            let temp = *result;
-            if !lp1(lines, i, radius, opt, direction_opt, result) {
-                *result = temp;
+        if det(lines[i].direction, lines[i].point - *outcome) > 0.0 {
+            let temperature = *outcome;
+            if !lp1(lines, i, radius, opt, direction_opt, outcome) {
+                *outcome = temperature;
                 return i;
             }
         }
@@ -323,10 +323,10 @@ fn lp2(lines: &[Line], radius: f64, opt: DVec2, direction_opt: bool, result: &mu
 
 /// RVO2's `linearProgram3`: when no velocity satisfies every line, the one that violates the
 /// agent lines least, keeping the first `num_obstacle` (wall) lines hard.
-fn lp3(lines: &[Line], num_obstacle: usize, begin: usize, radius: f64, result: &mut DVec2) {
+fn lp3(lines: &[Line], num_obstacle: usize, begin: usize, radius: f64, outcome: &mut DVec2) {
     let mut distance = 0.0;
     for i in begin..lines.len() {
-        if det(lines[i].direction, lines[i].point - *result) > distance {
+        if det(lines[i].direction, lines[i].point - *outcome) > distance {
             let mut proj: Vec<Line> = lines[..num_obstacle].to_vec();
             for j in num_obstacle..i {
                 let d = det(lines[i].direction, lines[j].direction);
@@ -340,12 +340,12 @@ fn lp3(lines: &[Line], num_obstacle: usize, begin: usize, radius: f64, result: &
                 };
                 proj.push(Line { point, direction: (lines[j].direction - lines[i].direction).normalize_or_zero() });
             }
-            let temp = *result;
+            let temperature = *outcome;
             let opt = DVec2::new(-lines[i].direction.y, lines[i].direction.x);
-            if lp2(&proj, radius, opt, true, result) < proj.len() {
-                *result = temp;
+            if lp2(&proj, radius, opt, true, outcome) < proj.len() {
+                *outcome = temperature;
             }
-            distance = det(lines[i].direction, lines[i].point - *result);
+            distance = det(lines[i].direction, lines[i].point - *outcome);
         }
     }
 }
@@ -1020,12 +1020,12 @@ impl Crowd {
                 let combined = a.params.radius_mm + p.radius_mm + self.settings.gap_mm * 0.25;
                 lines.push(orca_line(pos, vel, flat(p.pos), flat(p.vel), combined, self.settings.time_horizon_s, dt, 1.0));
             }
-            let mut result = DVec2::ZERO;
-            let fail = lp2(&lines, a.params.max_speed_mm_s, preferred[i], false, &mut result);
+            let mut outcome = DVec2::ZERO;
+            let fail = lp2(&lines, a.params.max_speed_mm_s, preferred[i], false, &mut outcome);
             if fail < lines.len() {
-                lp3(&lines, walls, fail, a.params.max_speed_mm_s, &mut result);
+                lp3(&lines, walls, fail, a.params.max_speed_mm_s, &mut outcome);
             }
-            desired[i] = result;
+            desired[i] = outcome;
         }
         for ((a, d), t) in self.agents.iter_mut().zip(desired).zip(targets) {
             a.desired = up(d, 0.0);

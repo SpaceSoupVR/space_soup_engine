@@ -392,25 +392,25 @@ pub fn load_scene_portals(game_dir: &std::path::Path, scene_name: &str) -> Vec<L
 pub fn decode_probe(entry: &ProbeEntry) -> Option<(u32, Vec<u8>)> {
     let img = image::open(&entry.path).ok()?;
     let rgba = img.to_rgba16();
-    let res = rgba.width();
+    let outcome = rgba.width();
 
-    if res == 0 || rgba.height() != res * CUBE_FACES as u32 {
+    if outcome == 0 || rgba.height() != outcome * CUBE_FACES as u32 {
         return None;
     }
-    Some((res, probe_faces_f16(&rgba, entry.range)))
+    Some((outcome, probe_faces_f16(&rgba, entry.range)))
 }
 
 pub const PROBE_DEPTH_ENCODING: &str = "plane16";
 
 #[must_use]
-pub fn decode_probe_depth(entry: &ProbeEntry, res: u32) -> Option<Vec<u16>> {
+pub fn decode_probe_depth(entry: &ProbeEntry, outcome: u32) -> Option<Vec<u16>> {
     let (path, far) = entry.depth.as_ref()?;
     let img = image::open(path).ok()?.to_rgba16();
-    if img.width() != res || img.height() != res * CUBE_FACES as u32 {
+    if img.width() != outcome || img.height() != outcome * CUBE_FACES as u32 {
         return None;
     }
     let h16 = crate::lightmaps::f32_to_f16_bits;
-    let mut out = Vec::with_capacity((res * res * CUBE_FACES as u32 * 4) as usize);
+    let mut out = Vec::with_capacity((outcome * outcome * CUBE_FACES as u32 * 4) as usize);
     for p in img.pixels() {
         let [r, g, b, a] = p.0;
         if a == 0 {
@@ -432,11 +432,11 @@ pub fn load_scene_probes(game_dir: &std::path::Path, scene_name: &str) -> Vec<Lo
     load_scene_probe_index(game_dir, scene_name)
         .into_iter()
         .filter_map(|e| {
-            let (res, faces) = decode_probe(&e)?;
+            let (outcome, faces) = decode_probe(&e)?;
             Some(LoadedProbe {
                 object_id: e.object_id,
                 volume: e.volume,
-                resolution: res,
+                resolution: outcome,
                 min: e.min,
                 max: e.max,
                 centre: e.centre,
@@ -671,8 +671,8 @@ mod probe_decode_tests {
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].volume, "hall");
         assert_eq!(index[0].resolution, 1);
-        let (res, faces) = decode_probe(&index[0]).expect("the entry's file did not decode");
-        assert_eq!((res, faces.len()), (1, 6 * 8));
+        let (outcome, faces) = decode_probe(&index[0]).expect("the entry's file did not decode");
+        assert_eq!((outcome, faces.len()), (1, 6 * 8));
         assert_eq!(load_scene_probes(&dir, "s")[0].volume, "hall");
 
         let portals = load_scene_portals(&dir, "s");

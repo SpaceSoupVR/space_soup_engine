@@ -195,46 +195,46 @@ pub(crate) fn ground_patch_batches(extra: &crate::terrain::GroundPatch, region: 
 }
 
 impl PhysicsWorld {
-    pub(crate) fn spawn_actor(&mut self, obj: &GameObject, def: &RigidBodyDef) {
+    pub(crate) fn spawn_actor(&mut self, game_object: &GameObject, def: &RigidBodyDef) {
 
         if !def.enabled {
             return;
         }
 
-        if self.statics.contains_key(&obj.id) || self.dynamic.contains_key(&obj.id) {
-            log::debug!("rigid_physics: '{}' already has a collider", obj.id);
+        if self.statics.contains_key(&game_object.id) || self.dynamic.contains_key(&game_object.id) {
+            log::debug!("rigid_physics: '{}' already has a collider", game_object.id);
             return;
         }
-        let transform = to_px_transform(obj.cuboid.position, obj.cuboid.rotation);
+        let transform = to_px_transform(game_object.cuboid.position, game_object.cuboid.rotation);
         let mass = def
             .mass
-            .unwrap_or_else(|| calculated_mass(obj.cuboid.half_size, DEFAULT_DENSITY));
+            .unwrap_or_else(|| calculated_mass(game_object.cuboid.half_size, DEFAULT_DENSITY));
         let collider_half = def
             .collider_half_size
-            .map_or(obj.cuboid.half_size, Vec3::from);
+            .map_or(game_object.cuboid.half_size, Vec3::from);
         let shape_transform = to_px_transform(Vec3::from(def.collider_offset), Quat::IDENTITY);
 
         let Some(mut material) =
             self.foundation
                 .create_material(def.friction, def.friction, def.restitution, ())
         else {
-            log::warn!("rigid_physics: failed to create material for '{}'", obj.id);
+            log::warn!("rigid_physics: failed to create material for '{}'", game_object.id);
             return;
         };
 
         let hull = match (def.shape, def.mode) {
-            (ColliderShape::Hull, BodyMode::Kinematic | BodyMode::Dynamic) => self.hull_for(obj),
+            (ColliderShape::Hull, BodyMode::Kinematic | BodyMode::Dynamic) => self.hull_for(game_object),
             _ => None,
         };
         let reach = match (def.shape, hull) {
             (ColliderShape::Hull, Some((_, centre, half, _))) => {
-                crate::water::world_half_extents(half, obj.cuboid.rotation).y - (obj.cuboid.rotation * centre).y
+                crate::water::world_half_extents(half, game_object.cuboid.rotation).y - (game_object.cuboid.rotation * centre).y
             }
-            (ColliderShape::Box | ColliderShape::Hull, _) => crate::water::world_half_extents(collider_half, obj.cuboid.rotation).y,
+            (ColliderShape::Box | ColliderShape::Hull, _) => crate::water::world_half_extents(collider_half, game_object.cuboid.rotation).y,
             (ColliderShape::Sphere { radius }, _) => radius.abs(),
             (ColliderShape::Capsule { radius, half_height }, _) => radius.abs() + half_height.abs(),
         };
-        let centre = obj.cuboid.position + obj.cuboid.rotation * Vec3::from(def.collider_offset);
+        let centre = game_object.cuboid.position + game_object.cuboid.rotation * Vec3::from(def.collider_offset);
         self.note_floor(centre.y - reach);
 
         match def.mode {
@@ -280,11 +280,11 @@ impl PhysicsWorld {
 
                         let ptr: *mut PxRigidStatic = &raw mut *actor;
                         self.scene.add_static_actor(actor);
-                        self.statics.insert(obj.id.clone(), ptr);
+                        self.statics.insert(game_object.id.clone(), ptr);
                     }
                     None => log::warn!(
                         "rigid_physics: failed to create static actor for '{}'",
-                        obj.id
+                        game_object.id
                     ),
                 }
             }
@@ -368,7 +368,7 @@ impl PhysicsWorld {
                             actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
                             let ptr: *mut PxRigidDynamic = &raw mut *actor;
                             self.scene.add_dynamic_actor(actor);
-                            self.kinematic.insert(obj.id.clone(), ptr);
+                            self.kinematic.insert(game_object.id.clone(), ptr);
                         } else {
                             actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
 
@@ -383,15 +383,15 @@ impl PhysicsWorld {
                             actor.set_linear_velocity(&vel, true);
                             let ptr: *mut PxRigidDynamic = &raw mut *actor;
                             self.scene.add_dynamic_actor(actor);
-                            let mut body = DynamicActor::new(ptr, obj.cuboid.position, obj.cuboid.rotation, bounds_half, volume);
+                            let mut body = DynamicActor::new(ptr, game_object.cuboid.position, game_object.cuboid.rotation, bounds_half, volume);
                             body.respawn_interval = def.respawn_interval;
                             body.respawn_sunk = def.respawn_sunk;
-                            self.dynamic.insert(obj.id.clone(), body);
+                            self.dynamic.insert(game_object.id.clone(), body);
                         }
                     }
                     None => log::warn!(
                         "rigid_physics: failed to create dynamic actor for '{}'",
-                        obj.id
+                        game_object.id
                     ),
                 }
             }
@@ -407,8 +407,8 @@ impl PhysicsWorld {
     /// (scaled, then turned by the mesh's own offset) and `PhysX` keeps at most
     /// 32 of the hull's corners. `None`, with a warning, where there is no
     /// model or it will not cook.
-    fn hull_for(&mut self, obj: &GameObject) -> Option<(usize, Vec3, Vec3, f32)> {
-        let mesh = obj.mesh.as_ref()?;
+    fn hull_for(&mut self, game_object: &GameObject) -> Option<(usize, Vec3, Vec3, f32)> {
+        let mesh = game_object.mesh.as_ref()?;
         let key = format!("{}|{:?}|{:?}", mesh.path, mesh.scale.to_array(), mesh.rotation_offset.to_array());
         if let Some(found) = self.hulls.get(&key) {
             return Some(*found);
@@ -419,7 +419,7 @@ impl PhysicsWorld {
             Some((g.document, buffers))
         });
         let Some((doc, buffers)) = read else {
-            log::warn!("rigid_physics: hull of '{}': '{}' could not be read; it is its box", obj.id, path.display());
+            log::warn!("rigid_physics: hull of '{}': '{}' could not be read; it is its box", game_object.id, path.display());
             return None;
         };
         let mut points: Vec<PxVec3> = Vec::new();
@@ -432,7 +432,7 @@ impl PhysicsWorld {
             }));
         }
         if points.len() < 4 {
-            log::warn!("rigid_physics: hull of '{}': '{}' has no geometry; it is its box", obj.id, path.display());
+            log::warn!("rigid_physics: hull of '{}': '{}' has no geometry; it is its box", game_object.id, path.display());
             return None;
         }
         let params = PxCookingParams::new(&self.foundation)?;
@@ -443,7 +443,7 @@ impl PhysicsWorld {
         desc.obj.flags = physx_sys::PxConvexFlags::ComputeConvex;
         desc.obj.vertexLimit = 32;
         let ConvexMeshCookingResult::Success(hull) = create_convex_mesh(&mut self.foundation, &params, &desc) else {
-            log::warn!("rigid_physics: hull of '{}' did not cook; it is its box", obj.id);
+            log::warn!("rigid_physics: hull of '{}' did not cook; it is its box", game_object.id);
             return None;
         };
         let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
@@ -464,16 +464,16 @@ impl PhysicsWorld {
         Some(found)
     }
 
-    pub(crate) fn spawn_slider_joint(&mut self, obj: &GameObject, def: &SliderJointDef) {
-        let Some(child) = self.dynamic.get(&obj.id) else {
+    pub(crate) fn spawn_slider_joint(&mut self, game_object: &GameObject, def: &SliderJointDef) {
+        let Some(child) = self.dynamic.get(&game_object.id) else {
             log::warn!(
                 "rigid_physics: slider_joint on '{}' failed — not a tracked Dynamic body",
-                obj.id
+                game_object.id
             );
             return;
         };
         let Some(parent) = self.dynamic.get(&def.parent) else {
-            log::warn!("rigid_physics: slider_joint on '{}' failed — parent '{}' is not a tracked Dynamic body", obj.id, def.parent);
+            log::warn!("rigid_physics: slider_joint on '{}' failed — parent '{}' is not a tracked Dynamic body", game_object.id, def.parent);
             return;
         };
 
@@ -481,7 +481,7 @@ impl PhysicsWorld {
         if axis.length_squared() < 1e-6 {
             log::warn!(
                 "rigid_physics: slider_joint on '{}' has a degenerate axis {:?}",
-                obj.id,
+                game_object.id,
                 def.axis
             );
             return;
@@ -505,7 +505,7 @@ impl PhysicsWorld {
         if joint.is_null() {
             log::warn!(
                 "rigid_physics: D6 slider joint creation failed for '{}'",
-                obj.id
+                game_object.id
             );
             return;
         }
@@ -827,26 +827,26 @@ impl PhysicsWorld {
         );
     }
 
-    pub(crate) fn spawn_brush_collider(&mut self, obj: &GameObject, def: &BrushDef) {
-        if self.statics.contains_key(&obj.id)
-            || self.dynamic.contains_key(&obj.id)
-            || self.kinematic.contains_key(&obj.id)
+    pub(crate) fn spawn_brush_collider(&mut self, game_object: &GameObject, def: &BrushDef) {
+        if self.statics.contains_key(&game_object.id)
+            || self.dynamic.contains_key(&game_object.id)
+            || self.kinematic.contains_key(&game_object.id)
         {
-            log::debug!("rigid_physics: brush '{}' already has an authored collider", obj.id);
+            log::debug!("rigid_physics: brush '{}' already has an authored collider", game_object.id);
             return;
         }
         let (positions, indices) = brush_collision_triangles(def);
         if indices.is_empty() {
-            log::warn!("rigid_physics: brush '{}' has no surface to collide with", obj.id);
+            log::warn!("rigid_physics: brush '{}' has no surface to collide with", game_object.id);
             return;
         }
         let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
-            log::warn!("rigid_physics: failed to create material for brush '{}'", obj.id);
+            log::warn!("rigid_physics: failed to create material for brush '{}'", game_object.id);
             return;
         };
         let points: Vec<PxVec3> = positions.iter().map(|p| PxVec3::new(p[0], p[1], p[2])).collect();
         let Some(owned) = cook_triangle_mesh(&mut self.foundation, &points, &indices) else {
-            log::warn!("rigid_physics: failed to cook brush '{}'", obj.id);
+            log::warn!("rigid_physics: failed to cook brush '{}'", game_object.id);
             return;
         };
         self.note_floor(positions.iter().fold(f32::INFINITY, |low, p| low.min(p[1])));
@@ -871,45 +871,45 @@ impl PhysicsWorld {
         ) {
             let ptr: *mut PxRigidStatic = &raw mut *actor;
             self.scene.add_static_actor(actor);
-            self.statics.insert(obj.id.clone(), ptr);
+            self.statics.insert(game_object.id.clone(), ptr);
         } else {
-            log::warn!("rigid_physics: failed to create static actor for brush '{}'", obj.id);
+            log::warn!("rigid_physics: failed to create static actor for brush '{}'", game_object.id);
             return;
         }
         self.materials.push(material);
         log::info!(
             "rigid_physics: brush '{}' is solid -- {} triangles",
-            obj.id,
+            game_object.id,
             indices.len() / 3
         );
     }
 
     pub(crate) fn spawn_walk_area(
         &mut self,
-        obj: &GameObject,
+        game_object: &GameObject,
         def: &crate::walk_area::WalkAreaDef,
         terrain: Option<&dyn crate::terrain::TerrainSource>,
     ) {
 
         const MAX_CELLS: usize = 128 * 128;
-        let c = &obj.cuboid;
+        let c = &game_object.cuboid;
         let mesh = crate::walk_area::build(c.position, c.half_size.x, c.half_size.z, def, MAX_CELLS, &|x, z| {
             terrain.and_then(|t| t.height_at(x, z))
         });
         let (points, indices) = crate::walk_area::physics_triangles(&mesh);
         if points.is_empty() || indices.is_empty() {
-            log::warn!("rigid_physics: walk_area on '{}' produced no geometry", obj.id);
+            log::warn!("rigid_physics: walk_area on '{}' produced no geometry", game_object.id);
             return;
         }
 
         let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
-            log::warn!("rigid_physics: failed to create walk_area material for '{}'", obj.id);
+            log::warn!("rigid_physics: failed to create walk_area material for '{}'", game_object.id);
             return;
         };
 
         let px_points: Vec<PxVec3> = points.iter().map(|p| PxVec3::new(p.x, p.y, p.z)).collect();
         let Some(owned) = cook_triangle_mesh(&mut self.foundation, &px_points, &indices) else {
-            log::warn!("rigid_physics: walk_area on '{}' failed to cook", obj.id);
+            log::warn!("rigid_physics: walk_area on '{}' failed to cook", game_object.id);
             return;
         };
         self.terrain_meshes.push(owned);
@@ -925,24 +925,24 @@ impl PhysicsWorld {
         );
         let transform = to_px_transform(Vec3::ZERO, Quat::IDENTITY);
         if let Some(actor) = self.foundation.create_rigid_static(transform, &geo, material.as_mut(), PxTransform::default(), ()) { self.scene.add_static_actor(actor) } else {
-            log::warn!("rigid_physics: walk_area on '{}' failed to create static actor", obj.id);
+            log::warn!("rigid_physics: walk_area on '{}' failed to create static actor", game_object.id);
             return;
         }
         self.materials.push(material);
         log::info!(
             "rigid_physics: walk_area '{}' cooked -- {} vertices, {} triangles ({} fence quads)",
-            obj.id,
+            game_object.id,
             points.len(),
             indices.len() / 3,
             mesh.fence.len()
         );
     }
 
-    pub(crate) fn spawn_terrain_colliders(&mut self, obj: &GameObject, def: &TerrainColliderDef, game_dir: &Path) {
-        let Some(mesh_ref) = &obj.mesh else {
+    pub(crate) fn spawn_terrain_colliders(&mut self, game_object: &GameObject, def: &TerrainColliderDef, game_dir: &Path) {
+        let Some(mesh_ref) = &game_object.mesh else {
             log::warn!(
                 "rigid_physics: terrain_collider on '{}' has no mesh to source geometry from",
-                obj.id
+                game_object.id
             );
             return;
         };
@@ -953,7 +953,7 @@ impl PhysicsWorld {
             Err(e) => {
                 log::warn!(
                     "rigid_physics: terrain_collider on '{}' failed to load '{}': {e}",
-                    obj.id,
+                    game_object.id,
                     full_path.display()
                 );
                 return;
@@ -964,14 +964,14 @@ impl PhysicsWorld {
         if instances.is_empty() {
             log::warn!(
                 "rigid_physics: terrain_collider on '{}' matched no nodes (node_filter {:?})",
-                obj.id,
+                game_object.id,
                 def.node_filter
             );
             return;
         }
         log::info!(
             "rigid_physics: terrain_collider on '{}' matched {} node instance(s) (node_filter {:?})",
-            obj.id,
+            game_object.id,
             instances.len(),
             def.node_filter
         );
@@ -979,15 +979,15 @@ impl PhysicsWorld {
         let Some(mut material) = self.foundation.create_material(0.8, 0.8, 0.0, ()) else {
             log::warn!(
                 "rigid_physics: failed to create terrain material for '{}'",
-                obj.id
+                game_object.id
             );
             return;
         };
 
         let object_mat = Mat4::from_scale_rotation_translation(
             mesh_ref.scale,
-            obj.cuboid.rotation * mesh_ref.rotation_offset,
-            obj.cuboid.position,
+            game_object.cuboid.rotation * mesh_ref.rotation_offset,
+            game_object.cuboid.position,
         );
 
         let mut cooked: HashMap<usize, (usize, Vec3, Vec3)> = HashMap::new();
@@ -1002,7 +1002,7 @@ impl PhysicsWorld {
                 if points.is_empty() || tri_indices.is_empty() {
                     log::warn!(
                         "rigid_physics: terrain_collider on '{}' found an empty mesh (index {mesh_index})",
-                        obj.id
+                        game_object.id
                     );
                     continue;
                 }
@@ -1020,7 +1020,7 @@ impl PhysicsWorld {
                 } else {
                     log::warn!(
                         "rigid_physics: terrain_collider on '{}' failed to cook mesh (index {mesh_index})",
-                        obj.id
+                        game_object.id
                     );
                     continue;
                 }
@@ -1062,13 +1062,13 @@ impl PhysicsWorld {
                 }
                 None => log::warn!(
                     "rigid_physics: terrain_collider on '{}' failed to create static actor",
-                    obj.id
+                    game_object.id
                 ),
             }
         }
         log::info!(
             "rigid_physics: terrain_collider on '{}' spawned {spawned} static collider(s) from {} unique cooked mesh(es)",
-            obj.id,
+            game_object.id,
             cooked.len()
         );
 

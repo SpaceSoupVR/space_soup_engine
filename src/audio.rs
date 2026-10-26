@@ -95,13 +95,13 @@ impl SoundEngine {
     }
 
     fn load_clip(&mut self, game_dir: &Path, clip: &str) -> Option<StaticSoundData> {
-        if let Some(data) = self.clips.get(clip) {
-            return Some(data.clone());
+        if let Some(payload) = self.clips.get(clip) {
+            return Some(payload.clone());
         }
         match StaticSoundData::from_file(game_dir.join(clip)) {
-            Ok(data) => {
-                self.clips.insert(clip.to_string(), data.clone());
-                Some(data)
+            Ok(payload) => {
+                self.clips.insert(clip.to_string(), payload.clone());
+                Some(payload)
             }
             Err(e) => {
                 log::warn!("SoundEngine: failed to load clip '{clip}': {e}");
@@ -110,8 +110,8 @@ impl SoundEngine {
         }
     }
 
-    fn start(&mut self, game_dir: &Path, voice_id: &str, obj: &GameObject) {
-        let Some(sound) = obj.sound.clone() else { return };
+    fn start(&mut self, game_dir: &Path, voice_id: &str, game_object: &GameObject) {
+        let Some(sound) = game_object.sound.clone() else { return };
 
         let Some(clip) = self.load_clip(game_dir, &sound.clip) else {
             return;
@@ -134,14 +134,14 @@ impl SoundEngine {
 
         let mut track = match manager.add_spatial_sub_track(
             listener.id(),
-            to_mint_vec3(obj.cuboid.position),
+            to_mint_vec3(game_object.cuboid.position),
             track_builder,
         ) {
             Ok(t) => t,
             Err(e) => {
                 log::warn!(
                     "SoundEngine: could not allocate spatial track for '{}': {e}",
-                    obj.id
+                    game_object.id
                 );
                 return;
             }
@@ -149,7 +149,7 @@ impl SoundEngine {
         let handle = match track.play(clip) {
             Ok(h) => h,
             Err(e) => {
-                log::warn!("SoundEngine: could not play '{}': {e}", obj.id);
+                log::warn!("SoundEngine: could not play '{}': {e}", game_object.id);
                 return;
             }
         };
@@ -188,38 +188,38 @@ impl SoundEngine {
             }
         }
 
-        for obj in objects {
-            let Some(sound) = &obj.sound else { continue };
-            let requested = requested_play.contains(&obj.id);
+        for game_object in objects {
+            let Some(sound) = &game_object.sound else { continue };
+            let requested = requested_play.contains(&game_object.id);
 
             if requested && !sound.looping {
 
-                let voice_id = format!("{}#voice{}", obj.id, self.next_voice_id);
+                let voice_id = format!("{}#voice{}", game_object.id, self.next_voice_id);
                 self.next_voice_id += 1;
                 self.active.insert(voice_id.clone());
-                self.voice_owner.insert(voice_id.clone(), obj.id.clone());
-                self.start(game_dir, &voice_id, obj);
+                self.voice_owner.insert(voice_id.clone(), game_object.id.clone());
+                self.start(game_dir, &voice_id, game_object);
                 continue;
             }
 
-            let autoplay_now = sound.autoplay && !self.autostarted.contains(&obj.id);
+            let autoplay_now = sound.autoplay && !self.autostarted.contains(&game_object.id);
             if requested || autoplay_now {
                 if sound.autoplay {
-                    self.autostarted.insert(obj.id.clone());
+                    self.autostarted.insert(game_object.id.clone());
                 }
-                self.active.insert(obj.id.clone());
-                self.voice_owner.insert(obj.id.clone(), obj.id.clone());
-                self.playing.remove(&obj.id);
-                self.start(game_dir, &obj.id, obj);
+                self.active.insert(game_object.id.clone());
+                self.voice_owner.insert(game_object.id.clone(), game_object.id.clone());
+                self.playing.remove(&game_object.id);
+                self.start(game_dir, &game_object.id, game_object);
             }
         }
 
         let voice_owner = self.voice_owner.clone();
         for (voice_id, owner_id) in &voice_owner {
-            let Some(obj) = objects.iter().find(|o| &o.id == owner_id) else {
+            let Some(game_object) = objects.iter().find(|o| &o.id == owner_id) else {
                 continue;
             };
-            let Some(sound) = &obj.sound else { continue };
+            let Some(sound) = &game_object.sound else { continue };
             let Some(active) = self.playing.get_mut(voice_id) else {
                 continue;
             };
@@ -235,16 +235,16 @@ impl SoundEngine {
                 continue;
             };
 
-            let forward = obj.cuboid.rotation * Vec3::NEG_Z;
+            let forward = game_object.cuboid.rotation * Vec3::NEG_Z;
             let cone = if sound.directional {
-                cone_attenuation(forward, listener_pos - obj.cuboid.position, sound.cone_angle_deg)
+                cone_attenuation(forward, listener_pos - game_object.cuboid.position, sound.cone_angle_deg)
             } else {
                 1.0
             };
 
             active
                 .track
-                .set_position(to_mint_vec3(obj.cuboid.position), Tween::default());
+                .set_position(to_mint_vec3(game_object.cuboid.position), Tween::default());
             active
                 .track
                 .set_volume(linear_to_decibels(cone), Tween::default());
@@ -266,12 +266,12 @@ impl SoundEngine {
             .iter()
             .filter_map(|voice_id| {
                 let owner_id = self.voice_owner.get(voice_id)?;
-                let obj = objects.iter().find(|o| &o.id == owner_id)?;
-                let sound = obj.sound.as_ref()?;
+                let game_object = objects.iter().find(|o| &o.id == owner_id)?;
+                let sound = game_object.sound.as_ref()?;
                 Some((
                     voice_id.clone(),
                     sound.clip.clone(),
-                    obj.cuboid.position,
+                    game_object.cuboid.position,
                     sound.volume,
                     sound.pitch,
                     sound.looping,
@@ -283,16 +283,16 @@ impl SoundEngine {
     }
 
     pub fn preview(&mut self, game_dir: &Path, clip: &str, volume: f32, pitch: f32) {
-        let Some(data) = self.load_clip(game_dir, clip) else {
+        let Some(payload) = self.load_clip(game_dir, clip) else {
             return;
         };
         let Some(manager) = self.manager.as_mut() else {
             return;
         };
-        let data = data
+        let payload = payload
             .volume(linear_to_decibels(volume))
             .playback_rate(f64::from(pitch));
-        if let Err(e) = manager.play(data) {
+        if let Err(e) = manager.play(payload) {
             log::warn!("SoundEngine: preview playback failed: {e}");
         }
     }

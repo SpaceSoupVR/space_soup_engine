@@ -850,8 +850,8 @@ fn gltf_image_decode(
             image::load_from_memory(&std::fs::read(file).ok()?).ok()
         }
         gltf::image::Source::View { view, .. } => {
-            let data = &buffers.get(view.buffer().index())?.0;
-            image::load_from_memory(data.get(view.offset()..view.offset() + view.length())?).ok()
+            let payload = &buffers.get(view.buffer().index())?.0;
+            image::load_from_memory(payload.get(view.offset()..view.offset() + view.length())?).ok()
         }
     }
 }

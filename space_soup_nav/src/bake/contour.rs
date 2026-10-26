@@ -499,17 +499,17 @@ pub fn build_contours(chf: &CompactHeightfield, max_error: f32, max_edge_len: i3
                     flags[i] = 0;
                     continue;
                 }
-                let mut res = 0u8;
+                let mut outcome = 0u8;
                 for dir in 0..4 {
                     let mut r = 0u16;
                     if s.con[dir] != NOT_CONNECTED {
                         r = chf.spans[chf.neighbour(x, z, dir, s.con[dir])].reg;
                     }
                     if r == s.reg {
-                        res |= 1 << dir;
+                        outcome |= 1 << dir;
                     }
                 }
-                flags[i] = res ^ 0xf;
+                flags[i] = outcome ^ 0xf;
             }
         }
     }

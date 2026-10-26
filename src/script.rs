@@ -213,9 +213,9 @@ impl ScriptHost {
         };
 
         let mut scope = Scope::new();
-        let result: Result<Dynamic, _> = self.engine.call_fn(&mut scope, ast, fn_name, args);
+        let outcome: Result<Dynamic, _> = self.engine.call_fn(&mut scope, ast, fn_name, args);
 
-        match result {
+        match outcome {
             Ok(_) => Ok(()),
             Err(e) => {
                 if e.to_string().contains("Function not found") {

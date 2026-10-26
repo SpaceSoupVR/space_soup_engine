@@ -591,8 +591,8 @@ pub fn surface_height(v: &[IVec3], p: IVec3) -> i64 {
         let wb = ccw_from_above(a, p, c);
         let wc = ccw_from_above(a, b, p);
         if wb >= 0 && wc >= 0 && wb + wc <= det {
-            let num = a.y as i64 * det + (b.y - a.y) as i64 * wb + (c.y - a.y) as i64 * wc;
-            return num / det;
+            let count = a.y as i64 * det + (b.y - a.y) as i64 * wb + (c.y - a.y) as i64 * wc;
+            return count / det;
         }
     }
     v.iter().map(|q| q.y as i64).sum::<i64>() / v.len() as i64

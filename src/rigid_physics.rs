@@ -569,37 +569,37 @@ impl PhysicsWorld {
         self.level_floor = f32::INFINITY;
         self.kill_y = KILL_Y_HIGHEST;
 
-        for obj in &scene.objects {
-            let Some(def) = &obj.rigid_body else { continue };
-            self.spawn_actor(obj, def);
+        for game_object in &scene.objects {
+            let Some(def) = &game_object.rigid_body else { continue };
+            self.spawn_actor(game_object, def);
         }
 
-        for obj in &scene.objects {
-            let Some(def) = &obj.brush else { continue };
-            if obj.is_solid_brush() {
-                self.spawn_brush_collider(obj, def);
+        for game_object in &scene.objects {
+            let Some(def) = &game_object.brush else { continue };
+            if game_object.is_solid_brush() {
+                self.spawn_brush_collider(game_object, def);
             }
         }
 
-        for obj in &scene.objects {
-            let Some(def) = &obj.slider_joint else {
+        for game_object in &scene.objects {
+            let Some(def) = &game_object.slider_joint else {
                 continue;
             };
-            self.spawn_slider_joint(obj, def);
+            self.spawn_slider_joint(game_object, def);
         }
 
-        for obj in &scene.objects {
-            let Some(def) = &obj.door else {
+        for game_object in &scene.objects {
+            let Some(def) = &game_object.door else {
                 continue;
             };
-            self.spawn_door(obj, def);
+            self.spawn_door(game_object, def);
         }
 
-        for obj in &scene.objects {
-            let Some(def) = &obj.terrain_collider else {
+        for game_object in &scene.objects {
+            let Some(def) = &game_object.terrain_collider else {
                 continue;
             };
-            self.spawn_terrain_colliders(obj, def, game_dir);
+            self.spawn_terrain_colliders(game_object, def, game_dir);
         }
 
         let terrain = scene.terrain.as_ref().and_then(|def| match crate::terrain::load(def, game_dir) {
@@ -619,9 +619,9 @@ impl PhysicsWorld {
             None => self.spawn_scatter_trunks(scene, &crate::scatter::FlatGround(0.0)),
         }
 
-        for obj in &scene.objects {
-            let Some(def) = &obj.walk_area else { continue };
-            self.spawn_walk_area(obj, def, terrain.as_deref());
+        for game_object in &scene.objects {
+            let Some(def) = &game_object.walk_area else { continue };
+            self.spawn_walk_area(game_object, def, terrain.as_deref());
         }
 
         self.water = scene

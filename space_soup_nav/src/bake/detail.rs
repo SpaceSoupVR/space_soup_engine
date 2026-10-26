@@ -209,9 +209,9 @@ fn get_height(fx: f32, fy: f32, fz: f32, ics: f32, ch: f32, radius: i32, hp: &He
                 next_ring_iters += 8;
             }
             if x == z || (x < 0 && x == -z) || (x > 0 && x == 1 - z) {
-                let tmp = dx;
+                let scratch = dx;
                 dx = -dz;
-                dz = tmp;
+                dz = scratch;
             }
             x += dx;
             z += dz;
@@ -860,7 +860,7 @@ pub fn build_poly_mesh_detail(mesh: &PolyMesh, chf: &CompactHeightfield, sample_
 
     let mut edges = Vec::new();
     let mut tris = Vec::new();
-    let mut arr = Vec::new();
+    let mut entries = Vec::new();
     let mut samples = Vec::new();
     let mut verts: Vec<V> = Vec::new();
     for i in 0..mesh.npolys() {
@@ -875,7 +875,7 @@ pub fn build_poly_mesh_detail(mesh: &PolyMesh, chf: &CompactHeightfield, sample_
         let b = bounds[i];
         let mut hp = HeightPatch { data: Vec::new(), xmin: b[0], ymin: b[2], width: b[1] - b[0], height: b[3] - b[2] };
         hp.data = vec![UNSET_HEIGHT; (hp.width.max(0) * hp.height.max(0)) as usize];
-        get_height_data(chf, pv, &mesh.verts, bs, &mut hp, &mut arr, mesh.regs[i]);
+        get_height_data(chf, pv, &mesh.verts, bs, &mut hp, &mut entries, mesh.regs[i]);
         build_poly_detail(&poly, sample_dist, sample_max_error, height_search_radius, chf, &hp, &mut verts, &mut tris, &mut edges, &mut samples);
         let yoff = orig[1] + chf.ch;
         for v in verts.iter_mut() {

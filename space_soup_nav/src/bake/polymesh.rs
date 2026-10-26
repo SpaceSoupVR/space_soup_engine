@@ -302,17 +302,17 @@ fn merge_poly_verts(polys: &mut [u16], a: usize, b: usize, ea: usize, eb: usize,
     let pb: Vec<u16> = polys[b * nvp..b * nvp + nvp].to_vec();
     let na = count_poly_verts(&pa);
     let nb = count_poly_verts(&pb);
-    let mut tmp = vec![MESH_NULL_IDX; nvp];
+    let mut scratch = vec![MESH_NULL_IDX; nvp];
     let mut n = 0;
     for i in 0..na - 1 {
-        tmp[n] = pa[(ea + 1 + i) % na];
+        scratch[n] = pa[(ea + 1 + i) % na];
         n += 1;
     }
     for i in 0..nb - 1 {
-        tmp[n] = pb[(eb + 1 + i) % nb];
+        scratch[n] = pb[(eb + 1 + i) % nb];
         n += 1;
     }
-    polys[a * nvp..a * nvp + nvp].copy_from_slice(&tmp);
+    polys[a * nvp..a * nvp + nvp].copy_from_slice(&scratch);
 }
 
 /// The greedy merge loop shared by the build and by vertex removal. `polys` holds `npolys`
@@ -412,8 +412,8 @@ fn can_remove_vertex(mesh: &PolyMesh, rem: u16) -> bool {
     edges.iter().filter(|e| e[2] < 2).count() <= 2
 }
 
-fn push_front(v: i32, arr: &mut Vec<i32>) {
-    arr.insert(0, v);
+fn push_front(v: i32, entries: &mut Vec<i32>) {
+    entries.insert(0, v);
 }
 
 fn remove_vertex(mesh: &mut PolyMesh, rem: u16, max_tris: usize) {

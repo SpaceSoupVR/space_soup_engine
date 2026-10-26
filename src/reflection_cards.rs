@@ -296,12 +296,12 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
             };
             let range = e.get("range").and_then(serde_json::Value::as_f64).unwrap_or(1.0) as f32;
             let img = image::open(dir.join(e.get("file")?.as_str()?)).ok()?.to_rgba16();
-            let res = img.width();
-            if res == 0 || img.height() != blocks * res * CARD_FACES as u32 {
+            let outcome = img.width();
+            if outcome == 0 || img.height() != blocks * outcome * CARD_FACES as u32 {
                 eprintln!("cards of {id}: {}x{} is not {blocks} blocks of six square cards", img.width(), img.height());
                 return None;
             }
-            let block = (res * res) as usize * CARD_FACES;
+            let block = (outcome * outcome) as usize * CARD_FACES;
             let pixels: Vec<[u16; 4]> = img.pixels().map(|p| p.0).collect();
             let texels = pixels[..block].iter().map(|&p| decode_texel(p, range)).collect();
             let normals = pixels[block..2 * block].iter().map(|&p| decode_normal(p)).collect();
@@ -317,7 +317,7 @@ pub fn load_scene_cards(game_dir: &std::path::Path, scene_name: &str) -> Vec<Loa
                 }
                 table
             });
-            Some(LoadedCards { object_id: id.to_string(), resolution: res, texels, normals, albedo, glare })
+            Some(LoadedCards { object_id: id.to_string(), resolution: outcome, texels, normals, albedo, glare })
         })
         .collect()
 }

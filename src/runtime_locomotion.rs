@@ -11,10 +11,10 @@ impl GameRuntime {
     }
 
     pub(crate) fn find_spawn_point(&self) -> Option<(Vec3, f32)> {
-        let obj = self.scene.objects.iter().find(|o| o.spawn_point.is_some())?;
+        let game_object = self.scene.objects.iter().find(|o| o.spawn_point.is_some())?;
         Some((
-            obj.cuboid.position,
-            Self::yaw_from_forward(obj.cuboid.rotation * Vec3::NEG_Z),
+            game_object.cuboid.position,
+            Self::yaw_from_forward(game_object.cuboid.rotation * Vec3::NEG_Z),
         ))
     }
 

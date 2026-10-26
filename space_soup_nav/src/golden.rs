@@ -214,15 +214,15 @@ pub fn test_data_dir() -> PathBuf {
     }
 }
 
-pub fn load_configs(data: &Path) -> Result<GoldenConfigs, String> {
-    let path = data.join("golden_configs.json");
+pub fn load_configs(payload: &Path) -> Result<GoldenConfigs, String> {
+    let path = payload.join("golden_configs.json");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Every golden file, sorted by name.
-pub fn load_all(data: &Path) -> Result<Vec<(String, Golden)>, String> {
-    let dir = data.join("golden");
+pub fn load_all(payload: &Path) -> Result<Vec<(String, Golden)>, String> {
+    let dir = payload.join("golden");
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(|e| e.ok())

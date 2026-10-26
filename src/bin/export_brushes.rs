@@ -19,7 +19,7 @@ fn main() {
     }
 
     let scene_path = PathBuf::from(&args[0]);
-    let obj_path = PathBuf::from(&args[1]);
+    let game_object_path = PathBuf::from(&args[1]);
 
     let mut opts = ObjExportOptions {
         keep_internal: args.iter().any(|a| a == "--keep-internal"),
@@ -31,10 +31,10 @@ fn main() {
         }
     }
 
-    let stem = obj_path
+    let stem = game_object_path
         .file_stem().map_or_else(|| "brushes".to_string(), |s| s.to_string_lossy().to_string());
     opts.material_library = format!("{stem}.mtl");
-    let mtl_path = obj_path.with_extension("mtl");
+    let mtl_path = game_object_path.with_extension("mtl");
 
     let scene = match Scene::load(&scene_path) {
         Ok(scene) => scene,
@@ -54,8 +54,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    if let Err(e) = write(&obj_path, &export.obj).and_then(|()| write(&mtl_path, &export.mtl)) {
-        eprintln!("could not write {}: {e}", obj_path.display());
+    if let Err(e) = write(&game_object_path, &export.obj).and_then(|()| write(&mtl_path, &export.mtl)) {
+        eprintln!("could not write {}: {e}", game_object_path.display());
         std::process::exit(1);
     }
 
@@ -64,7 +64,7 @@ fn main() {
         "{{\"obj\":{:?},\"mtl\":{:?},\"objects\":{},\"faces\":{},\"quads\":{},\
          \"ngons\":{},\"triangles\":{},\"vertices\":{},\"internalDropped\":{},\
          \"materials\":{:?}}}",
-        obj_path.display().to_string(),
+        game_object_path.display().to_string(),
         mtl_path.display().to_string(),
         s.objects,
         s.faces,

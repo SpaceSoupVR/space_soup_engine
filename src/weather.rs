@@ -185,16 +185,16 @@ impl WeatherState {
         self.falling = falling;
         let a = def.accumulation_rate.max(0.0);
         let d = def.dry_rate.max(0.0);
-        let temp = def.temperature();
+        let temperature = def.temperature();
         let rain_mm_s = match def.kind {
             PrecipitationKind::Rain => RAIN_MM_PER_HOUR * falling / 3600.0,
             PrecipitationKind::Snow => 0.0,
         };
         let snow_m_s = match def.kind {
-            PrecipitationKind::Snow if temp <= 1.0 => SNOW_M_PER_HOUR * falling / 3600.0,
+            PrecipitationKind::Snow if temperature <= 1.0 => SNOW_M_PER_HOUR * falling / 3600.0,
             _ => 0.0,
         };
-        let melt_m_s = d * MELT_M_PER_HOUR_PER_DEGREE * temp.max(0.0) / 3600.0;
+        let melt_m_s = d * MELT_M_PER_HOUR_PER_DEGREE * temperature.max(0.0) / 3600.0;
         let evap_mm_s = d * EVAPORATION_MM_PER_HOUR / 3600.0;
 
         if rain_mm_s > 0.0 {

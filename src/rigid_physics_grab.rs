@@ -306,14 +306,14 @@ impl PhysicsWorld {
     fn create_held_joint(
         foundation: &mut PxFoundation,
         anchor: *mut physx_sys::PxRigidActor,
-        object: *mut physx_sys::PxRigidActor,
+        scene_object: *mut physx_sys::PxRigidActor,
         object_frame: &physx_sys::PxTransform,
         linear: (f32, f32, f32),
         angular: Option<(f32, f32, f32)>,
     ) -> *mut physx_sys::PxJoint {
         let anchor_frame = to_raw_transform(PxTransform::default());
         unsafe {
-            let joint = physx_sys::phys_PxD6JointCreate(foundation.as_mut_ptr(), anchor, &raw const anchor_frame, object, object_frame);
+            let joint = physx_sys::phys_PxD6JointCreate(foundation.as_mut_ptr(), anchor, &raw const anchor_frame, scene_object, object_frame);
             if joint.is_null() {
                 return std::ptr::null_mut();
             }

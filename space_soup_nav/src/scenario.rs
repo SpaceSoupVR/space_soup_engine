@@ -115,8 +115,8 @@ impl Scenario {
     }
 }
 
-pub fn load_all(data: &std::path::Path) -> Result<Vec<Scenario>, String> {
-    let dir = data.join("scenarios");
+pub fn load_all(payload: &std::path::Path) -> Result<Vec<Scenario>, String> {
+    let dir = payload.join("scenarios");
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(|e| e.ok())

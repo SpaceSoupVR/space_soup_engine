@@ -263,9 +263,9 @@ impl DoorGeom {
     }
 
     #[must_use]
-    pub fn of(obj: &crate::scene::GameObject) -> Option<Self> {
-        let def = obj.door.as_ref()?;
-        Some(Self::new(obj.cuboid.position, obj.cuboid.rotation, obj.cuboid.half_size, def))
+    pub fn of(game_object: &crate::scene::GameObject) -> Option<Self> {
+        let def = game_object.door.as_ref()?;
+        Some(Self::new(game_object.cuboid.position, game_object.cuboid.rotation, game_object.cuboid.half_size, def))
     }
 
     #[must_use]

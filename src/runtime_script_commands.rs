@@ -76,7 +76,7 @@ impl GameRuntime {
                         self.rigs.get(&player).and_then(|r| r.get(joint_id)),
                         self.scene.find_object(&id),
                     ) {
-                        (Some(joint_tf), Some(obj)) if obj.door.is_some() => {
+                        (Some(joint_tf), Some(game_object)) if game_object.door.is_some() => {
                             let held = match joint_id {
                                 JointId::HandGrip(hand) => self.rigid_physics.grab_door(player, &id, hand, joint_tf.position),
                                 _ => false,
@@ -85,17 +85,17 @@ impl GameRuntime {
                                 log::debug!("grab_at_joint: '{id}' is a door and the hand is not at a handle; it is pushed, not held");
                             }
                         }
-                        (Some(joint_tf), Some(obj))
+                        (Some(joint_tf), Some(game_object))
                             if matches!(joint_id, JointId::HandGrip(_))
-                                && point.as_deref().and_then(|p| obj.grip_point(p)).is_none()
+                                && point.as_deref().and_then(|p| game_object.grip_point(p)).is_none()
                                 && self.rigid_physics.is_dynamic(&id) =>
                         {
                             if let JointId::HandGrip(hand) = joint_id {
                                 self.rigid_physics.grab_free(player, &id, hand, joint_tf.position, joint_tf.rotation);
                             }
                         }
-                        (Some(joint_tf), Some(obj)) => {
-                            let matched_point = point.as_deref().and_then(|p| obj.grip_point(p));
+                        (Some(joint_tf), Some(game_object)) => {
+                            let matched_point = point.as_deref().and_then(|p| game_object.grip_point(p));
 
                             if let (Some(named), None) = (point.as_deref(), matched_point) {
                                 warn!(
@@ -125,8 +125,8 @@ impl GameRuntime {
                             let (offset_pos, offset_rot) = matched_point.map_or_else(|| {
                                     let inv_rot = joint_tf.rotation.inverse();
                                     (
-                                        inv_rot * (obj.cuboid.position - joint_tf.position),
-                                        inv_rot * obj.cuboid.rotation,
+                                        inv_rot * (game_object.cuboid.position - joint_tf.position),
+                                        inv_rot * game_object.cuboid.rotation,
                                     )
                                 }, |g| {
                                     let local_rot = Quat::from_array(g.local_rot);
@@ -165,11 +165,11 @@ impl GameRuntime {
                     hand,
                     player,
                 } => {
-                    let Some(obj) = self.scene.find_object(&id) else {
+                    let Some(game_object) = self.scene.find_object(&id) else {
                         warn!("grab_at_point: unknown object '{id}'");
                         continue;
                     };
-                    match obj.grip_point(&point).cloned() {
+                    match game_object.grip_point(&point).cloned() {
                         Some(point_def) => self.rigid_physics.grab(player, &id, hand, &point_def),
                         None => warn!("grab_at_point: '{id}' has no grip point named '{point}'"),
                     }
@@ -204,31 +204,31 @@ impl GameRuntime {
                         .insert(clip, blend.clamp(0.0, 1.0));
                 }
                 EngineCommand::SetPartVisible { id, part, visible } => {
-                    let Some(obj) = self.scene.find_object_mut(&id) else {
+                    let Some(game_object) = self.scene.find_object_mut(&id) else {
                         warn!("set_part_visible: unknown object '{id}'");
                         continue;
                     };
 
                     if visible {
-                        obj.hidden_parts.retain(|p| p != &part);
-                    } else if !obj.hidden_parts.iter().any(|p| p == &part) {
-                        obj.hidden_parts.push(part);
+                        game_object.hidden_parts.retain(|p| p != &part);
+                    } else if !game_object.hidden_parts.iter().any(|p| p == &part) {
+                        game_object.hidden_parts.push(part);
                     }
                 }
                 EngineCommand::SetObjectVisible { id, visible } => {
-                    let Some(obj) = self.scene.find_object_mut(&id) else {
+                    let Some(game_object) = self.scene.find_object_mut(&id) else {
                         warn!("set_visible: unknown object '{id}'");
                         continue;
                     };
 
-                    obj.hidden = !visible;
+                    game_object.hidden = !visible;
                 }
                 EngineCommand::SetObjectSolid { id, solid } => {
-                    let Some(obj) = self.scene.find_object_mut(&id) else {
+                    let Some(game_object) = self.scene.find_object_mut(&id) else {
                         warn!("set_solid: unknown object '{id}'");
                         continue;
                     };
-                    let Some(rb) = obj.rigid_body.as_mut() else {
+                    let Some(rb) = game_object.rigid_body.as_mut() else {
 
                         warn!("set_solid: '{id}' has no rigid_body to enable or disable");
                         continue;
@@ -238,11 +238,11 @@ impl GameRuntime {
                     }
                     rb.enabled = solid;
 
-                    let obj = obj.clone();
-                    let def = obj.rigid_body.clone().expect("checked above");
+                    let game_object = game_object.clone();
+                    let def = game_object.rigid_body.clone().expect("checked above");
                     if solid {
 
-                        self.rigid_physics.spawn_actor(&obj, &def);
+                        self.rigid_physics.spawn_actor(&game_object, &def);
                     } else {
 
                         self.rigid_physics.despawn_static(&id);
@@ -258,14 +258,14 @@ impl GameRuntime {
                         warn!("spawn_object: unknown template '{template_id}'");
                         continue;
                     };
-                    let mut new_obj = template.clone();
-                    new_obj.id = new_id;
-                    new_obj.cuboid.position = Vec3::new(x, y, z);
-                    new_obj.hidden = false;
-                    if let Some(def) = new_obj.rigid_body.clone() {
-                        self.rigid_physics.spawn_actor(&new_obj, &def);
+                    let mut new_game_object = template.clone();
+                    new_game_object.id = new_id;
+                    new_game_object.cuboid.position = Vec3::new(x, y, z);
+                    new_game_object.hidden = false;
+                    if let Some(def) = new_game_object.rigid_body.clone() {
+                        self.rigid_physics.spawn_actor(&new_game_object, &def);
                     }
-                    self.scene.objects.push(new_obj);
+                    self.scene.objects.push(new_game_object);
                 }
                 EngineCommand::ApplyImpulse { id, x, y, z } => {
                     self.rigid_physics.apply_impulse(&id, Vec3::new(x, y, z));
@@ -290,24 +290,24 @@ impl GameRuntime {
                     if self.socket_attachments.remove(&child_id).is_none() {
                         continue;
                     }
-                    if let Some(obj) = self.scene.find_object(&child_id) {
-                        if let Some(def) = obj.rigid_body.clone() {
-                            self.rigid_physics.spawn_actor(obj, &def);
+                    if let Some(game_object) = self.scene.find_object(&child_id) {
+                        if let Some(def) = game_object.rigid_body.clone() {
+                            self.rigid_physics.spawn_actor(game_object, &def);
                         }
                     }
                 }
                 EngineCommand::SpawnParticleBurst { id, count } => {
-                    let Some(obj) = self.scene.find_object(&id) else {
+                    let Some(game_object) = self.scene.find_object(&id) else {
                         warn!("spawn_particle_burst: unknown object '{id}'");
                         continue;
                     };
-                    let template = obj.particle_emitter.clone().unwrap_or_default();
+                    let template = game_object.particle_emitter.clone().unwrap_or_default();
                     let burst_id = format!("{id}#burst{}", self.next_particle_burst_id);
                     self.next_particle_burst_id += 1;
                     self.particle_bursts.push(ParticleBurst {
                         id: burst_id,
-                        position: obj.cuboid.position,
-                        direction: obj.cuboid.rotation * Vec3::NEG_Z,
+                        position: game_object.cuboid.position,
+                        direction: game_object.cuboid.rotation * Vec3::NEG_Z,
                         color: template.color,
                         count: count.max(0) as u32,
                         speed: template.speed,
