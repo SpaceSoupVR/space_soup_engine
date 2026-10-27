@@ -393,11 +393,16 @@ impl OpticController {
         let exit_pupil = def.derived_exit_pupil_mm(magnification);
         let eye_relief = def.eye_relief_mm;
 
+        // A reflex window keeps no eye relief: judge each eye where it stands.
+        let relief_for = |eye: Vec3, p: &OpticalPathPose| match def.class.has_unlimited_eye_relief() {
+            true => (eye - p.ocular).dot(-p.axis()) * 1000.0,
+            false => eye_relief,
+        };
         let sample_eye = |eye: Vec3| -> Vec<PathEyeView> {
             paths
                 .iter()
                 .map(|p| PathEyeView {
-                    eye_box: sample_eye_box(eye, p, exit_pupil, eye_relief),
+                    eye_box: sample_eye_box(eye, p, exit_pupil, relief_for(eye, p)),
                     screen_fraction: ocular_screen_fraction(eye, p, eye_fov_y_rad),
                 })
                 .collect()

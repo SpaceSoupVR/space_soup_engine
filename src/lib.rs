@@ -10,6 +10,7 @@ pub mod logic;
 pub mod netrules;
 pub mod manifest;
 pub mod optic;
+pub mod optic_rig;
 pub mod physics;
 pub mod rig;
 pub mod rig_profile;

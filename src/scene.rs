@@ -38,7 +38,7 @@ pub enum OpticClass {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MagnificationDef {
     Fixed(f32),
     Stepped { steps: Vec<f32> },
@@ -73,7 +73,7 @@ impl MagnificationDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[derive(Default)]
 pub enum MagnificationControlDef {
     #[default]
@@ -105,7 +105,7 @@ pub enum LensClipShape {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpticalPathDef {
     #[serde(default)]
     pub objective_node: String,
@@ -156,7 +156,7 @@ impl OpticalPathDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OpticalPathsDef {
     Monocular { path: OpticalPathDef },
     Binocular {
@@ -192,7 +192,7 @@ pub enum ReticleFocalPlane {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReticleDef {
     #[serde(default)]
     pub style: String,
@@ -222,7 +222,7 @@ impl Default for ReticleDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ZeroDef {
     #[serde(default = "default_zero_distance_m")]
     pub distance_m: f32,
@@ -264,9 +264,20 @@ impl OpticQualityTier {
             Self::Ultra => 1024,
         }
     }
+
+    /// How many scope texels to render per screen pixel the ocular covers.
+    /// Above 1 the mip chain averages the extra back down: supersampling,
+    /// cheap here because one render serves both eyes.
+    pub fn supersample(&self) -> f32 {
+        match self {
+            Self::Low => 1.0,
+            Self::Balanced => 1.5,
+            Self::Ultra => 2.0,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpticDef {
     #[serde(default)]
     pub class: OpticClass,
