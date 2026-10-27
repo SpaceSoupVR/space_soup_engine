@@ -35,6 +35,12 @@ pub struct SoundSourceDef {
     pub directional: bool,
     #[serde(default = "default_cone_angle")]
     pub cone_angle_deg: f32,
+    /// The saved sound this object plays (`audio/<name>.json` in the game:
+    /// the clip and its settings). An object with one is an audio object,
+    /// which logic can pick by its id. `clip` is kept in step with it for
+    /// players that only know clips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

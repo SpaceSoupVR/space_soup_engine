@@ -259,6 +259,7 @@ fn sound_fields() -> Vec<FieldDescriptor> {
             autoplay,
             directional,
             cone_angle_deg,
+            audio,
         } = s;
     }
     vec![

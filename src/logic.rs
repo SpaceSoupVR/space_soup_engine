@@ -20,6 +20,10 @@ pub enum Action {
 
     HideObject { object: String },
 
+    /// Plays the scene's audio object `object` (an object whose sound names a
+    /// saved sound) where it stands.
+    PlaySound { object: String },
+
     SwitchTeam,
 }
 
