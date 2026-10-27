@@ -6,7 +6,7 @@
 //! where the agent really is with [`Crowd::set_agent`]. Millimetres and millimetres per second, on
 //! the floor plane.
 //!
-//! Three layers, after the design research (DetourCrowd's sampled avoidance jitters and sees only
+//! Three layers, after the design research (`DetourCrowd`'s sampled avoidance jitters and sees only
 //! six neighbours; ORCA alone deadlocks in doorways; shipped games settle crowding above the
 //! avoidance layer):
 //!
@@ -446,7 +446,7 @@ pub struct Crowd {
 impl Crowd {
     /// A crowd on `world`, for agents of the size the world was baked for.
     pub fn new(world: &NavWorld, settings: CrowdSettings) -> Crowd {
-        let radius = world.islands.first().map_or(400.0, |i| i.asset.agent.radius_mm as f64);
+        let radius = world.islands.first().map_or(400.0, |i| f64::from(i.asset.agent.radius_mm));
         let (chokes, choke_of) = find_chokes(world, radius, settings.gap_mm);
         let tokens = vec![Token::default(); chokes.len()];
         Crowd { settings, agents: Vec::new(), players: Vec::new(), chokes, choke_of, tokens, slots: Vec::new() }
@@ -712,7 +712,7 @@ impl Crowd {
             let Some(&(i, s)) = self.tokens[c].queue.front() else { continue };
             let t = &self.tokens[c];
             let clear = t.inside.iter().all(|&j| {
-                let ahead = (flat(self.agents[j].pos) - flat(ch.centre)).dot(ch.normal) * t.side as f64;
+                let ahead = (flat(self.agents[j].pos) - flat(ch.centre)).dot(ch.normal) * f64::from(t.side);
                 ahead < self.agents[j].params.radius_mm
             });
             if !player_near && (t.inside.is_empty() || (s == t.side && clear)) {
@@ -727,13 +727,13 @@ impl Crowd {
         for (c, t) in self.tokens.iter().enumerate() {
             let ch = &self.chokes[c];
             let mut per_side = [0usize; 2];
-            for &(i, s) in t.queue.iter() {
-                let k = &mut per_side[(s > 0) as usize];
+            for &(i, s) in &t.queue {
+                let k = &mut per_side[usize::from(s > 0)];
                 let (column, row) = (*k % 2, *k / 2);
                 *k += 1;
                 let r = self.agents[i].params.radius_mm;
                 let spacing = 2.0 * r + self.settings.gap_mm + 200.0;
-                let back = s as f64 * (2.0 * r + 600.0 + row as f64 * spacing);
+                let back = f64::from(s) * (2.0 * r + 600.0 + row as f64 * spacing);
                 let lateral = if column == 0 { 1.0 } else { -1.0 } * spacing;
                 let want = flat(ch.centre) + ch.normal * back + ch.along * lateral;
                 let spot = [want, flat(ch.centre) + ch.normal * back - ch.along * lateral]
@@ -767,7 +767,7 @@ impl Crowd {
                     && world.nearest_poly(a.pos, DVec3::new(500.0, 2000.0, 500.0)).is_some_and(|s| world.walkable_line(s.poly, s.point, player.pos))
             };
             let engaged_ids: Vec<AgentId> = chasers.iter().copied().filter(|&i| engaged(&self.agents[i])).collect();
-            for s in self.slots[p].iter_mut() {
+            for s in &mut self.slots[p] {
                 if s.is_some_and(|i| !engaged_ids.contains(&i)) {
                     *s = None;
                 }
@@ -779,13 +779,10 @@ impl Crowd {
                 let free = (0..count).filter(|&k| self.slots[p][k].is_none()).min_by(|&x, &y| {
                     (flat(slot_pos(x)) - flat(self.agents[i].pos)).length().total_cmp(&(flat(slot_pos(y)) - flat(self.agents[i].pos)).length())
                 });
-                match free {
-                    Some(k) => self.slots[p][k] = Some(i),
-                    None => {
-                        let away = (flat(self.agents[i].pos) - flat(player.pos)).normalize_or_zero();
-                        let hold = flat(player.pos) + away * (ring + 2.0 * r + self.settings.gap_mm);
-                        out[i] = Some((up(hold, player.pos.y), false));
-                    }
+                if let Some(k) = free { self.slots[p][k] = Some(i) } else {
+                    let away = (flat(self.agents[i].pos) - flat(player.pos)).normalize_or_zero();
+                    let hold = flat(player.pos) + away * (ring + 2.0 * r + self.settings.gap_mm);
+                    out[i] = Some((up(hold, player.pos.y), false));
                 }
             }
             for k in 0..count {
@@ -859,12 +856,9 @@ impl Crowd {
                     continue;
                 }
                 Goal::Point(p) => p,
-                Goal::Player(p) => match self.players.get(p) {
-                    Some(pl) => pl.pos,
-                    None => {
-                        a.state = AgentState::Idle;
-                        continue;
-                    }
+                Goal::Player(p) => if let Some(pl) = self.players.get(p) { pl.pos } else {
+                    a.state = AgentState::Idle;
+                    continue;
                 },
             };
             if let Some((spot, attacking)) = slot[i] {
@@ -903,9 +897,9 @@ impl Crowd {
             let r = a.params.radius_mm;
             let rel = flat(a.pos) - flat(ch.centre);
             let off_axis = rel.dot(ch.along).abs();
-            let ahead = rel.dot(ch.normal) * from as f64;
-            let beyond = up(flat(ch.centre) - ch.normal * from as f64 * (r + 400.0), ch.centre.y);
-            let onto_axis = up(flat(ch.centre) + ch.normal * from as f64 * ahead.clamp(r + 100.0, r + 300.0), ch.centre.y);
+            let ahead = rel.dot(ch.normal) * f64::from(from);
+            let beyond = up(flat(ch.centre) - ch.normal * f64::from(from) * (r + 400.0), ch.centre.y);
+            let onto_axis = up(flat(ch.centre) + ch.normal * f64::from(from) * ahead.clamp(r + 100.0, r + 300.0), ch.centre.y);
             let on_floor = |p: DVec3| world.nearest_poly(p, DVec3::new(30.0, 1000.0, 30.0)).is_some_and(|n| n.over_poly);
             if !(on_floor(onto_axis) && on_floor(beyond)) {
                 continue;
@@ -975,7 +969,7 @@ impl Crowd {
             }
         }
         let rank = |a: &Agent| -> i32 {
-            a.params.priority as i32 * 10
+            i32::from(a.params.priority) * 10
                 + if a.token.is_some() { 3 } else { 0 }
                 + match a.state {
                     AgentState::Moving | AgentState::Attacking => 1,

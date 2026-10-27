@@ -270,7 +270,7 @@ impl NavWorld {
                 continue;
             }
             let h = surface_height(&v, p);
-            let dy = (h - p.y as i64).abs();
+            let dy = (h - i64::from(p.y)).abs();
             if best.is_none_or(|b| dy < b.0) {
                 best = Some((dy, pi as u16));
             }
@@ -287,7 +287,7 @@ impl NavWorld {
             }
             if let Some(poly) = self.locate_in(ii as IslandId, p) {
                 let v: Vec<IVec3> = self.poly_vertices(PolyRef { island: ii as u32, poly }).collect();
-                let dy = (surface_height(&v, p) - p.y as i64).abs();
+                let dy = (surface_height(&v, p) - i64::from(p.y)).abs();
                 if best.is_none_or(|b| dy < b.0) {
                     best = Some((dy, PolyRef { island: ii as u32, poly }));
                 }
@@ -369,7 +369,7 @@ impl NavWorld {
             }
         }
         if let Some(g) = gate {
-            self.gates[g as usize].links = links.clone();
+            self.gates[g as usize].links.clone_from(&links);
         }
         let midpoint = (sa.a + sa.b + sb.a + sb.b) / 4;
         self.connections.push(Connection { a, b, links, gate, gap_mm, midpoint });
@@ -441,7 +441,7 @@ impl NavWorld {
 
     /// A dense index for every polygon in the world, for per-polygon tables.
     pub fn poly_index(&self, p: PolyRef) -> usize {
-        (self.island_base[p.island as usize] + p.poly as u32) as usize
+        (self.island_base[p.island as usize] + u32::from(p.poly)) as usize
     }
 
     /// Which connected piece of the world each polygon is in, counting enabled links both ways
@@ -591,11 +591,11 @@ pub fn surface_height(v: &[IVec3], p: IVec3) -> i64 {
         let wb = ccw_from_above(a, p, c);
         let wc = ccw_from_above(a, b, p);
         if wb >= 0 && wc >= 0 && wb + wc <= det {
-            let count = a.y as i64 * det + (b.y - a.y) as i64 * wb + (c.y - a.y) as i64 * wc;
+            let count = i64::from(a.y) * det + i64::from(b.y - a.y) * wb + i64::from(c.y - a.y) * wc;
             return count / det;
         }
     }
-    v.iter().map(|q| q.y as i64).sum::<i64>() / v.len() as i64
+    v.iter().map(|q| i64::from(q.y)).sum::<i64>() / v.len() as i64
 }
 
 /// Rooms and the doorways between them: the coarse map for long routes and for "which way did the
@@ -643,7 +643,7 @@ impl RoomGraph {
                         continue;
                     }
                     let Some(cross) = self.crossing[room as usize][from][Self::socket_in(world, next, room)] else { continue };
-                    let nd = d + cross as u64;
+                    let nd = d + u64::from(cross);
                     if nd < dist[next as usize] {
                         dist[next as usize] = nd;
                         prev[next as usize] = Some(c);

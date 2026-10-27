@@ -36,12 +36,12 @@ struct TriangleGrid {
 impl TriangleGrid {
     fn new(verts: &[[f32; 3]], tris: &[[u32; 3]], bmin: [f32; 3], bmax: [f32; 3]) -> TriangleGrid {
         let size = 1.0;
-        let origin = [bmin[0] as f64, bmin[2] as f64];
-        let nx = (((bmax[0] - bmin[0]) as f64 / size).ceil() as i32).max(1);
-        let nz = (((bmax[2] - bmin[2]) as f64 / size).ceil() as i32).max(1);
+        let origin = [f64::from(bmin[0]), f64::from(bmin[2])];
+        let nx = ((f64::from(bmax[0] - bmin[0]) / size).ceil() as i32).max(1);
+        let nz = ((f64::from(bmax[2] - bmin[2]) / size).ceil() as i32).max(1);
         let mut g = TriangleGrid { origin, size, nx, nz, buckets: vec![Vec::new(); (nx * nz) as usize], tris: Vec::with_capacity(tris.len()) };
         for (ti, t) in tris.iter().enumerate() {
-            let v = t.map(|k| verts[k as usize].map(|c| c as f64));
+            let v = t.map(|k| verts[k as usize].map(f64::from));
             let (ylo, yhi) = (v.iter().map(|p| p[1]).fold(f64::MAX, f64::min), v.iter().map(|p| p[1]).fold(f64::MIN, f64::max));
             g.tris.push((v, ylo, yhi));
             let (xlo, xhi) = (v.iter().map(|p| p[0]).fold(f64::MAX, f64::min), v.iter().map(|p| p[0]).fold(f64::MIN, f64::max));
@@ -134,8 +134,8 @@ struct Site {
 /// chamfer erosion by the agent's radius applies from drops.
 pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32; 3]], tris: &[[u32; 3]], cfg: &Config, clearance_m: f32) {
     let (w, h) = (chf.width, chf.height);
-    let (cs, ch) = (cfg.cs as f64, cfg.ch as f64);
-    let (bx, by, bz) = (cfg.bmin[0] as f64, cfg.bmin[1] as f64, cfg.bmin[2] as f64);
+    let (cs, ch) = (f64::from(cfg.cs), f64::from(cfg.ch));
+    let (bx, by, bz) = (f64::from(cfg.bmin[0]), f64::from(cfg.bmin[1]), f64::from(cfg.bmin[2]));
     let (climb, height) = (cfg.walkable_climb, cfg.walkable_height);
 
     let mut dist = vec![0xffu8; chf.spans.len()];
@@ -144,13 +144,13 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
     for z in 0..h {
         for x in 0..w {
             let c = chf.cells[(x + z * w) as usize];
-            for i in c.index as usize..(c.index + c.count as u32) as usize {
+            for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                 if chf.areas[i] == NULL_AREA {
                     dist[i] = 0;
                     continue;
                 }
                 let s = chf.spans[i];
-                let floor = s.y as i32;
+                let floor = i32::from(s.y);
                 for dir in 0..4 {
                     if s.con[dir] != NOT_CONNECTED && chf.areas[chf.neighbour(x, z, dir, s.con[dir])] != NULL_AREA {
                         continue;
@@ -161,7 +161,7 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
                         continue;
                     }
                     let column = &hf.columns[(nx + nz * w) as usize];
-                    let wall = column.iter().any(|sp| (sp.smin as i32) < floor + height && (sp.smax as i32) > floor + climb);
+                    let wall = column.iter().any(|sp| i32::from(sp.smin) < floor + height && i32::from(sp.smax) > floor + climb);
                     if !wall {
                         dist[i] = 0;
                         continue;
@@ -178,11 +178,11 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
     chamfer(chf, &mut dist);
 
     let grid = TriangleGrid::new(verts, tris, cfg.bmin, cfg.bmax);
-    for site in sites.iter_mut() {
+    for site in &mut sites {
         const EDGE: f64 = 0.001;
-        let (x0, z0) = (bx + site.x as f64 * cs - EDGE, bz + site.z as f64 * cs - EDGE);
+        let (x0, z0) = (bx + f64::from(site.x) * cs - EDGE, bz + f64::from(site.z) * cs - EDGE);
         let (x1, z1) = (x0 + cs + 2.0 * EDGE, z0 + cs + 2.0 * EDGE);
-        let (ylo, yhi) = (by + (site.floor + climb) as f64 * ch, by + (site.floor + height) as f64 * ch);
+        let (ylo, yhi) = (by + f64::from(site.floor + climb) * ch, by + f64::from(site.floor + height) * ch);
         for ti in grid.near(x0, z0, x1, z1) {
             let (v, tlo, thi) = &grid.tris[ti as usize];
             if *thi < ylo || *tlo > yhi {
@@ -207,14 +207,14 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
         }
     }
 
-    let r = clearance_m as f64;
+    let r = f64::from(clearance_m);
     let reach = (r / cs).ceil() as i32 + 1;
     let min_drop = (cfg.walkable_radius * 2).min(255) as u8;
     for z in 0..h {
         for x in 0..w {
             let c = chf.cells[(x + z * w) as usize];
-            let centre = [bx + (x as f64 + 0.5) * cs, bz + (z as f64 + 0.5) * cs];
-            for i in c.index as usize..(c.index + c.count as u32) as usize {
+            let centre = [bx + (f64::from(x) + 0.5) * cs, bz + (f64::from(z) + 0.5) * cs];
+            for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                 if chf.areas[i] == NULL_AREA {
                     continue;
                 }
@@ -222,7 +222,7 @@ pub fn erode_exact(chf: &mut CompactHeightfield, hf: &Heightfield, verts: &[[f32
                     chf.areas[i] = NULL_AREA;
                     continue;
                 }
-                let floor = chf.spans[i].y as i32;
+                let floor = i32::from(chf.spans[i].y);
                 let mut near = f64::MAX;
                 'cells: for sz in (z - reach).max(0)..=(z + reach).min(h - 1) {
                     for sx in (x - reach).max(0)..=(x + reach).min(w - 1) {

@@ -185,15 +185,12 @@ impl PathQuery {
 
     /// Locates both points (within `half_extents`) and starts a search.
     pub fn begin_at(&mut self, world: &NavWorld, start: DVec3, goal: DVec3, half_extents: DVec3) -> Status {
-        match (world.nearest_poly(start, half_extents), world.nearest_poly(goal, half_extents)) {
-            (Some(s), Some(g)) => {
-                self.begin(world, s.poly, s.point, g.poly, g.point);
-                Status::InProgress
-            }
-            _ => {
-                self.status = Status::Failed;
-                Status::Failed
-            }
+        if let (Some(s), Some(g)) = (world.nearest_poly(start, half_extents), world.nearest_poly(goal, half_extents)) {
+            self.begin(world, s.poly, s.point, g.poly, g.point);
+            Status::InProgress
+        } else {
+            self.status = Status::Failed;
+            Status::Failed
         }
     }
 
@@ -264,7 +261,7 @@ impl PathQuery {
         if self.status != Status::Done {
             return None;
         }
-        let (end, complete) = if self.found != NONE { (self.found, true) } else { (self.best.1, false) };
+        let (end, complete) = if self.found == NONE { (self.best.1, false) } else { (self.found, true) };
         let mut corridor = Vec::new();
         let mut at = end;
         while at != NONE {
@@ -295,7 +292,7 @@ fn portals(world: &NavWorld, p: PolyRef) -> Vec<(PolyRef, (DVec3, DVec3), Via, f
         let link = &world.links[l as usize];
         if link.enabled {
             let s = link.from_segment.map(|v| v.as_dvec3());
-            out.push((link.to, (s[0], s[1]), Via::Link(l), link.cost_mm as f64));
+            out.push((link.to, (s[0], s[1]), Via::Link(l), f64::from(link.cost_mm)));
         }
     }
     out
@@ -303,21 +300,18 @@ fn portals(world: &NavWorld, p: PolyRef) -> Vec<(PolyRef, (DVec3, DVec3), Via, f
 
 /// The doorway between consecutive corridor polygons as (left, right), seen walking from `a`.
 fn portal_between(world: &NavWorld, a: PolyRef, b: PolyRef, via: Via) -> Vec<(DVec3, DVec3)> {
-    match via {
-        Via::Link(l) => {
-            let link = &world.links[l as usize];
-            let f = link.from_segment.map(|v| v.as_dvec3());
-            let t = link.to_segment.map(|v| v.as_dvec3());
-            if f == t { vec![(f[0], f[1])] } else { vec![(f[0], f[1]), (t[0], t[1])] }
-        }
-        _ => {
-            let isl = &world.islands[a.island as usize];
-            let poly = &isl.asset.polys[a.poly as usize];
-            let verts = world.poly_dverts(a);
-            let n = verts.len();
-            let e = poly.edges.iter().position(|&x| x == EdgeLink::Internal(b.poly)).expect("corridor steps are neighbours");
-            vec![(verts[(e + 1) % n], verts[e])]
-        }
+    if let Via::Link(l) = via {
+        let link = &world.links[l as usize];
+        let f = link.from_segment.map(|v| v.as_dvec3());
+        let t = link.to_segment.map(|v| v.as_dvec3());
+        if f == t { vec![(f[0], f[1])] } else { vec![(f[0], f[1]), (t[0], t[1])] }
+    } else {
+        let isl = &world.islands[a.island as usize];
+        let poly = &isl.asset.polys[a.poly as usize];
+        let verts = world.poly_dverts(a);
+        let n = verts.len();
+        let e = poly.edges.iter().position(|&x| x == EdgeLink::Internal(b.poly)).expect("corridor steps are neighbours");
+        vec![(verts[(e + 1) % n], verts[e])]
     }
 }
 
@@ -496,7 +490,7 @@ impl PathScheduler {
     }
 
     pub fn pending(&self) -> usize {
-        self.queue.len() + self.current.is_some() as usize
+        self.queue.len() + usize::from(self.current.is_some())
     }
 
     /// Spends up to `budget` polygon expansions; returns the requests finished, each with its

@@ -194,7 +194,7 @@ fn get_height(fx: f32, fy: f32, fz: f32, ics: f32, ch: f32, radius: i32, hp: &He
             if nx >= 0 && nz >= 0 && nx < hp.width && nz < hp.height {
                 let nh = hp.data[(nx + nz * hp.width) as usize];
                 if nh != UNSET_HEIGHT {
-                    let d = (nh as f32 * ch - fy).abs();
+                    let d = (f32::from(nh) * ch - fy).abs();
                     if d < dmin {
                         h = nh;
                         dmin = d;
@@ -298,7 +298,7 @@ fn complete_facet(pts: &[V], edges: &mut Vec<[i32; 4]>, max_edges: usize, nfaces
             let d = vdist_xz(&c, pu);
             let tol = 0.001f32;
             if d > r * (1.0 + tol) {
-                continue;
+                // Outside the circle: the current point stays.
             } else if d < r * (1.0 - tol) {
                 pt = u;
                 circum_circle(ps, point_t, pu, &mut c, &mut r);
@@ -483,9 +483,9 @@ fn on_hull(a: i32, b: i32, hull: &[i32]) -> bool {
 fn set_tri_flags(tris: &mut [[i32; 4]], hull: &[i32]) {
     for t in tris.iter_mut() {
         let mut flags = 0;
-        flags |= on_hull(t[0], t[1], hull) as i32;
-        flags |= (on_hull(t[1], t[2], hull) as i32) << 2;
-        flags |= (on_hull(t[2], t[0], hull) as i32) << 4;
+        flags |= i32::from(on_hull(t[0], t[1], hull));
+        flags |= i32::from(on_hull(t[1], t[2], hull)) << 2;
+        flags |= i32::from(on_hull(t[2], t[0], hull)) << 4;
         t[3] = flags;
     }
 }
@@ -545,7 +545,7 @@ fn build_poly_detail(
                 pos[0] = vj[0] + dx * u;
                 pos[1] = vj[1] + dy * u;
                 pos[2] = vj[2] + dz * u;
-                pos[1] = get_height(pos[0], pos[1], pos[2], ics, chf.ch, height_search_radius, hp) as f32 * chf.ch;
+                pos[1] = f32::from(get_height(pos[0], pos[1], pos[2], ics, chf.ch, height_search_radius, hp)) * chf.ch;
             }
             let mut idx = [0i32; MAX_VERTS_PER_EDGE];
             idx[1] = nn;
@@ -620,7 +620,7 @@ fn build_poly_detail(
                     continue;
                 }
                 let h = get_height(pt[0], pt[1], pt[2], ics, chf.ch, height_search_radius, hp);
-                samples.push([x, h as i32, z, 0]);
+                samples.push([x, i32::from(h), z, 0]);
             }
         }
         let nsamples = samples.len();
@@ -671,7 +671,7 @@ fn build_poly_detail(
 fn seed_array_with_poly_center(chf: &CompactHeightfield, poly: &[u16], verts: &[[u16; 3]], bs: i32, hp: &mut HeightPatch, array: &mut Vec<i32>) {
     const OFFSET: [i32; 18] = [0, 0, -1, -1, 0, -1, 1, -1, 1, 0, 1, 1, 0, 1, -1, 1, -1, 0];
     let (mut start_x, mut start_z, mut start_i) = (0i32, 0i32, -1i32);
-    let mut dmin = UNSET_HEIGHT as i32;
+    let mut dmin = i32::from(UNSET_HEIGHT);
     'outer: for &pv in poly {
         if dmin <= 0 {
             break;
@@ -681,18 +681,18 @@ fn seed_array_with_poly_center(chf: &CompactHeightfield, poly: &[u16], verts: &[
                 break 'outer;
             }
             let v = verts[pv as usize];
-            let ax = v[0] as i32 + OFFSET[k * 2];
-            let ay = v[1] as i32;
-            let az = v[2] as i32 + OFFSET[k * 2 + 1];
+            let ax = i32::from(v[0]) + OFFSET[k * 2];
+            let ay = i32::from(v[1]);
+            let az = i32::from(v[2]) + OFFSET[k * 2 + 1];
             if ax < hp.xmin || ax >= hp.xmin + hp.width || az < hp.ymin || az >= hp.ymin + hp.height {
                 continue;
             }
             let c = chf.cells[((ax + bs) + (az + bs) * chf.width) as usize];
-            for i in c.index as usize..(c.index + c.count as u32) as usize {
+            for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                 if dmin <= 0 {
                     break;
                 }
-                let d = (ay - chf.spans[i].y as i32).abs();
+                let d = (ay - i32::from(chf.spans[i].y)).abs();
                 if d < dmin {
                     start_x = ax;
                     start_z = az;
@@ -704,8 +704,8 @@ fn seed_array_with_poly_center(chf: &CompactHeightfield, poly: &[u16], verts: &[
     }
     let (mut pcx, mut pcz) = (0i32, 0i32);
     for &pv in poly {
-        pcx += verts[pv as usize][0] as i32;
-        pcz += verts[pv as usize][2] as i32;
+        pcx += i32::from(verts[pv as usize][0]);
+        pcz += i32::from(verts[pv as usize][2]);
     }
     pcx /= poly.len() as i32;
     pcz /= poly.len() as i32;
@@ -713,7 +713,7 @@ fn seed_array_with_poly_center(chf: &CompactHeightfield, poly: &[u16], verts: &[
     array.clear();
     array.extend_from_slice(&[start_x, start_z, start_i]);
     let mut dirs = [0usize, 1, 2, 3];
-    for d in hp.data.iter_mut() {
+    for d in &mut hp.data {
         *d = 0;
     }
     let (mut cx, mut cz, mut ci) = (-1i32, -1i32, -1i32);
@@ -745,13 +745,13 @@ fn seed_array_with_poly_center(chf: &CompactHeightfield, poly: &[u16], verts: &[
                 continue;
             }
             hp.data[k] = 1;
-            array.extend_from_slice(&[nx, nz, chf.cells[((nx + bs) + (nz + bs) * chf.width) as usize].index as i32 + cspan.con[dir] as i32]);
+            array.extend_from_slice(&[nx, nz, chf.cells[((nx + bs) + (nz + bs) * chf.width) as usize].index as i32 + i32::from(cspan.con[dir])]);
         }
         dirs.swap(direct, 3);
     }
     array.clear();
     array.extend_from_slice(&[cx + bs, cz + bs, ci]);
-    for d in hp.data.iter_mut() {
+    for d in &mut hp.data {
         *d = UNSET_HEIGHT;
     }
     if ci >= 0 {
@@ -770,7 +770,7 @@ fn dir_for_offset(x: i32, z: i32) -> usize {
 #[allow(clippy::too_many_arguments, reason = "mirrors the native call it wraps; a params struct would only move the list")]
 fn get_height_data(chf: &CompactHeightfield, poly: &[u16], verts: &[[u16; 3]], bs: i32, hp: &mut HeightPatch, queue: &mut Vec<i32>, region: u16) {
     queue.clear();
-    for d in hp.data.iter_mut() {
+    for d in &mut hp.data {
         *d = UNSET_HEIGHT;
     }
     let mut empty = true;
@@ -780,7 +780,7 @@ fn get_height_data(chf: &CompactHeightfield, poly: &[u16], verts: &[[u16; 3]], b
             for hx in 0..hp.width {
                 let x = hp.xmin + hx + bs;
                 let c = chf.cells[(x + y * chf.width) as usize];
-                for i in c.index as usize..(c.index + c.count as u32) as usize {
+                for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                     let s = chf.spans[i];
                     if s.reg == region {
                         hp.data[(hx + hy * hp.width) as usize] = s.y;
@@ -850,10 +850,10 @@ pub fn build_poly_mesh_detail(mesh: &PolyMesh, chf: &CompactHeightfield, sample_
         let (mut xmin, mut xmax, mut ymin, mut ymax) = (chf.width, 0, chf.height, 0);
         for &v in mesh.poly_verts(i) {
             let v = mesh.verts[v as usize];
-            xmin = xmin.min(v[0] as i32);
-            xmax = xmax.max(v[0] as i32);
-            ymin = ymin.min(v[2] as i32);
-            ymax = ymax.max(v[2] as i32);
+            xmin = xmin.min(i32::from(v[0]));
+            xmax = xmax.max(i32::from(v[0]));
+            ymin = ymin.min(i32::from(v[2]));
+            ymax = ymax.max(i32::from(v[2]));
         }
         bounds.push([0.max(xmin - 1), chf.width.min(xmax + 1), 0.max(ymin - 1), chf.height.min(ymax + 1)]);
     }
@@ -869,7 +869,7 @@ pub fn build_poly_mesh_detail(mesh: &PolyMesh, chf: &CompactHeightfield, sample_
             .iter()
             .map(|&v| {
                 let v = mesh.verts[v as usize];
-                [v[0] as f32 * cs, v[1] as f32 * ch, v[2] as f32 * cs]
+                [f32::from(v[0]) * cs, f32::from(v[1]) * ch, f32::from(v[2]) * cs]
             })
             .collect();
         let b = bounds[i];
@@ -878,12 +878,12 @@ pub fn build_poly_mesh_detail(mesh: &PolyMesh, chf: &CompactHeightfield, sample_
         get_height_data(chf, pv, &mesh.verts, bs, &mut hp, &mut entries, mesh.regs[i]);
         build_poly_detail(&poly, sample_dist, sample_max_error, height_search_radius, chf, &hp, &mut verts, &mut tris, &mut edges, &mut samples);
         let yoff = orig[1] + chf.ch;
-        for v in verts.iter_mut() {
+        for v in &mut verts {
             v[0] += orig[0];
             v[1] += yoff;
             v[2] += orig[2];
         }
-        for v in poly.iter_mut() {
+        for v in &mut poly {
             v[0] += orig[0];
             v[1] += orig[1];
             v[2] += orig[2];

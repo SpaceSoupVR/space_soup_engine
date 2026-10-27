@@ -67,7 +67,7 @@ pub fn bake_kit(config_name: &str) -> Vec<Arc<NavPieceAsset>> {
         .iter()
         .map(|p| {
             let mesh = TriMesh::load(&dir.join(format!("{}.obj", p.piece))).unwrap();
-            let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+            let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
             let sockets: Vec<SocketSpec> = p
                 .doorways
                 .iter()
@@ -95,7 +95,7 @@ pub struct LayoutPiece {
 
 pub fn layouts() -> Vec<Layout> {
     let dir = golden::test_data_dir().join("layouts");
-    let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(std::result::Result::ok).map(|e| e.path()).collect();
     names.sort();
     names.iter().map(|p| serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()).collect()
 }
@@ -105,7 +105,7 @@ pub fn mm(v: [f32; 3]) -> IVec3 {
 }
 
 /// Builds the world for a layout, turning the whole level by `extra_turns` about the origin.
-/// DoorType doorways get doors; OPEN ones do not.
+/// `DoorType` doorways get doors; OPEN ones do not.
 pub fn assemble(kit: &[Arc<NavPieceAsset>], layout: &Layout, extra_turns: u8) -> NavWorld {
     let mut w = NavWorld::new();
     let t = Turn(extra_turns);

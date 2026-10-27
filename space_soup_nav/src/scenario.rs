@@ -68,7 +68,7 @@ pub struct Scenario {
     pub description: String,
     /// Relative to `tests/data/meshes`.
     pub mesh: String,
-    /// Simulation step, seconds: the Quest's 72 Hz, or SpaceWarp's 36.
+    /// Simulation step, seconds: the Quest's 72 Hz, or `SpaceWarp`'s 36.
     pub dt: f32,
     pub duration_s: f32,
     pub agents: Vec<ScenarioAgent>,
@@ -119,7 +119,7 @@ pub fn load_all(payload: &std::path::Path) -> Result<Vec<Scenario>, String> {
     let dir = payload.join("scenarios");
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();

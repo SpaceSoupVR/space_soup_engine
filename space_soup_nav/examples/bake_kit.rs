@@ -1,7 +1,7 @@
 //! Bakes a room kit into navmesh assets: one `<piece>.<class>.ssnav` per piece and agent class,
 //! plus `bake_report.json`.
 //!
-//!   cargo run --release --example bake_kit -- <kit dir> <out dir> [config name ...]
+//!   `cargo run --release --example bake_kit -- <kit dir> <out dir> [config name ...]`
 //!
 //! `<kit dir>` holds `<piece>.obj` files and `pieces.json` (each piece's doorways), as
 //! `blacksite_port`'s `export_nav_meshes` example writes them. Agent classes are configs from
@@ -36,7 +36,7 @@ fn main() {
     for p in index["pieces"].as_array().unwrap() {
         let name = p["piece"].as_str().unwrap();
         let mesh = TriMesh::load(&kit.join(format!("{name}.obj"))).unwrap_or_else(|e| panic!("{e}"));
-        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
         let sockets: Vec<SocketSpec> = p["doorways"]
             .as_array()
             .unwrap()

@@ -15,7 +15,7 @@ struct Lcg(u32);
 impl Lcg {
     fn next(&mut self) -> f64 {
         self.0 = self.0.wrapping_mul(1664525).wrapping_add(1013904223);
-        (self.0 >> 8) as f64 / 16777216.0
+        f64::from(self.0 >> 8) / 16777216.0
     }
 }
 
@@ -95,7 +95,7 @@ fn a_monster_catches_a_walking_player_without_walking_into_walls() {
         for _ in 0..3 {
             let (m, a, b) = (random_point(&w, &mut rng), random_point(&w, &mut rng), random_point(&w, &mut rng));
             let Some(route) = find_path_guided(&w, &graph, a, b, EXT).filter(|p| p.complete) else { continue };
-            let pts: Vec<DVec3> = route.waypoints.iter().map(|x| x.pos()).collect();
+            let pts: Vec<DVec3> = route.waypoints.iter().map(space_soup_nav::path::Waypoint::pos).collect();
             let (sm, sa) = (w.nearest_poly(m, EXT).unwrap().poly, w.nearest_poly(a, EXT).unwrap().poly);
             if !w.same_component(sm, sa) {
                 continue;

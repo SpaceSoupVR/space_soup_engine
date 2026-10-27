@@ -1,7 +1,7 @@
 //! Draws a generated level's navmesh from above with one chase on it, as SVG: the floor (grey),
 //! doorways (blue: open passage, orange: door), the monster's track (red) and the player's (green).
 //!
-//!   cargo run --release --example chase_svg -- <kit dir> <layout.json> <out.svg> [seed]
+//!   cargo run --release --example `chase_svg` -- <kit dir> <layout.json> <out.svg> [seed]
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ fn main() {
     let kit: Vec<Arc<NavPieceAsset>> = index["pieces"].as_array().unwrap().iter().map(|p| {
         let name = p["piece"].as_str().unwrap();
         let mesh = TriMesh::load(std::path::Path::new(&format!("{kit_dir}/{name}.obj"))).unwrap();
-        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
         let sockets: Vec<SocketSpec> = p["doorways"].as_array().unwrap().iter().map(|d| SocketSpec {
             name: d["name"].as_str().unwrap().into(),
             position: serde_json::from_value(d["position"].clone()).unwrap(),
@@ -62,7 +62,7 @@ fn main() {
     }
     let graph = w.room_graph();
 
-    let mut rnd = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); (seed >> 8) as f64 / 16777216.0 };
+    let mut rnd = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); f64::from(seed >> 8) / 16777216.0 };
     let mut pick = |w: &NavWorld| loop {
         let i = (rnd() * w.islands.len() as f64) as usize % w.islands.len();
         let n = w.islands[i].asset.polys.len();
@@ -79,7 +79,7 @@ fn main() {
             }
         }
     };
-    let pts: Vec<DVec3> = route.waypoints.iter().map(|x| x.pos()).collect();
+    let pts: Vec<DVec3> = route.waypoints.iter().map(space_soup_nav::path::Waypoint::pos).collect();
     let along = |mut d: f64| { for s in pts.windows(2) { let l = (s[1] - s[0]).length(); if d <= l { return s[0].lerp(s[1], d / l.max(1e-9)); } d -= l; } *pts.last().unwrap() };
     let mut f = PathFollower::new(FollowSettings::default());
     let mut pos = w.nearest_poly(monster0, EXT).unwrap().point;
@@ -116,8 +116,8 @@ fn main() {
         hi = hi.max(isl.max);
     }
     let s = 0.01;
-    let (wpx, hpx) = (((hi.x - lo.x) as f64 * s) + 40.0, ((hi.z - lo.z) as f64 * s) + 40.0);
-    let px = |v: DVec3| ((v.x - lo.x as f64) * s + 20.0, (v.z - lo.z as f64) * s + 20.0);
+    let (wpx, hpx) = ((f64::from(hi.x - lo.x) * s) + 40.0, (f64::from(hi.z - lo.z) * s) + 40.0);
+    let px = |v: DVec3| ((v.x - f64::from(lo.x)) * s + 20.0, (v.z - f64::from(lo.z)) * s + 20.0);
     let mut svg = String::new();
     let _ = writeln!(svg, r##"<svg xmlns="http://www.w3.org/2000/svg" width="{wpx:.0}" height="{hpx:.0}" viewBox="0 0 {wpx:.0} {hpx:.0}"><rect width="100%" height="100%" fill="#14161a"/>"##);
     for (ii, isl) in w.islands.iter().enumerate() {
@@ -132,17 +132,17 @@ fn main() {
         let sa = w.socket(c.a).unwrap();
         let (a, b) = (px(sa.a.as_dvec3()), px(sa.b.as_dvec3()));
         let colour = if c.links.is_empty() { continue } else if c.gate.is_some() { "#e08a2c" } else { "#4aa3ff" };
-        let _ = writeln!(svg, r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{colour}" stroke-width="3"/>"##, a.0, a.1, b.0, b.1);
+        let _ = writeln!(svg, r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{colour}" stroke-width="3"/>"#, a.0, a.1, b.0, b.1);
     }
     let line = |t: &[DVec3], colour: &str, svg: &mut String| {
         let pts: Vec<String> = t.iter().step_by(4).map(|&q| { let (x, y) = px(q); format!("{x:.1},{y:.1}") }).collect();
-        let _ = writeln!(svg, r##"<polyline points="{}" fill="none" stroke="{colour}" stroke-width="2.2" stroke-linejoin="round"/>"##, pts.join(" "));
+        let _ = writeln!(svg, r#"<polyline points="{}" fill="none" stroke="{colour}" stroke-width="2.2" stroke-linejoin="round"/>"#, pts.join(" "));
     };
     line(&ptrack, "#52d273", &mut svg);
     line(&mtrack, "#ff4d5e", &mut svg);
     for (q, colour) in [(ptrack[0], "#52d273"), (mtrack[0], "#ff4d5e")] {
         let (x, y) = px(q);
-        let _ = writeln!(svg, r##"<circle cx="{x:.1}" cy="{y:.1}" r="6" fill="{colour}"/>"##);
+        let _ = writeln!(svg, r#"<circle cx="{x:.1}" cy="{y:.1}" r="6" fill="{colour}"/>"#);
     }
     let (x, y) = px(*mtrack.last().unwrap());
     let _ = writeln!(svg, r##"<circle cx="{x:.1}" cy="{y:.1}" r="8" fill="none" stroke="#ffffff" stroke-width="2"/>"##);

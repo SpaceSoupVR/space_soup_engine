@@ -1,7 +1,7 @@
 //! A navigation report for a kit and its levels: every piece checked, the kit checked, every level
 //! assembled and reported on, per agent class, with a picture of the first level per class.
 //!
-//!   cargo run --release --example nav_report -- <kit dir> <layouts dir> <out dir> [config ...]
+//!   cargo run --release --example `nav_report` -- <kit dir> <layouts dir> <out dir> [config ...]
 //!
 //! Writes `<out dir>/report.md` and `<out dir>/<class>_seed<N>.svg` (floor coloured by connected
 //! area, problems marked in red).
@@ -30,7 +30,7 @@ fn main() {
     std::fs::create_dir_all(&out).unwrap();
 
     let index: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(kit_dir.join("pieces.json")).unwrap()).unwrap();
-    let mut layouts: Vec<PathBuf> = std::fs::read_dir(&layouts_dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    let mut layouts: Vec<PathBuf> = std::fs::read_dir(&layouts_dir).unwrap().filter_map(std::result::Result::ok).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     layouts.sort();
     let configs: Vec<_> = golden::load_configs(&golden::test_data_dir())
         .unwrap()
@@ -66,7 +66,7 @@ fn main() {
             .map(|p| {
                 let name = p["piece"].as_str().unwrap();
                 let mesh = TriMesh::load(&kit_dir.join(format!("{name}.obj"))).unwrap();
-                let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+                let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
                 let sockets: Vec<SocketSpec> = p["doorways"]
                     .as_array()
                     .unwrap()

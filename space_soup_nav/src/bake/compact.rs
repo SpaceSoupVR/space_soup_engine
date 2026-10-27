@@ -85,8 +85,8 @@ impl CompactHeightfield {
                 if s.area == NULL_AREA {
                     continue;
                 }
-                let bot = s.smax as i32;
-                let top = column.get(si + 1).map_or(MAX_HEIGHT, |n| n.smin as i32);
+                let bot = i32::from(s.smax);
+                let top = column.get(si + 1).map_or(MAX_HEIGHT, |n| i32::from(n.smin));
                 chf.spans.push(CompactSpan {
                     y: bot.clamp(0, 0xffff) as u16,
                     reg: 0,
@@ -110,9 +110,9 @@ impl CompactHeightfield {
                         let nc = chf.cells[(nx + nz * w) as usize];
                         for k in nc.index as usize..(nc.index as usize + nc.count as usize) {
                             let n = chf.spans[k];
-                            let bot = (s.y as i32).max(n.y as i32);
-                            let top = (s.y as i32 + s.h as i32).min(n.y as i32 + n.h as i32);
-                            if top - bot >= walkable_height && (n.y as i32 - s.y as i32).abs() <= walkable_climb {
+                            let bot = i32::from(s.y).max(i32::from(n.y));
+                            let top = (i32::from(s.y) + i32::from(s.h)).min(i32::from(n.y) + i32::from(n.h));
+                            if top - bot >= walkable_height && (i32::from(n.y) - i32::from(s.y)).abs() <= walkable_climb {
                                 let layer = k - nc.index as usize;
                                 if layer < NOT_CONNECTED as usize {
                                     chf.spans[i].con[dir] = layer as u8;
@@ -183,14 +183,14 @@ pub fn chamfer(chf: &CompactHeightfield, dist: &mut [u8]) {
             return;
         }
         let a = chf.neighbour(x, z, dir, s.con[dir]);
-        let nd = (dist[a] as i32 + 2).min(255) as u8;
+        let nd = (i32::from(dist[a]) + 2).min(255) as u8;
         if nd < dist[i] {
             dist[i] = nd;
         }
         let aspan = chf.spans[a];
         if aspan.con[diag] != NOT_CONNECTED {
             let b = chf.neighbour(x + DIR_X[dir], z + DIR_Z[dir], diag, aspan.con[diag]);
-            let nd = (dist[b] as i32 + 3).min(255) as u8;
+            let nd = (i32::from(dist[b]) + 3).min(255) as u8;
             if nd < dist[i] {
                 dist[i] = nd;
             }

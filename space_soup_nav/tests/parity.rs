@@ -38,7 +38,7 @@ fn every_stage_matches_recast() {
     for (file, g) in golden::load_all(&data).unwrap() {
         let c = configs.iter().find(|c| c.name == g.config_name).unwrap();
         let mesh = TriMesh::load(&data.join("meshes").join(&g.input.mesh)).unwrap();
-        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
         let b = bake::build(&verts, &mesh.triangles, &settings(c));
 
         let r = &g.recast_config;
@@ -56,7 +56,7 @@ fn every_stage_matches_recast() {
             ("walkable after filters", b.counts.walkable_spans_after_filters as i64, st.walkable_spans_after_filters),
             ("compact spans", b.counts.compact_spans as i64, st.compact_spans),
             ("walkable after erode", b.counts.walkable_after_erode as i64, st.walkable_after_erode),
-            ("regions", b.counts.max_regions as i64, st.max_regions as i64),
+            ("regions", i64::from(b.counts.max_regions), i64::from(st.max_regions)),
         ];
         if let Some((stage, ours, theirs)) = pairs.iter().find(|p| p.1 != p.2) {
             failures.push(format!("{file}: {stage}: ours {ours}, Recast {theirs}"));
@@ -110,7 +110,6 @@ fn every_stage_matches_recast() {
         let worst = d.verts.iter().zip(&gd.verts).map(|(a, b)| (0..3).map(|k| (a[k] - b[k]).abs()).fold(0.0f32, f32::max)).fold(0.0f32, f32::max);
         if worst > 0.0 {
             failures.push(format!("{file}: detail vertices differ by up to {worst} m"));
-            continue;
         }
     }
     assert_eq!(compared, 66, "every golden file has stages and must be compared");

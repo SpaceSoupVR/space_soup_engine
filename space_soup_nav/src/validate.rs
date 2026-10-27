@@ -54,7 +54,7 @@ pub fn check_piece(asset: &Arc<NavPieceAsset>) -> Vec<Issue> {
         out.push(issue(Severity::Info, name, "no floor at all (a cap or blocker)".into(), None));
         return out;
     }
-    let r = asset.agent.radius_mm as f64 / 1000.0;
+    let r = f64::from(asset.agent.radius_mm) / 1000.0;
     for s in &asset.sockets {
         if s.edges.is_empty() {
             out.push(issue(

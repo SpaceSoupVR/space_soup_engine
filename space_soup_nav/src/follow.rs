@@ -152,13 +152,13 @@ impl PathFollower {
             };
             if let Waypoint::LinkStart(_, link) = w {
                 if close {
-                    let to = p.waypoints.get(self.next + 1).map_or(w.pos(), |e| e.pos());
+                    let to = p.waypoints.get(self.next + 1).map_or(w.pos(), super::path::Waypoint::pos);
                     self.next += 2;
                     return Steer::TakeLink { link, to };
                 }
                 break;
             }
-            let following = p.waypoints.get(self.next + 1).map_or(goal, |e| e.pos());
+            let following = p.waypoints.get(self.next + 1).map_or(goal, super::path::Waypoint::pos);
             if (at || close || passed) && line_clear(pos, following) {
                 self.next += 1;
                 continue;

@@ -17,12 +17,12 @@ use space_soup_nav::world::NavWorld;
 const EXT: DVec3 = DVec3::new(500.0, 2000.0, 500.0);
 
 fn mm(v: [f32; 3]) -> DVec3 {
-    DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64) * 1000.0
+    DVec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2])) * 1000.0
 }
 
 fn world_for(s: &Scenario) -> NavWorld {
     let mesh = TriMesh::load(&golden::test_data_dir().join("meshes").join(&s.mesh)).unwrap();
-    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
     let mut settings = common::settings(&common::config("human_cs10_monotone"));
     settings.agent_radius = s.agents[0].radius;
     let input = PieceInput { name: &s.name, vertices: &verts, triangles: &mesh.triangles, sockets: &[], links: Vec::new() };
@@ -55,16 +55,16 @@ fn run(s: &Scenario) -> Result {
     let mut crowd = Crowd::new(&w, CrowdSettings::default());
     for a in &s.agents {
         let pos = w.nearest_poly(mm(a.start), EXT).expect("agent start off the navmesh").point;
-        let id = crowd.add_agent(AgentParams { radius_mm: a.radius as f64 * 1000.0, max_speed_mm_s: a.max_speed as f64 * 1000.0, priority: 0 }, pos);
+        let id = crowd.add_agent(AgentParams { radius_mm: f64::from(a.radius) * 1000.0, max_speed_mm_s: f64::from(a.max_speed) * 1000.0, priority: 0 }, pos);
         crowd.set_goal(id, match a.goal {
             SGoal::Point(p) => Goal::Point(w.nearest_poly(mm(p), EXT).expect("goal off the navmesh").point),
             SGoal::Player(i) => Goal::Player(i),
         });
     }
-    let dt = s.dt as f64;
-    let reach = s.pass.reach as f64 * 1000.0;
-    let arrive = s.pass.arrive_radius as f64 * 1000.0;
-    let stuck_d = s.pass.stuck_distance as f64 * 1000.0;
+    let dt = f64::from(s.dt);
+    let reach = f64::from(s.pass.reach) * 1000.0;
+    let arrive = f64::from(s.pass.arrive_radius) * 1000.0;
+    let stuck_d = f64::from(s.pass.stuck_distance) * 1000.0;
     let mut r = Result::default();
     let mut anchor: Vec<(DVec3, f64)> = crowd.agents.iter().map(|a| (a.pos, 0.0)).collect();
     let mut queued_since: Vec<Option<f64>> = vec![None; crowd.agents.len()];
@@ -73,11 +73,11 @@ fn run(s: &Scenario) -> Result {
     let flat = |a: DVec3, b: DVec3| ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
     let mut t = 0.0;
     let mut cost = std::time::Duration::ZERO;
-    let steps = (s.duration_s as f64 / dt) as usize;
+    let steps = (f64::from(s.duration_s) / dt) as usize;
     for _ in 0..steps {
         for (i, _) in s.players.iter().enumerate() {
             let (now, next) = (mm(s.player_at(i, t as f32).to_array()), mm(s.player_at(i, (t + dt) as f32).to_array()));
-            crowd.set_player(i, Player { pos: now, vel: (next - now) / dt, radius_mm: s.players[i].radius as f64 * 1000.0 });
+            crowd.set_player(i, Player { pos: now, vel: (next - now) / dt, radius_mm: f64::from(s.players[i].radius) * 1000.0 });
         }
         let t0 = std::time::Instant::now();
         crowd.update(&w, &g, dt);
@@ -175,24 +175,24 @@ fn every_crowd_scenario_meets_its_criteria() {
         let mut fail = Vec::new();
         if let Some(limit) = p.all_arrive_within_s {
             match r.all_arrived_s {
-                Some(t) if t <= limit as f64 => {}
+                Some(t) if t <= f64::from(limit) => {}
                 other => fail.push(format!("all arrive within {limit} s: {other:?}")),
             }
         }
         if let Some(limit) = p.first_contact_within_s {
             match r.first_contact_s {
-                Some(t) if t <= limit as f64 => {}
+                Some(t) if t <= f64::from(limit) => {}
                 other => fail.push(format!("first contact within {limit} s: {other:?}")),
             }
         }
-        if r.max_overlap_mm > p.max_overlap as f64 * 1000.0 {
+        if r.max_overlap_mm > f64::from(p.max_overlap) * 1000.0 {
             fail.push(format!("overlap {:.0} mm > {:.0}", r.max_overlap_mm, p.max_overlap * 1000.0));
         }
-        if r.worst_stuck_moving_s > p.max_stuck_s as f64 {
+        if r.worst_stuck_moving_s > f64::from(p.max_stuck_s) {
             fail.push(format!("stuck {:.1} s > {} s", r.worst_stuck_moving_s, p.max_stuck_s));
         }
         if let Some(limit) = p.max_handover_s {
-            if r.longest_handover_s > limit as f64 {
+            if r.longest_handover_s > f64::from(limit) {
                 fail.push(format!("a queue stood still {:.1} s > {limit} s", r.longest_handover_s));
             }
         }

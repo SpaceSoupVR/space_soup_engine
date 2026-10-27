@@ -104,7 +104,7 @@ pub struct Config {
 }
 
 impl Settings {
-    /// Derived exactly as RecastDemo's `Sample_SoloMesh` derives it.
+    /// Derived exactly as `RecastDemo`'s `Sample_SoloMesh` derives it.
     pub fn config(&self, bmin: [f32; 3], bmax: [f32; 3]) -> Config {
         let (cs, ch) = (self.cell_size, self.cell_height);
         Config {
@@ -182,7 +182,7 @@ pub fn build(verts: &[[f32; 3]], tris: &[[u32; 3]], settings: &Settings) -> Buil
     counts.heightfield_spans = hf.span_count();
     heightfield::filter_low_hanging_obstacles(&mut hf, cfg.walkable_climb);
     let max_spread = if settings.fixes.slope_aware_ledges {
-        let rise = 2.0 * cfg.cs as f64 * libm::tan((cfg.walkable_slope_angle as f64).to_radians()) / cfg.ch as f64;
+        let rise = 2.0 * f64::from(cfg.cs) * libm::tan(f64::from(cfg.walkable_slope_angle).to_radians()) / f64::from(cfg.ch);
         cfg.walkable_climb.max((rise + 1e-4).floor() as i32)
     } else {
         cfg.walkable_climb

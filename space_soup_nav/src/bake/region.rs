@@ -86,7 +86,7 @@ pub fn build_regions(chf: &mut CompactHeightfield, partition: Partition, border_
         let mut rid: u16 = 1;
         for x in border_size..w - border_size {
             let cell = chf.cells[(x + z * w) as usize];
-            for i in cell.index as usize..(cell.index + cell.count as u32) as usize {
+            for i in cell.index as usize..(cell.index + u32::from(cell.count)) as usize {
                 if chf.areas[i] == NULL_AREA {
                     continue;
                 }
@@ -125,7 +125,7 @@ pub fn build_regions(chf: &mut CompactHeightfield, partition: Partition, border_
             }
         }
         for sw in sweeps.iter_mut().take(rid as usize).skip(1) {
-            if sw.nei != NULL_NEI && sw.nei != 0 && prev[sw.nei as usize] == sw.ns as i32 {
+            if sw.nei != NULL_NEI && sw.nei != 0 && prev[sw.nei as usize] == i32::from(sw.ns) {
                 sw.id = sw.nei;
             } else {
                 sw.id = id;
@@ -134,7 +134,7 @@ pub fn build_regions(chf: &mut CompactHeightfield, partition: Partition, border_
         }
         for x in border_size..w - border_size {
             let cell = chf.cells[(x + z * w) as usize];
-            for i in cell.index as usize..(cell.index + cell.count as u32) as usize {
+            for i in cell.index as usize..(cell.index + u32::from(cell.count)) as usize {
                 if src[i] > 0 && src[i] < rid {
                     src[i] = sweeps[src[i] as usize].id;
                 }
@@ -157,7 +157,7 @@ fn paint_rect(chf: &CompactHeightfield, src: &mut [u16], x0: i32, x1: i32, z0: i
     for z in z0..z1 {
         for x in x0..x1 {
             let c = chf.cells[(x + z * chf.width) as usize];
-            for i in c.index as usize..(c.index + c.count as u32) as usize {
+            for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                 if chf.areas[i] != NULL_AREA {
                     src[i] = reg;
                 }
@@ -180,15 +180,15 @@ fn remove_adjacent_duplicates(v: &mut Vec<i32>) {
 
 fn replace_neighbour(reg: &mut Region, old: u16, new: u16) {
     let mut changed = false;
-    for c in reg.connections.iter_mut() {
-        if *c == old as i32 {
-            *c = new as i32;
+    for c in &mut reg.connections {
+        if *c == i32::from(old) {
+            *c = i32::from(new);
             changed = true;
         }
     }
-    for f in reg.floors.iter_mut() {
-        if *f == old as i32 {
-            *f = new as i32;
+    for f in &mut reg.floors {
+        if *f == i32::from(old) {
+            *f = i32::from(new);
         }
     }
     if changed {
@@ -200,10 +200,10 @@ fn can_merge(a: &Region, b: &Region) -> bool {
     if a.area_type != b.area_type {
         return false;
     }
-    if a.connections.iter().filter(|&&c| c == b.id as i32).count() > 1 {
+    if a.connections.iter().filter(|&&c| c == i32::from(b.id)).count() > 1 {
         return false;
     }
-    !a.floors.contains(&(b.id as i32))
+    !a.floors.contains(&i32::from(b.id))
 }
 
 fn add_unique(v: &mut Vec<i32>, n: i32) {
@@ -217,8 +217,8 @@ fn merge_regions(regions: &mut [Region], a: usize, b: usize) -> bool {
     let (aid, bid) = (regions[a].id, regions[b].id);
     let acon = regions[a].connections.clone();
     let bcon = regions[b].connections.clone();
-    let Some(insa) = acon.iter().position(|&c| c == bid as i32) else { return false };
-    let Some(insb) = bcon.iter().position(|&c| c == aid as i32) else { return false };
+    let Some(insa) = acon.iter().position(|&c| c == i32::from(bid)) else { return false };
+    let Some(insb) = bcon.iter().position(|&c| c == i32::from(aid)) else { return false };
     let mut merged = Vec::with_capacity(acon.len() + bcon.len());
     for i in 0..acon.len() - 1 {
         merged.push(acon[(insa + 1 + i) % acon.len()]);
@@ -254,7 +254,7 @@ fn walk_contour(chf: &CompactHeightfield, src: &[u16], mut x: i32, mut z: i32, m
     if ss.con[dir] != NOT_CONNECTED {
         cur_reg = src[chf.neighbour(x, z, dir, ss.con[dir])];
     }
-    cont.push(cur_reg as i32);
+    cont.push(i32::from(cur_reg));
     let mut iter = 0;
     loop {
         iter += 1;
@@ -269,7 +269,7 @@ fn walk_contour(chf: &CompactHeightfield, src: &[u16], mut x: i32, mut z: i32, m
             }
             if r != cur_reg {
                 cur_reg = r;
-                cont.push(cur_reg as i32);
+                cont.push(i32::from(cur_reg));
             }
             dir = (dir + 1) & 3;
         } else {
@@ -310,7 +310,7 @@ fn compress_ids(regions: &mut [Region], src: &mut [u16], max_region_id: &mut u16
         }
         let old = regions[i].id;
         gen += 1;
-        for r in regions[i..].iter_mut() {
+        for r in &mut regions[i..] {
             if r.id == old {
                 r.id = gen;
                 r.remap = false;
@@ -334,7 +334,7 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
     for z in 0..h {
         for x in 0..w {
             let c = chf.cells[(x + z * w) as usize];
-            let (first, end) = (c.index as usize, (c.index + c.count as u32) as usize);
+            let (first, end) = (c.index as usize, (c.index + u32::from(c.count)) as usize);
             for i in first..end {
                 let r = src[i];
                 if r == 0 || r as usize >= nreg {
@@ -349,7 +349,7 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
                     if floor == r {
                         reg.overlap = true;
                     }
-                    add_unique(&mut reg.floors, floor as i32);
+                    add_unique(&mut reg.floors, i32::from(floor));
                 }
                 if !reg.connections.is_empty() {
                     continue;
@@ -384,7 +384,7 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
             trace.push(ri);
             for j in 0..regions[ri as usize].connections.len() {
                 let c = regions[ri as usize].connections[j];
-                if c & BORDER_REG as i32 != 0 {
+                if c & i32::from(BORDER_REG) != 0 {
                     connects_to_border = true;
                     continue;
                 }
@@ -392,7 +392,7 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
                 if nei.visited || nei.id == 0 || nei.id & BORDER_REG != 0 {
                     continue;
                 }
-                stack.push(nei.id as i32);
+                stack.push(i32::from(nei.id));
                 nei.visited = true;
             }
         }
@@ -417,7 +417,7 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
             let mut smallest = 0xfffffff;
             let mut merge_id = reg.id;
             for &c in &reg.connections {
-                if c & BORDER_REG as i32 != 0 {
+                if c & i32::from(BORDER_REG) != 0 {
                     continue;
                 }
                 let m = &regions[c as usize];
@@ -432,7 +432,7 @@ fn merge_and_filter_regions(chf: &CompactHeightfield, src: &mut [u16], min_regio
             if merge_id != reg.id {
                 let old = reg.id;
                 if merge_regions(&mut regions, merge_id as usize, i) {
-                    for r in regions.iter_mut() {
+                    for r in &mut regions {
                         if r.id == 0 || r.id & BORDER_REG != 0 {
                             continue;
                         }
@@ -464,7 +464,7 @@ fn merge_and_filter_layer_regions(chf: &CompactHeightfield, src: &mut [u16], min
         for x in 0..w {
             let c = chf.cells[(x + z * w) as usize];
             lregs.clear();
-            for i in c.index as usize..(c.index + c.count as u32) as usize {
+            for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                 let s = chf.spans[i];
                 let ri = src[i];
                 if ri == 0 || ri as usize >= nreg {
@@ -475,12 +475,12 @@ fn merge_and_filter_layer_regions(chf: &CompactHeightfield, src: &mut [u16], min
                 reg.area_type = chf.areas[i];
                 reg.ymin = reg.ymin.min(s.y);
                 reg.ymax = reg.ymax.max(s.y);
-                lregs.push(ri as i32);
+                lregs.push(i32::from(ri));
                 for dir in 0..4 {
                     if s.con[dir] != NOT_CONNECTED {
                         let rai = src[chf.neighbour(x, z, dir, s.con[dir])];
                         if rai > 0 && (rai as usize) < nreg && rai != ri {
-                            add_unique(&mut reg.connections, rai as i32);
+                            add_unique(&mut reg.connections, i32::from(rai));
                         }
                         if rai & BORDER_REG != 0 {
                             reg.connects_to_border = true;
@@ -500,7 +500,7 @@ fn merge_and_filter_layer_regions(chf: &CompactHeightfield, src: &mut [u16], min
     }
 
     let mut layer_id: u16 = 1;
-    for r in regions.iter_mut() {
+    for r in &mut regions {
         r.id = 0;
     }
     let mut stack: std::collections::VecDeque<i32> = std::collections::VecDeque::new();
@@ -549,7 +549,7 @@ fn merge_and_filter_layer_regions(chf: &CompactHeightfield, src: &mut [u16], min
         let r = &regions[i];
         if r.span_count > 0 && r.span_count < min_region_area && !r.connects_to_border {
             let id = r.id;
-            for other in regions.iter_mut() {
+            for other in &mut regions {
                 if other.id == id {
                     other.id = 0;
                 }

@@ -36,10 +36,10 @@ fn the_piece_checker_catches_a_link_that_lands_nowhere_and_one_that_reaches_the_
     let ground = vent_room.vertices.iter().find(|v| v.y < 500).copied().unwrap();
     let mut fixed = (**vent_room).clone();
     let rung = |p: IVec3| [p + IVec3::new(-200, 0, 0), p + IVec3::new(200, 0, 0)];
-    let ground_spot = vent_room.polys.iter().find(|p| p.verts.iter().all(|&v| vent_room.vertices[v as usize].y < 500)).map(|p| {
+    let ground_spot = vent_room.polys.iter().find(|p| p.verts.iter().all(|&v| vent_room.vertices[v as usize].y < 500)).map_or(ground, |p| {
         let s: IVec3 = p.verts.iter().map(|&v| vent_room.vertices[v as usize]).sum();
         s / p.verts.len() as i32
-    }).unwrap_or(ground);
+    });
     fixed.links = vec![
         NavLink { kind: LinkKind::Ladder, start: rung(ground_spot), end: rung(up_floor.as_ivec3()), bidirectional: true, cost_mm: 2000, enabled: true },
         NavLink { kind: LinkKind::Vent, start: rung(ground_spot), end: rung(IVec3::new(90_000, 0, 90_000)), bidirectional: false, cost_mm: 0, enabled: true },

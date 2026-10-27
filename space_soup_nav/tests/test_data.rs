@@ -3,7 +3,7 @@
 //! golden reference files.
 //!
 //! After changing a synthetic mesh below, rewrite the files with
-//!   SPACE_SOUP_NAV_REGEN=1 cargo test --test test_data
+//!   `SPACE_SOUP_NAV_REGEN=1` cargo test --test `test_data`
 //! and regenerate the golden files (`tests/data/golden/README.md`): they hash every mesh, so a
 //! stale reference fails here rather than being compared against a mesh it was not built from.
 
@@ -218,9 +218,9 @@ fn all_meshes(data: &Path) -> Vec<String> {
     for group in ["recast", "synthetic", "blacksite"] {
         let mut names: Vec<String> = std::fs::read_dir(data.join("meshes").join(group))
             .unwrap_or_else(|e| panic!("meshes/{group}: {e}"))
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".obj"))
+            .filter(|n| Path::new(n).extension().is_some_and(|ext| ext == "obj"))
             .map(|n| format!("{group}/{n}"))
             .collect();
         names.sort();
@@ -250,7 +250,7 @@ fn configs_load_and_are_buildable() {
     let configs = golden::load_configs(&data()).unwrap().configs;
     assert!(configs.len() >= 3);
     let mut names: Vec<_> = configs.iter().map(|c| c.name.as_str()).collect();
-    names.sort();
+    names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), configs.len(), "config names must be unique: golden files are named by them");
     for c in &configs {

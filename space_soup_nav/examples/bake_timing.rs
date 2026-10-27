@@ -1,6 +1,6 @@
 //! Times the baker on every golden mesh and config, stage by stage.
 //!
-//!   cargo run --release --example bake_timing [filter]
+//!   `cargo run --release --example bake_timing [filter]`
 
 use std::time::Instant;
 
@@ -18,7 +18,7 @@ fn main() {
         }
         let c = configs.iter().find(|c| c.name == g.config_name).unwrap();
         let mesh = TriMesh::load(&data.join("meshes").join(&g.input.mesh)).unwrap();
-        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
         let s = Settings {
             cell_size: c.cell_size,
             cell_height: c.cell_height,

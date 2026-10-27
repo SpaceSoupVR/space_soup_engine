@@ -162,7 +162,7 @@ impl NavWorld {
         let verts = self.poly_dverts(p);
         let range = asset.detail.ranges.get(p.poly as usize).copied().filter(|r| r.3 > 0);
         match range {
-            Some((vb, _, tb, tc)) => asset.detail.triangles[tb as usize..(tb + tc as u32) as usize]
+            Some((vb, _, tb, tc)) => asset.detail.triangles[tb as usize..(tb + u32::from(tc)) as usize]
                 .iter()
                 .map(|t| {
                     t.map(|k| {
@@ -240,11 +240,11 @@ impl NavWorld {
     pub fn polys_in_box(&self, min: DVec3, max: DVec3) -> Vec<PolyRef> {
         let mut out = Vec::new();
         for (ii, isl) in self.islands.iter().enumerate() {
-            let climb = isl.asset.agent.climb_mm as f64;
-            if max.x < isl.min.x as f64 || min.x > isl.max.x as f64 || max.z < isl.min.z as f64 || min.z > isl.max.z as f64 {
+            let climb = f64::from(isl.asset.agent.climb_mm);
+            if max.x < f64::from(isl.min.x) || min.x > f64::from(isl.max.x) || max.z < f64::from(isl.min.z) || min.z > f64::from(isl.max.z) {
                 continue;
             }
-            if max.y < isl.min.y as f64 - climb * 4.0 || min.y > isl.max.y as f64 + climb * 4.0 {
+            if max.y < f64::from(isl.min.y) - climb * 4.0 || min.y > f64::from(isl.max.y) + climb * 4.0 {
                 continue;
             }
             let back = crate::asset::Turn((4 - isl.turn.0 % 4) % 4);
@@ -281,7 +281,7 @@ impl NavWorld {
             let (point, over) = self.closest_point_on_poly(p, center);
             let diff = center - point;
             let dist = if over {
-                let climb = self.islands[p.island as usize].asset.agent.climb_mm as f64;
+                let climb = f64::from(self.islands[p.island as usize].asset.agent.climb_mm);
                 let dd = diff.y.abs() - climb;
                 if dd > 0.0 { dd * dd } else { 0.0 }
             } else {
@@ -338,15 +338,12 @@ impl NavWorld {
                 return hit;
             }
             let at = start + (end - start) * tmax;
-            match self.across_edge(cur, seg_max as usize, at) {
-                Some(next) => cur = next,
-                None => {
-                    let n = verts.len();
-                    let (va, vb) = (verts[seg_max as usize], verts[(seg_max as usize + 1) % n]);
-                    let (dx, dz) = (vb.x - va.x, vb.z - va.z);
-                    hit.normal = DVec3::new(dz, 0.0, -dx).normalize();
-                    return hit;
-                }
+            if let Some(next) = self.across_edge(cur, seg_max as usize, at) { cur = next } else {
+                let n = verts.len();
+                let (va, vb) = (verts[seg_max as usize], verts[(seg_max as usize + 1) % n]);
+                let (dx, dz) = (vb.x - va.x, vb.z - va.z);
+                hit.normal = DVec3::new(dz, 0.0, -dx).normalize();
+                return hit;
             }
             if hit.path.len() > 4096 {
                 return hit;
@@ -359,7 +356,7 @@ impl NavWorld {
     /// works from above, so it also "reaches" a point on a floor overhead or below.
     pub fn walkable_line(&self, start_poly: PolyRef, start: DVec3, end: DVec3) -> bool {
         let hit = self.raycast(start_poly, start, end);
-        let climb = self.islands[start_poly.island as usize].asset.agent.climb_mm as f64;
+        let climb = f64::from(self.islands[start_poly.island as usize].asset.agent.climb_mm);
         hit.t == f64::MAX && hit.path.last().and_then(|&p| self.poly_height(p, end)).is_some_and(|h| (h - end.y).abs() <= climb)
     }
 

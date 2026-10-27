@@ -29,14 +29,14 @@ fn settings(cs: f32, radius: f32, height: f32) -> Settings {
 /// x ranges of polygons crossing the wall line z = 4 of `narrow_gaps`.
 fn crossings(s: &Settings) -> Vec<(f32, f32)> {
     let mesh = TriMesh::load(&golden::test_data_dir().join("meshes/synthetic/narrow_gaps.obj")).unwrap();
-    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
     let b = bake::build(&verts, &mesh.triangles, s);
     let pm = &b.polymesh;
     (0..pm.npolys())
         .filter_map(|i| {
             let pts: Vec<[f32; 2]> = pm.poly_verts(i).iter().map(|&v| {
                 let v = pm.verts[v as usize];
-                [pm.bmin[0] + v[0] as f32 * pm.cs, pm.bmin[2] + v[2] as f32 * pm.cs]
+                [pm.bmin[0] + f32::from(v[0]) * pm.cs, pm.bmin[2] + f32::from(v[2]) * pm.cs]
             }).collect();
             let (zlo, zhi) = pts.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p[1]), b.max(p[1])));
             (zlo < 3.9 && zhi > 4.1).then(|| pts.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p[0]), b.max(p[0]))))
@@ -97,7 +97,7 @@ fn recast_itself_still_loses_those_gaps() {
 #[test]
 fn stairs_within_the_climb_are_walkable_at_any_cell_size() {
     let mesh = TriMesh::load(&golden::test_data_dir().join("meshes/synthetic/stairs.obj")).unwrap();
-    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
     for cs in [0.1, 0.2] {
         let b = bake::build(&verts, &mesh.triangles, &settings(cs, 0.4, 1.8));
         let top = b.detail.verts.iter().any(|v| v[1] > 1.0);
@@ -134,7 +134,7 @@ fn island_at(b: &bake::Build, labels: &[usize], x: f32, z: f32, y: f32) -> Optio
     (0..b.polymesh.npolys()).find(|&p| {
         let [vb, _, tb, tc] = d.meshes[p];
         d.tris[tb as usize..(tb + tc) as usize].iter().any(|t| {
-            let v = [0, 1, 2].map(|k| d.verts[(vb + t[k] as u32) as usize]);
+            let v = [0, 1, 2].map(|k| d.verts[(vb + u32::from(t[k])) as usize]);
             let det = (v[1][0] - v[0][0]) * (v[2][2] - v[0][2]) - (v[2][0] - v[0][0]) * (v[1][2] - v[0][2]);
             if det.abs() < 1e-9 {
                 return false;
@@ -154,7 +154,7 @@ fn nothing_too_high_or_too_steep_becomes_climbable() {
         let s = settings(cs, 0.4, 1.8);
         let load = |name: &str| {
             let mesh = TriMesh::load(&golden::test_data_dir().join(format!("meshes/synthetic/{name}.obj"))).unwrap();
-            let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+            let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
             bake::build(&verts, &mesh.triangles, &s)
         };
         let b = load("stairs");

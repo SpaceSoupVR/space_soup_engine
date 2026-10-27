@@ -141,7 +141,7 @@ impl DebugDraw {
         }
         for (k, &p) in refs.iter().enumerate() {
             let tris = world.floor_triangles(p);
-            let raised = tris.iter().flatten().map(|v| v.y).fold(f64::MIN, f64::max) > world.islands[p.island as usize].offset.y as f64 + 1500.0;
+            let raised = tris.iter().flatten().map(|v| v.y).fold(f64::MIN, f64::max) > f64::from(world.islands[p.island as usize].offset.y) + 1500.0;
             let c = match colour {
                 FloorColour::ByHeight => {
                     if raised {
@@ -281,7 +281,7 @@ impl DebugDraw {
                 Layer::Problems => 2.5,
                 _ => 1.4,
             };
-            let opacity = l.colour.0[3] as f64 / 255.0;
+            let opacity = f64::from(l.colour.0[3]) / 255.0;
             let _ = writeln!(out, r#"<line x1="{x1:.1}" y1="{y1:.1}" x2="{x2:.1}" y2="{y2:.1}" stroke="{}" stroke-opacity="{opacity:.2}" stroke-width="{width}" stroke-linecap="round"/>"#, l.colour.hex());
         }
         for l in &self.labels {

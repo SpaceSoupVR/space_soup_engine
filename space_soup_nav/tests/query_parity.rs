@@ -18,14 +18,14 @@ use space_soup_nav::obj::TriMesh;
 use space_soup_nav::world::{NavWorld, PolyRef};
 
 fn mm(v: [f32; 3]) -> DVec3 {
-    DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64) * 1000.0
+    DVec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2])) * 1000.0
 }
 
 /// Our mesh is Detour's moved by a constant under half a millimetre: the baker rounds the grid's
 /// origin onto the millimetre. Detour's query points lie exactly on its own edges, so they are
 /// moved the same way before asking, and answers moved back.
 fn lattice_shift(bmin: [f32; 3]) -> DVec3 {
-    let b = DVec3::new(bmin[0] as f64, bmin[1] as f64, bmin[2] as f64) * 1000.0;
+    let b = DVec3::new(f64::from(bmin[0]), f64::from(bmin[1]), f64::from(bmin[2])) * 1000.0;
     b.round() - b
 }
 
@@ -67,7 +67,7 @@ fn point_queries_agree_with_detour() {
         let Some(q) = &g.queries else { continue };
         let c = configs.iter().find(|c| c.name == g.config_name).unwrap();
         let mesh = TriMesh::load(&data.join("meshes").join(&g.input.mesh)).unwrap();
-        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
         let input = PieceInput { name: &file, vertices: &verts, triangles: &mesh.triangles, sockets: &[], links: Vec::new() };
         let opts = ExportOptions { merge_across_regions: false, flat_tolerance_mm: -1, ..Default::default() };
         let mut settings = common::settings(c);
@@ -77,17 +77,17 @@ fn point_queries_agree_with_detour() {
         let mut w = NavWorld::new();
         let isl = w.add_island(Arc::new(asset), Turn(0), IVec3::ZERO);
         let pref = |i: i32| PolyRef { island: isl, poly: i as u16 };
-        let ch_mm = (c.cell_height as f64) * 1000.0;
+        let ch_mm = f64::from(c.cell_height) * 1000.0;
         let shift = lattice_shift(g.stages.as_ref().unwrap().polymesh.bmin);
         let mm = |v: [f32; 3]| mm(v) + shift;
-        let far = g.recast_config.bmin.iter().chain(&g.recast_config.bmax).fold(0.0f64, |a, &b| a.max(b.abs() as f64));
+        let far = g.recast_config.bmin.iter().chain(&g.recast_config.bmax).fold(0.0f64, |a, &b| a.max(f64::from(b.abs())));
         let resolution = (far * 1000.0 * 2.0f64.powi(-23) * 2.0).max(0.05);
 
         for (k, n) in q.nearest.iter().enumerate() {
             let center = mm(n.point);
             let ext = mm(n.half_extents);
             let ours = w.nearest_poly(center, ext);
-            let ours_poly = ours.map_or(-1, |o| o.poly.poly as i32);
+            let ours_poly = ours.map_or(-1, |o| i32::from(o.poly.poly));
             if ours_poly != n.poly {
                 let candidates = w.polys_in_box(center - ext, center + ext);
                 if n.poly >= 0 && !candidates.contains(&pref(n.poly)) {
@@ -98,7 +98,7 @@ fn point_queries_agree_with_detour() {
                     let (theirs_pt, over) = w.closest_point_on_poly(pref(n.poly), center);
                     let dist = |p: DVec3, over: bool| {
                         let diff = center - p;
-                        if over { (diff.y.abs() - c.agent_max_climb as f64 * 1000.0).max(0.0).powi(2) } else { diff.length_squared() }
+                        if over { (diff.y.abs() - f64::from(c.agent_max_climb) * 1000.0).max(0.0).powi(2) } else { diff.length_squared() }
                     };
                     let (dt, d_o) = (dist(theirs_pt, over), dist(o.point, o.over_poly));
                     if (dt - d_o).abs() < 1.0 {
@@ -132,12 +132,12 @@ fn point_queries_agree_with_detour() {
         for (k, r) in q.raycast.iter().enumerate() {
             let (s, e) = (mm(r.start), mm(r.end));
             let hit = w.raycast(pref(r.start_poly), s, e);
-            let path: Vec<i32> = hit.path.iter().map(|p| p.poly as i32).collect();
+            let path: Vec<i32> = hit.path.iter().map(|p| i32::from(p.poly)).collect();
             let reached = r.t > 1e30;
             let len = (e - s).length();
-            let theirs_normal = DVec3::new(r.hit_normal[0] as f64, r.hit_normal[1] as f64, r.hit_normal[2] as f64);
+            let theirs_normal = DVec3::new(f64::from(r.hit_normal[0]), f64::from(r.hit_normal[1]), f64::from(r.hit_normal[2]));
             let blocked_at_start = |t: f64, reached: bool| !reached && t * len <= 2.0;
-            if blocked_at_start(hit.t, hit.t == f64::MAX) && blocked_at_start(r.t as f64, reached) {
+            if blocked_at_start(hit.t, hit.t == f64::MAX) && blocked_at_start(f64::from(r.t), reached) {
                 tally.rays_starting_on_a_wall += 1;
                 continue;
             }
@@ -153,7 +153,7 @@ fn point_queries_agree_with_detour() {
                 hit.t == f64::MAX && path == r.path
             } else {
                 let dir = (e - s) / len;
-                let across = (hit.t - r.t as f64).abs() * len * dir.dot(theirs_normal).abs();
+                let across = (hit.t - f64::from(r.t)).abs() * len * dir.dot(theirs_normal).abs();
                 hit.t != f64::MAX && path == r.path && (hit.normal - theirs_normal).length() < 1e-3 && across <= 1.5
             };
             if !ok {
@@ -165,7 +165,7 @@ fn point_queries_agree_with_detour() {
 
         for (k, m) in q.move_along_surface.iter().enumerate() {
             let (pos, visited) = w.move_along_surface(pref(m.start_poly), mm(m.start), mm(m.end));
-            let visited: Vec<i32> = visited.iter().map(|p| p.poly as i32).collect();
+            let visited: Vec<i32> = visited.iter().map(|p| i32::from(p.poly)).collect();
             let t = mm(m.result);
             let off = (pos - t).abs().max_element();
             if visited != m.visited && off <= 2.0 && visited.first() == m.visited.first() {

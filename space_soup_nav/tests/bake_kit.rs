@@ -35,7 +35,7 @@ fn every_piece_bakes_to_a_valid_asset_whose_doorways_reach_their_sockets() {
     let mut problems = Vec::new();
     for piece in &index.pieces {
         let mesh = TriMesh::load(&dir.join(format!("{}.obj", piece.piece))).unwrap();
-        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
         let sockets: Vec<SocketSpec> = piece
             .doorways
             .iter()

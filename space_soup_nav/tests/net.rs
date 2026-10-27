@@ -85,13 +85,13 @@ fn door_states_carry_over_to_another_headset() {
 const EXT: DVec3 = DVec3::new(500.0, 2000.0, 500.0);
 
 fn mm(v: [f32; 3]) -> DVec3 {
-    DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64) * 1000.0
+    DVec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2])) * 1000.0
 }
 
 /// The scenario's world, as `tests/crowd.rs` builds it. Each headset bakes its own.
 fn world_for(s: &Scenario) -> NavWorld {
     let mesh = TriMesh::load(&golden::test_data_dir().join("meshes").join(&s.mesh)).unwrap();
-    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
     let mut settings = common::settings(&common::config("human_cs10_monotone"));
     settings.agent_radius = s.agents[0].radius;
     let input = PieceInput { name: &s.name, vertices: &verts, triangles: &mesh.triangles, sockets: &[], links: Vec::new() };
@@ -108,7 +108,7 @@ fn start(s: &Scenario, w: &NavWorld) -> Crowd {
     let mut crowd = Crowd::new(w, CrowdSettings::default());
     for a in &s.agents {
         let id = crowd.add_agent(
-            AgentParams { radius_mm: a.radius as f64 * 1000.0, max_speed_mm_s: a.max_speed as f64 * 1000.0, priority: 0 },
+            AgentParams { radius_mm: f64::from(a.radius) * 1000.0, max_speed_mm_s: f64::from(a.max_speed) * 1000.0, priority: 0 },
             w.nearest_poly(mm(a.start), EXT).unwrap().point,
         );
         crowd.set_goal(id, match a.goal {
@@ -122,10 +122,10 @@ fn start(s: &Scenario, w: &NavWorld) -> Crowd {
 /// One tick the way the game does it: players in, crowd update, agents moved along the floor.
 /// Returns the deepest overlap between agents this tick, mm.
 fn tick(s: &Scenario, w: &NavWorld, g: &RoomGraph, crowd: &mut Crowd, t: f64) -> f64 {
-    let dt = s.dt as f64;
+    let dt = f64::from(s.dt);
     for i in 0..s.players.len() {
         let (now, next) = (mm(s.player_at(i, t as f32).to_array()), mm(s.player_at(i, (t + dt) as f32).to_array()));
-        crowd.set_player(i, Player { pos: now, vel: (next - now) / dt, radius_mm: s.players[i].radius as f64 * 1000.0 });
+        crowd.set_player(i, Player { pos: now, vel: (next - now) / dt, radius_mm: f64::from(s.players[i].radius) * 1000.0 });
     }
     crowd.update(w, g, dt);
     for i in 0..crowd.agents.len() {
@@ -146,7 +146,7 @@ fn tick(s: &Scenario, w: &NavWorld, g: &RoomGraph, crowd: &mut Crowd, t: f64) ->
 }
 
 fn all_arrived(s: &Scenario, crowd: &Crowd) -> bool {
-    let r = s.pass.arrive_radius as f64 * 1000.0;
+    let r = f64::from(s.pass.arrive_radius) * 1000.0;
     crowd.agents.iter().all(|a| match a.goal {
         Goal::Point(p) => ((a.pos.x - p.x).powi(2) + (a.pos.z - p.z).powi(2)).sqrt() <= r,
         _ => true,
@@ -156,9 +156,9 @@ fn all_arrived(s: &Scenario, crowd: &Crowd) -> bool {
 /// A scenario run, handed to a new host at `handover_s` if given: when everyone with a point goal
 /// had arrived, when an agent first reached a player, and the deepest overlap, mm.
 fn run(s: &Scenario, handover_s: Option<f64>) -> (Option<f64>, Option<f64>, f64) {
-    let dt = s.dt as f64;
-    let steps = (s.duration_s as f64 / dt) as usize;
-    let reach = s.pass.reach as f64 * 1000.0;
+    let dt = f64::from(s.dt);
+    let steps = (f64::from(s.duration_s) / dt) as usize;
+    let reach = f64::from(s.pass.reach) * 1000.0;
     let mut w = world_for(s);
     let mut g = w.room_graph();
     let mut crowd = start(s, &w);
@@ -200,20 +200,20 @@ fn run(s: &Scenario, handover_s: Option<f64>) -> (Option<f64>, Option<f64>, f64)
 fn a_new_host_takes_over_any_scenario_without_it_showing() {
     for s in scenario::load_all(&golden::test_data_dir()).unwrap() {
         let (arrived, contact, _) = run(&s, None);
-        let max_overlap = s.pass.max_overlap as f64 * 1000.0;
+        let max_overlap = f64::from(s.pass.max_overlap) * 1000.0;
         let end = arrived.or(contact).expect("the uninterrupted run finishes");
         for k in 1..=4 {
-            let h = (end * k as f64 / 5.0 / s.dt as f64).round() * s.dt as f64;
+            let h = (end * f64::from(k) / 5.0 / f64::from(s.dt)).round() * f64::from(s.dt);
             let (a, c, overlap) = run(&s, Some(h));
             eprintln!("{:24} handed over at {h:4.1} s: arrived {a:?} (uninterrupted {arrived:?}), contact {c:?} ({contact:?}), overlap {overlap:.0} mm", s.name);
             assert!(overlap <= max_overlap, "{}: overlap {overlap:.0} mm", s.name);
             if let (Some(limit), Some(base)) = (s.pass.all_arrive_within_s, arrived) {
                 let a = a.unwrap_or_else(|| panic!("{} handed over at {h} s: not everyone arrived", s.name));
-                assert!(a <= limit as f64 && a <= base + 0.5, "{} handed over at {h} s: arrived {a:.1} s, uninterrupted {base:.1} s", s.name);
+                assert!(a <= f64::from(limit) && a <= base + 0.5, "{} handed over at {h} s: arrived {a:.1} s, uninterrupted {base:.1} s", s.name);
             }
             if let (Some(limit), Some(base)) = (s.pass.first_contact_within_s, contact) {
                 let c = c.unwrap_or_else(|| panic!("{} handed over at {h} s: never reached the player", s.name));
-                assert!(c <= limit as f64 && c <= base + 0.5, "{} handed over at {h} s: contact {c:.1} s, uninterrupted {base:.1} s", s.name);
+                assert!(c <= f64::from(limit) && c <= base + 0.5, "{} handed over at {h} s: contact {c:.1} s, uninterrupted {base:.1} s", s.name);
             }
         }
     }
@@ -225,10 +225,10 @@ fn replanning_everyone_at_once_loses_nobody() {
     let w = world_for(&s);
     let g = w.room_graph();
     let mut crowd = start(&s, &w);
-    let dt = s.dt as f64;
+    let dt = f64::from(s.dt);
     let mut t = 0.0;
     let mut arrived = None;
-    for step in 0..(s.duration_s as f64 / dt) as usize {
+    for step in 0..(f64::from(s.duration_s) / dt) as usize {
         if step > 0 && step % (4.0 / dt) as usize == 0 {
             crowd.replan_all();
         }
@@ -240,7 +240,7 @@ fn replanning_everyone_at_once_loses_nobody() {
     }
     let arrived = arrived.expect("not everyone arrived");
     eprintln!("doorway_swap replanned every 4 s: all arrived at {arrived:.1} s");
-    assert!(arrived <= s.pass.all_arrive_within_s.unwrap() as f64);
+    assert!(arrived <= f64::from(s.pass.all_arrive_within_s.unwrap()));
 }
 
 #[test]
@@ -253,7 +253,7 @@ fn turns_and_slots_survive_a_snapshot_exactly() {
         let mut t = 0.0;
         while t < at {
             tick(&s, &w, &g, &mut crowd, t);
-            t += s.dt as f64;
+            t += f64::from(s.dt);
         }
         let snap = crowd.snapshot();
         assert!(snap.iter().any(|a| a.turn.is_some() || a.slot.is_some()), "{name}: nothing to carry over at {at} s");

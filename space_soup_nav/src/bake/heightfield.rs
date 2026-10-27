@@ -73,7 +73,7 @@ impl Heightfield {
             }
             new.smin = new.smin.min(cur.smin);
             new.smax = new.smax.max(cur.smax);
-            if (new.smax as i32 - cur.smax as i32).abs() <= merge_threshold {
+            if (i32::from(new.smax) - i32::from(cur.smax)).abs() <= merge_threshold {
                 new.area = new.area.max(cur.area);
             }
             column.remove(i);
@@ -113,7 +113,18 @@ fn divide_poly(input: &[[f32; 3]], out_near: &mut [[f32; 3]; 12], out_far: &mut 
     let mut b = n - 1;
     for a in 0..n {
         let same_side = (delta[a] >= 0.0) == (delta[b] >= 0.0);
-        if !same_side {
+        if same_side {
+            let mut to_second = true;
+            if delta[a] >= 0.0 {
+                out_near[m] = input[a];
+                m += 1;
+                to_second = delta[a] == 0.0;
+            }
+            if to_second {
+                out_far[k] = input[a];
+                k += 1;
+            }
+        } else {
             let s = delta[b] / (delta[b] - delta[a]);
             let (va, vb) = (input[a], input[b]);
             let p = [vb[0] + (va[0] - vb[0]) * s, vb[1] + (va[1] - vb[1]) * s, vb[2] + (va[2] - vb[2]) * s];
@@ -125,17 +136,6 @@ fn divide_poly(input: &[[f32; 3]], out_near: &mut [[f32; 3]; 12], out_far: &mut 
                 out_near[m] = input[a];
                 m += 1;
             } else if delta[a] < 0.0 {
-                out_far[k] = input[a];
-                k += 1;
-            }
-        } else {
-            let mut to_second = true;
-            if delta[a] >= 0.0 {
-                out_near[m] = input[a];
-                m += 1;
-                to_second = delta[a] == 0.0;
-            }
-            if to_second {
                 out_far[k] = input[a];
                 k += 1;
             }
@@ -245,12 +245,12 @@ pub fn filter_low_hanging_obstacles(hf: &mut Heightfield, walkable_climb: i32) {
         let mut prev_smax = 0i32;
         for s in column.iter_mut() {
             let walkable = s.area != NULL_AREA;
-            if !walkable && prev_walkable && s.smax as i32 - prev_smax <= walkable_climb {
+            if !walkable && prev_walkable && i32::from(s.smax) - prev_smax <= walkable_climb {
                 s.area = prev_area;
             }
             prev_walkable = walkable;
             prev_area = s.area;
-            prev_smax = s.smax as i32;
+            prev_smax = i32::from(s.smax);
         }
     }
 }
@@ -269,8 +269,8 @@ pub fn filter_ledge_spans(hf: &mut Heightfield, walkable_height: i32, walkable_c
                 if s.area == NULL_AREA {
                     continue;
                 }
-                let floor = s.smax as i32;
-                let ceiling = hf.columns[ci].get(si + 1).map_or(MAX_HEIGHTFIELD_HEIGHT, |n| n.smin as i32);
+                let floor = i32::from(s.smax);
+                let ceiling = hf.columns[ci].get(si + 1).map_or(MAX_HEIGHTFIELD_HEIGHT, |n| i32::from(n.smin));
                 let mut lowest_diff = MAX_HEIGHTFIELD_HEIGHT;
                 let mut lowest_floor = floor;
                 let mut highest_floor = floor;
@@ -281,14 +281,14 @@ pub fn filter_ledge_spans(hf: &mut Heightfield, walkable_height: i32, walkable_c
                         break;
                     }
                     let ncol = &hf.columns[(nx + nz * w) as usize];
-                    let first_ceiling = ncol.first().map_or(MAX_HEIGHTFIELD_HEIGHT, |n| n.smin as i32);
+                    let first_ceiling = ncol.first().map_or(MAX_HEIGHTFIELD_HEIGHT, |n| i32::from(n.smin));
                     if ceiling.min(first_ceiling) - floor >= walkable_height {
                         lowest_diff = -walkable_climb - 1;
                         break;
                     }
                     for (ni, n) in ncol.iter().enumerate() {
-                        let nfloor = n.smax as i32;
-                        let nceiling = ncol.get(ni + 1).map_or(MAX_HEIGHTFIELD_HEIGHT, |m| m.smin as i32);
+                        let nfloor = i32::from(n.smax);
+                        let nceiling = ncol.get(ni + 1).map_or(MAX_HEIGHTFIELD_HEIGHT, |m| i32::from(m.smin));
                         if ceiling.min(nceiling) - floor.max(nfloor) < walkable_height {
                             continue;
                         }
@@ -314,8 +314,8 @@ pub fn filter_ledge_spans(hf: &mut Heightfield, walkable_height: i32, walkable_c
 pub fn filter_low_height_spans(hf: &mut Heightfield, walkable_height: i32) {
     for column in &mut hf.columns {
         for i in 0..column.len() {
-            let ceiling = column.get(i + 1).map_or(MAX_HEIGHTFIELD_HEIGHT, |n| n.smin as i32);
-            if ceiling - (column[i].smax as i32) < walkable_height {
+            let ceiling = column.get(i + 1).map_or(MAX_HEIGHTFIELD_HEIGHT, |n| i32::from(n.smin));
+            if ceiling - i32::from(column[i].smax) < walkable_height {
                 column[i].area = NULL_AREA;
             }
         }

@@ -41,34 +41,34 @@ pub struct ContourSet {
 
 fn corner_height(chf: &CompactHeightfield, x: i32, z: i32, i: usize, dir: usize, is_border_vertex: &mut bool) -> i32 {
     let s = chf.spans[i];
-    let mut ch = s.y as i32;
+    let mut ch = i32::from(s.y);
     let dirp = (dir + 1) & 3;
     let mut regs = [0u32; 4];
-    let code = |k: usize| chf.spans[k].reg as u32 | ((chf.areas[k] as u32) << 16);
+    let code = |k: usize| u32::from(chf.spans[k].reg) | (u32::from(chf.areas[k]) << 16);
     regs[0] = code(i);
     if s.con[dir] != NOT_CONNECTED {
         let ai = chf.neighbour(x, z, dir, s.con[dir]);
         let a = chf.spans[ai];
-        ch = ch.max(a.y as i32);
+        ch = ch.max(i32::from(a.y));
         regs[1] = code(ai);
         if a.con[dirp] != NOT_CONNECTED {
             let ai2 = chf.neighbour(x + DIR_X[dir], z + DIR_Z[dir], dirp, a.con[dirp]);
-            ch = ch.max(chf.spans[ai2].y as i32);
+            ch = ch.max(i32::from(chf.spans[ai2].y));
             regs[2] = code(ai2);
         }
     }
     if s.con[dirp] != NOT_CONNECTED {
         let ai = chf.neighbour(x, z, dirp, s.con[dirp]);
         let a = chf.spans[ai];
-        ch = ch.max(a.y as i32);
+        ch = ch.max(i32::from(a.y));
         regs[3] = code(ai);
         if a.con[dir] != NOT_CONNECTED {
             let ai2 = chf.neighbour(x + DIR_X[dirp], z + DIR_Z[dirp], dir, a.con[dir]);
-            ch = ch.max(chf.spans[ai2].y as i32);
+            ch = ch.max(i32::from(chf.spans[ai2].y));
             regs[2] = code(ai2);
         }
     }
-    let border = BORDER_REG as u32;
+    let border = u32::from(BORDER_REG);
     for j in 0..4 {
         let (a, b, c, d) = (j, (j + 1) & 3, (j + 2) & 3, (j + 3) & 3);
         let two_same_exts = (regs[a] & regs[b] & border) != 0 && regs[a] == regs[b];
@@ -115,7 +115,7 @@ fn walk_contour(chf: &CompactHeightfield, mut x: i32, mut z: i32, mut i: usize, 
             let s = chf.spans[i];
             if s.con[dir] != NOT_CONNECTED {
                 let ai = chf.neighbour(x, z, dir, s.con[dir]);
-                r = chf.spans[ai].reg as i32;
+                r = i32::from(chf.spans[ai].reg);
                 if area != chf.areas[ai] {
                     is_area_border = true;
                 }
@@ -261,11 +261,11 @@ fn simplify_contour(points: &[[i32; 4]], simplified: &mut Vec<[i32; 4]>, max_err
                     }
                 }
             }
-            if maxi != -1 {
+            if maxi == -1 {
+                i += 1;
+            } else {
                 let p = points[maxi as usize];
                 simplified.insert(i + 1, [p[0], p[1], p[2], maxi]);
-            } else {
-                i += 1;
             }
         }
     }
@@ -323,10 +323,10 @@ fn between(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4]) -> bool {
     if !collinear(a, b, c) {
         return false;
     }
-    if a[0] != b[0] {
-        (a[0] <= c[0] && c[0] <= b[0]) || (a[0] >= c[0] && c[0] >= b[0])
-    } else {
+    if a[0] == b[0] {
         (a[2] <= c[2] && c[2] <= b[2]) || (a[2] >= c[2] && c[2] >= b[2])
+    } else {
+        (a[0] <= c[0] && c[0] <= b[0]) || (a[0] >= c[0] && c[0] >= b[0])
     }
 }
 fn intersect(a: &[i32; 4], b: &[i32; 4], c: &[i32; 4], d: &[i32; 4]) -> bool {
@@ -493,7 +493,7 @@ pub fn build_contours(chf: &CompactHeightfield, max_error: f32, max_edge_len: i3
     for z in 0..h {
         for x in 0..w {
             let c = chf.cells[(x + z * w) as usize];
-            for i in c.index as usize..(c.index + c.count as u32) as usize {
+            for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                 let s = chf.spans[i];
                 if s.reg == 0 || s.reg & BORDER_REG != 0 {
                     flags[i] = 0;
@@ -519,7 +519,7 @@ pub fn build_contours(chf: &CompactHeightfield, max_error: f32, max_edge_len: i3
     for z in 0..h {
         for x in 0..w {
             let c = chf.cells[(x + z * w) as usize];
-            for i in c.index as usize..(c.index + c.count as u32) as usize {
+            for i in c.index as usize..(c.index + u32::from(c.count)) as usize {
                 if flags[i] == 0 || flags[i] == 0xf {
                     flags[i] = 0;
                     continue;

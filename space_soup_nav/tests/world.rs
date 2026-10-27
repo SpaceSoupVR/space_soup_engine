@@ -119,7 +119,7 @@ fn every_generated_level_assembles_with_every_doorway_joined_and_one_connected_f
         assert!(impassable.is_empty(), "seed {}: joins a human cannot pass: {impassable:?}", layout.seed);
         assert_eq!(unjoined, layout.unsealed, "seed {}", layout.seed);
 
-        let start = w.connections.iter().flat_map(|c| c.links.first()).map(|&l| w.links[l as usize].from).next().unwrap();
+        let start = w.connections.iter().filter_map(|c| c.links.first()).map(|&l| w.links[l as usize].from).next().unwrap();
         let portal_polys: Vec<PolyRef> = w.links.iter().map(|l| l.from).collect();
         let cut_off = portal_polys.iter().filter(|&&p| !w.same_component(start, p)).count();
         assert_eq!(cut_off, 0, "seed {}: {cut_off} doorway polygons are cut off from the rest", layout.seed);
@@ -168,7 +168,7 @@ fn closing_doors_agrees_between_the_floor_and_the_room_graph() {
         let split = !w.same_component(pa, pb);
         let routed = graph.route(&w, conn.a.island, conn.b.island).is_some();
         assert_eq!(split, !routed, "join {c}: the polygons and the room graph disagree about the closed door");
-        splits += split as usize;
+        splits += usize::from(split);
         w.set_gate(conn.gate.unwrap(), true);
         assert!(w.same_component(pa, pb));
     }
@@ -203,7 +203,7 @@ fn agents_walk_across_every_welded_doorway_in_small_steps() {
                 let s = w.socket(from).unwrap();
                 let out = s.outward.vec().as_dvec3();
                 let mid = (s.a + s.b).as_dvec3() / 2.0;
-                let (start, goal) = (mid - out * 400.0, mid + out * (400.0 + c.gap_mm.max(0) as f64));
+                let (start, goal) = (mid - out * 400.0, mid + out * (400.0 + f64::from(c.gap_mm.max(0))));
                 let ext = DVec3::new(100.0, 500.0, 100.0);
                 let Some(n) = w.nearest_poly_in(from.island, start, ext) else { continue };
                 let (mut pos, mut poly) = (n.point, n.poly);

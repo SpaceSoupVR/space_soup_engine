@@ -1,7 +1,7 @@
 //! Prints each real doorway's walkable span for an agent config, and the clear opening that
 //! implies (span + 2 x radius).
 //!
-//!   cargo run --release --example doorway_widths [config]
+//!   `cargo run --release --example doorway_widths [config]`
 
 use space_soup_nav::asset::Dir;
 use space_soup_nav::bake::export::{bake_piece, ExportOptions, PieceInput, SocketSpec};
@@ -35,7 +35,7 @@ fn main() {
     for p in index["pieces"].as_array().unwrap() {
         let name = p["piece"].as_str().unwrap();
         let mesh = TriMesh::load(&dir.join(format!("{name}.obj"))).unwrap();
-        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+        let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
         let sockets: Vec<SocketSpec> = p["doorways"]
             .as_array()
             .unwrap()

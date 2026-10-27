@@ -108,7 +108,7 @@ struct Cut {
 
 impl Cut {
     fn side(&self, v: IVec3) -> i64 {
-        self.sign as i64 * v[self.axis] as i64 - self.plane as i64
+        i64::from(self.sign) * i64::from(v[self.axis]) - i64::from(self.plane)
     }
 
     /// Where segment `a`-`b` meets the plane. Computed from the endpoints in a fixed order, so the
@@ -121,7 +121,7 @@ impl Cut {
             out[k] = if k == self.axis {
                 self.plane * self.sign
             } else {
-                (p[k] as i64 + round_div((q[k] - p[k]) as i64 * sp, sp - sq)) as i32
+                (i64::from(p[k]) + round_div(i64::from(q[k] - p[k]) * sp, sp - sq)) as i32
             };
         }
         out
@@ -197,12 +197,12 @@ fn fan_height(v: &[IVec3], p: IVec3) -> Option<f64> {
 }
 
 pub fn agent_class(s: &Settings) -> AgentClass {
-    let mm = |m: f32| (m as f64 * 1000.0).round() as i32;
+    let mm = |m: f32| (f64::from(m) * 1000.0).round() as i32;
     AgentClass {
         radius_mm: mm(s.agent_radius),
         height_mm: mm(s.agent_height),
         climb_mm: mm(s.agent_max_climb),
-        max_slope_cdeg: (s.agent_max_slope_deg as f64 * 100.0).round() as u16,
+        max_slope_cdeg: (f64::from(s.agent_max_slope_deg) * 100.0).round() as u16,
     }
 }
 
@@ -227,14 +227,14 @@ fn check_input(input: &PieceInput, settings: &Settings, scale: [f32; 3]) -> Resu
         return Err(format!("{name}: socket {} at {:?} is not finite", s.name, s.position));
     }
     let n = input.vertices.len() as u64;
-    if let Some(t) = input.triangles.iter().find(|t| t.iter().any(|&i| i as u64 >= n)) {
+    if let Some(t) = input.triangles.iter().find(|t| t.iter().any(|&i| u64::from(i) >= n)) {
         return Err(format!("{name}: triangle {t:?} names a vertex of {n}"));
     }
     let mut lo = [f64::MAX; 3];
     let mut hi = [f64::MIN; 3];
     for p in input.vertices.iter().chain(input.sockets.iter().map(|s| &s.position)) {
         for k in 0..3 {
-            let c = p[k] as f64 * scale[k] as f64;
+            let c = f64::from(p[k]) * f64::from(scale[k]);
             lo[k] = lo[k].min(c);
             hi[k] = hi[k].max(c);
         }
@@ -242,10 +242,10 @@ fn check_input(input: &PieceInput, settings: &Settings, scale: [f32; 3]) -> Resu
     if lo[0] > hi[0] {
         return Ok(());
     }
-    let reach = 2.0 * (settings.agent_radius as f64 + 4.0 * settings.cell_size as f64 + 1.0);
-    let cs = settings.cell_size as f64;
+    let reach = 2.0 * (f64::from(settings.agent_radius) + 4.0 * f64::from(settings.cell_size) + 1.0);
+    let cs = f64::from(settings.cell_size);
     let columns = ((hi[0] - lo[0] + reach) / cs + 1.0) * ((hi[2] - lo[2] + reach) / cs + 1.0);
-    let far = lo.iter().chain(&hi).any(|c| c.abs() * 1000.0 > crate::asset::MAX_COORD_MM as f64);
+    let far = lo.iter().chain(&hi).any(|c| c.abs() * 1000.0 > f64::from(crate::asset::MAX_COORD_MM));
     if columns > MAX_BAKE_COLUMNS || far {
         return Err(format!(
             "{name}: spans ({:.1}, {:.1}, {:.1}) to ({:.1}, {:.1}, {:.1}) m, too large to bake at {cs} m cells",
@@ -293,7 +293,7 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
         for (a, b) in boxes {
             let slab = TriMesh::cuboid(a.min(b), a.max(b));
             let base = verts.len() as u32;
-            verts.extend(slab.vertices.iter().map(|v| v.to_array()));
+            verts.extend(slab.vertices.iter().map(glam::Vec3::to_array));
             tris.extend(slab.triangles.iter().map(|t| [t[0] + base, t[1] + base, t[2] + base]));
         }
     }
@@ -304,18 +304,18 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
     let pm = &b.polymesh;
     let mut report = BakeReport { recast_polys: pm.npolys(), build_ms, ..Default::default() };
 
-    let cs_mm = (pm.cs as f64 * 1000.0).round() as i32;
-    let ch_mm = (pm.ch as f64 * 1000.0).round() as i32;
-    if ((pm.cs as f64 * 1000.0) - cs_mm as f64).abs() > 1e-3 || ((pm.ch as f64 * 1000.0) - ch_mm as f64).abs() > 1e-3 {
+    let cs_mm = (f64::from(pm.cs) * 1000.0).round() as i32;
+    let ch_mm = (f64::from(pm.ch) * 1000.0).round() as i32;
+    if ((f64::from(pm.cs) * 1000.0) - f64::from(cs_mm)).abs() > 1e-3 || ((f64::from(pm.ch) * 1000.0) - f64::from(ch_mm)).abs() > 1e-3 {
         return Err(format!("cell size {} / height {} must be whole millimetres", pm.cs, pm.ch));
     }
     let origin = IVec3::new(
-        (pm.bmin[0] as f64 * 1000.0).round() as i32,
-        (pm.bmin[1] as f64 * 1000.0).round() as i32,
-        (pm.bmin[2] as f64 * 1000.0).round() as i32,
+        (f64::from(pm.bmin[0]) * 1000.0).round() as i32,
+        (f64::from(pm.bmin[1]) * 1000.0).round() as i32,
+        (f64::from(pm.bmin[2]) * 1000.0).round() as i32,
     );
-    let lattice = |v: [u16; 3]| origin + IVec3::new(v[0] as i32 * cs_mm, v[1] as i32 * ch_mm, v[2] as i32 * cs_mm);
-    let tol = opts.flat_tolerance_mm as f64;
+    let lattice = |v: [u16; 3]| origin + IVec3::new(i32::from(v[0]) * cs_mm, i32::from(v[1]) * ch_mm, i32::from(v[2]) * cs_mm);
+    let tol = f64::from(opts.flat_tolerance_mm);
     let mut polys: Vec<WorkPoly> = Vec::new();
     for i in 0..pm.npolys() {
         let pv: Vec<IVec3> = pm.poly_verts(i).iter().map(|&v| lattice(pm.verts[v as usize])).collect();
@@ -324,15 +324,15 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
             if (k as usize) < pv.len() {
                 return pv[k as usize];
             }
-            let v = b.detail.verts[(vb + k as u32) as usize];
+            let v = b.detail.verts[(vb + u32::from(k)) as usize];
             IVec3::new(
-                (v[0] as f64 * 1000.0).round() as i32,
-                ((v[1] - pm.ch) as f64 * 1000.0).round() as i32,
-                (v[2] as f64 * 1000.0).round() as i32,
+                (f64::from(v[0]) * 1000.0).round() as i32,
+                (f64::from(v[1] - pm.ch) * 1000.0).round() as i32,
+                (f64::from(v[2]) * 1000.0).round() as i32,
             )
         };
         let dtris: Vec<[IVec3; 3]> = b.detail.tris[tb as usize..(tb + tc) as usize].iter().map(|t| [dv(t[0]), dv(t[1]), dv(t[2])]).collect();
-        let flat = dtris.iter().flatten().all(|&v| fan_height(&pv, v).is_none_or(|h| (h - v.y as f64).abs() <= tol));
+        let flat = dtris.iter().flatten().all(|&v| fan_height(&pv, v).is_none_or(|h| (h - f64::from(v.y)).abs() <= tol));
         let area = if pm.areas[i] == WALKABLE_AREA { 0 } else { pm.areas[i] };
         polys.push(WorkPoly { verts: pv, area, detail: if flat { None } else { Some(dtris) } });
     }
@@ -342,7 +342,7 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
         .map(|s| {
             let axis = if matches!(s.outward, Dir::PosX | Dir::NegX) { 0 } else { 2 };
             let sign = s.outward.vec()[axis];
-            let pos = (s.position[axis] as f64 * 1000.0).round() as i32;
+            let pos = (f64::from(s.position[axis]) * 1000.0).round() as i32;
             Cut { axis, sign, plane: sign * pos }
         })
         .collect();
@@ -366,19 +366,19 @@ pub fn bake_piece(input: &PieceInput, settings: &Settings, scale: [f32; 3], opts
     let doorway = |v: IVec3| -> Option<usize> {
         cuts.iter().zip(&sockets).position(|(c, s)| {
             let lat = if c.axis == 0 { 2 } else { 0 };
-            let centre = (s.position[lat] as f64 * 1000.0).round() as i32;
-            let half = (opts.socket_half_width as f64 * 1000.0).round() as i32;
+            let centre = (f64::from(s.position[lat]) * 1000.0).round() as i32;
+            let half = (f64::from(opts.socket_half_width) * 1000.0).round() as i32;
             c.side(v) == 0 && (v[lat] - centre).abs() <= half
         })
     };
     let snap = |v: IVec3| -> IVec3 {
         match doorway(v) {
-            Some(k) => IVec3::new(v.x, (sockets[k].position[1] as f64 * 1000.0).round() as i32, v.z),
+            Some(k) => IVec3::new(v.x, (f64::from(sockets[k].position[1]) * 1000.0).round() as i32, v.z),
             None => v,
         }
     };
-    for p in polys.iter_mut() {
-        for v in p.verts.iter_mut() {
+    for p in &mut polys {
+        for v in &mut p.verts {
             *v = snap(*v);
         }
         if let Some(d) = p.detail.as_mut() {
@@ -488,7 +488,7 @@ fn merge_convex(polys: &mut Vec<WorkPoly>) {
                     continue;
                 }
                 let d = u - v;
-                let len = d.x as i64 * d.x as i64 + d.z as i64 * d.z as i64;
+                let len = i64::from(d.x) * i64::from(d.x) + i64::from(d.z) * i64::from(d.z);
                 if best.is_none_or(|b| len > b.0) {
                     best = Some((len, pa, ea, pb, eb));
                 }
@@ -562,9 +562,9 @@ fn assemble(
         .iter()
         .map(|s| {
             let p = IVec3::new(
-                (s.position[0] as f64 * 1000.0).round() as i32,
-                (s.position[1] as f64 * 1000.0).round() as i32,
-                (s.position[2] as f64 * 1000.0).round() as i32,
+                (f64::from(s.position[0]) * 1000.0).round() as i32,
+                (f64::from(s.position[1]) * 1000.0).round() as i32,
+                (f64::from(s.position[2]) * 1000.0).round() as i32,
             );
             Socket { name: s.name.clone(), a: p, b: p, outward: s.outward, size_class: s.size_class.clone(), edges: Vec::new() }
         })
@@ -620,15 +620,12 @@ fn assemble(
             for t in d {
                 let mut tri = [0u8; 3];
                 for (k, v) in t.iter().enumerate() {
-                    let local = match p.verts.iter().position(|pv| pv == v) {
-                        Some(i) => i,
-                        None => {
-                            let i = own.iter().position(|o| o == v).unwrap_or_else(|| {
-                                own.push(*v);
-                                own.len() - 1
-                            });
-                            p.verts.len() + i
-                        }
+                    let local = if let Some(i) = p.verts.iter().position(|pv| pv == v) { i } else {
+                        let i = own.iter().position(|o| o == v).unwrap_or_else(|| {
+                            own.push(*v);
+                            own.len() - 1
+                        });
+                        p.verts.len() + i
                     };
                     if local > u8::MAX as usize {
                         return Err(format!("{}: polygon {pi} has too much height detail", input.name));
@@ -645,7 +642,7 @@ fn assemble(
     let mut asset = NavPieceAsset {
         name: input.name.to_string(),
         agent: agent_class(settings),
-        scale_e4: scale.map(|s| (s as f64 * 10000.0).round() as u32),
+        scale_e4: scale.map(|s| (f64::from(s) * 10000.0).round() as u32),
         vertices,
         polys: nav_polys,
         detail,

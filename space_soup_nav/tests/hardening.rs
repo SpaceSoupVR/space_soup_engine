@@ -34,7 +34,7 @@ impl Rng {
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
-        h ^= b as u64;
+        h ^= u64::from(b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     h
@@ -52,7 +52,7 @@ fn rehash(mut bytes: Vec<u8>) -> Vec<u8> {
 
 fn mutate(rng: &mut Rng, bytes: &[u8]) -> Vec<u8> {
     let mut b = bytes.to_vec();
-    for _ in 0..1 + rng.below(4) {
+    for _ in 0..=rng.below(4) {
         let body = b.len().saturating_sub(8);
         if body == 0 {
             break;
@@ -235,7 +235,7 @@ fn random_queries_on_real_levels_agree_with_the_world() {
         for layout in common::layouts().iter().take(4) {
             let mut w = common::assemble(&kit, layout, 0);
             let graph = w.room_graph();
-            let mut rng = Rng(layout.seed as u64 * 7919 + 1);
+            let mut rng = Rng(u64::from(layout.seed) * 7919 + 1);
             for g in 0..w.gates.len() as u32 {
                 if rng.below(4) == 0 {
                     w.set_gate(g, false);
@@ -304,11 +304,11 @@ fn bad_joins_are_refused_and_good_ones_hold() {
                 if is_good(a, b) {
                     continue;
                 }
-                let r = catch_unwind(AssertUnwindSafe(|| w.connect(a, b, Some("door"))));
+                let r = catch_unwind(AssertUnwindSafe(|| w.connect(a, b, Some("door"))))
+                    .unwrap_or_else(|_| panic!("seed {}: connect {a:?} {b:?} panicked", layout.seed));
                 match r {
-                    Ok(Err(_)) => refused += 1,
-                    Ok(Ok(_)) => panic!("seed {}: joined {a:?} and {b:?}, which the level does not join", layout.seed),
-                    Err(_) => panic!("seed {}: connect {a:?} {b:?} panicked", layout.seed),
+                    Err(_) => refused += 1,
+                    Ok(_) => panic!("seed {}: joined {a:?} and {b:?}, which the level does not join", layout.seed),
                 }
             }
             let (a, b) = todo.swap_remove(rng.below(todo.len()));
@@ -348,7 +348,7 @@ fn exercise_world(w: &mut NavWorld, rng: &mut Rng) {
     let (lo, hi) = w.islands.iter().fold((IVec3::MAX, IVec3::MIN), |(a, b), i| (a.min(i.min), b.max(i.max)));
     let ext = DVec3::new(1500.0, 2500.0, 1500.0);
     for _ in 0..20 {
-        let mut pick = || DVec3::new(rng.range(lo.x as f64, hi.x as f64), rng.range(lo.y as f64, hi.y as f64), rng.range(lo.z as f64, hi.z as f64));
+        let mut pick = || DVec3::new(rng.range(f64::from(lo.x), f64::from(hi.x)), rng.range(f64::from(lo.y), f64::from(hi.y)), rng.range(f64::from(lo.z), f64::from(hi.z)));
         let (a, b) = (pick(), pick());
         if let (Some(p), Some(na), Some(nb)) = (find_path(w, a, b, ext), w.nearest_poly(a, ext), w.nearest_poly(b, ext)) {
             assert_eq!(p.complete, w.same_component(na.poly, nb.poly));

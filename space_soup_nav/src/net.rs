@@ -79,7 +79,7 @@ impl LevelDigest {
             b.extend_from_slice(&j.a.1.to_le_bytes());
             b.extend_from_slice(&j.b.0.to_le_bytes());
             b.extend_from_slice(&j.b.1.to_le_bytes());
-            b.push(j.door as u8);
+            b.push(u8::from(j.door));
         }
         fnv1a64(&b)
     }

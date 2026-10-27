@@ -92,10 +92,10 @@ fn between(a: &P, b: &P, c: &P) -> bool {
     if !collinear(a, b, c) {
         return false;
     }
-    if a[0] != b[0] {
-        (a[0] <= c[0] && c[0] <= b[0]) || (a[0] >= c[0] && c[0] >= b[0])
-    } else {
+    if a[0] == b[0] {
         (a[2] <= c[2] && c[2] <= b[2]) || (a[2] >= c[2] && c[2] >= b[2])
+    } else {
+        (a[0] <= c[0] && c[0] <= b[0]) || (a[0] >= c[0] && c[0] >= b[0])
     }
 }
 fn intersect(a: &P, b: &P, c: &P, d: &P) -> bool {
@@ -235,11 +235,11 @@ fn vertex_hash(x: i32, y: i32, z: i32) -> usize {
 
 /// `addVertex`: shares a vertex with any already added at the same x, z and within 2 cells of y.
 fn add_vertex(x: u16, y: u16, z: u16, verts: &mut Vec<[u16; 3]>, first: &mut [i32], next_vert: &mut Vec<i32>) -> u16 {
-    let bucket = vertex_hash(x as i32, 0, z as i32);
+    let bucket = vertex_hash(i32::from(x), 0, i32::from(z));
     let mut i = first[bucket];
     while i != -1 {
         let v = verts[i as usize];
-        if v[0] == x && (v[1] as i32 - y as i32).abs() <= 2 && v[2] == z {
+        if v[0] == x && (i32::from(v[1]) - i32::from(y)).abs() <= 2 && v[2] == z {
             return i as u16;
         }
         i = next_vert[i as usize];
@@ -252,7 +252,7 @@ fn add_vertex(x: u16, y: u16, z: u16, verts: &mut Vec<[u16; 3]>, first: &mut [i3
 }
 
 fn uleft(a: [u16; 3], b: [u16; 3], c: [u16; 3]) -> bool {
-    (b[0] as i32 - a[0] as i32) * (c[2] as i32 - a[2] as i32) - (c[0] as i32 - a[0] as i32) * (b[2] as i32 - a[2] as i32) < 0
+    (i32::from(b[0]) - i32::from(a[0])) * (i32::from(c[2]) - i32::from(a[2])) - (i32::from(c[0]) - i32::from(a[0])) * (i32::from(b[2]) - i32::from(a[2])) < 0
 }
 
 /// `getPolyMergeValue`: the squared length of the shared edge if merging keeps the polygon
@@ -292,8 +292,8 @@ fn poly_merge_value(pa: &[u16], pb: &[u16], verts: &[[u16; 3]], nvp: usize) -> (
         return (-1, 0, 0);
     }
     let (a, b) = (v(pa[ea]), v(pa[(ea + 1) % na]));
-    let dx = a[0] as i32 - b[0] as i32;
-    let dz = a[2] as i32 - b[2] as i32;
+    let dx = i32::from(a[0]) - i32::from(b[0]);
+    let dz = i32::from(a[2]) - i32::from(b[2]);
     (dx * dx + dz * dz, ea, eb)
 }
 
@@ -321,7 +321,7 @@ fn merge_polys(polys: &mut [u16], npolys: &mut usize, verts: &[[u16; 3]], nvp: u
     let mut vert_polys: Vec<Vec<usize>> = vec![Vec::new(); verts.len()];
     let mut candidates: Vec<usize> = Vec::new();
     loop {
-        for list in vert_polys.iter_mut() {
+        for list in &mut vert_polys {
             list.clear();
         }
         for p in 0..*npolys {
@@ -391,12 +391,12 @@ fn can_remove_vertex(mesh: &PolyMesh, rem: u16) -> bool {
         let mut k = nv - 1;
         for j in 0..nv {
             if p[j] == rem || p[k] == rem {
-                let (mut a, mut b) = (p[j] as i32, p[k] as i32);
-                if b == rem as i32 {
+                let (mut a, mut b) = (i32::from(p[j]), i32::from(p[k]));
+                if b == i32::from(rem) {
                     std::mem::swap(&mut a, &mut b);
                 }
                 let mut exists = false;
-                for e in edges.iter_mut() {
+                for e in &mut edges {
                     if e[1] == b {
                         e[2] += 1;
                         exists = true;
@@ -428,7 +428,7 @@ fn remove_vertex(mesh: &mut PolyMesh, rem: u16, max_tris: usize) {
             for j in 0..nv {
                 let (pj, pk) = (mesh.polys[base + j], mesh.polys[base + k]);
                 if pj != rem && pk != rem {
-                    edges.push([pk as i32, pj as i32, mesh.regs[i] as i32, mesh.areas[i] as i32]);
+                    edges.push([i32::from(pk), i32::from(pj), i32::from(mesh.regs[i]), i32::from(mesh.areas[i])]);
                 }
                 k = j;
             }
@@ -459,11 +459,11 @@ fn remove_vertex(mesh: &mut PolyMesh, rem: u16, max_tris: usize) {
             }
         }
     }
-    for e in edges.iter_mut() {
-        if e[0] > rem as i32 {
+    for e in &mut edges {
+        if e[0] > i32::from(rem) {
             e[0] -= 1;
         }
-        if e[1] > rem as i32 {
+        if e[1] > i32::from(rem) {
             e[1] -= 1;
         }
     }
@@ -508,7 +508,7 @@ fn remove_vertex(mesh: &mut PolyMesh, rem: u16, max_tris: usize) {
         .iter()
         .map(|&pi| {
             let v = mesh.verts[pi as usize];
-            [v[0] as i32, v[1] as i32, v[2] as i32, 0]
+            [i32::from(v[0]), i32::from(v[1]), i32::from(v[2]), 0]
         })
         .collect();
     let mut thole: Vec<u32> = (0..nhole as u32).collect();
@@ -719,9 +719,9 @@ pub fn build_poly_mesh(cset: &ContourSet, nvp: usize) -> PolyMesh {
                 let vb = mesh.verts[mesh.polys[base + nj] as usize];
                 let word = if va[0] == 0 && vb[0] == 0 {
                     Some(0)
-                } else if va[2] as i32 == h && vb[2] as i32 == h {
+                } else if i32::from(va[2]) == h && i32::from(vb[2]) == h {
                     Some(1)
-                } else if va[0] as i32 == w && vb[0] as i32 == w {
+                } else if i32::from(va[0]) == w && i32::from(vb[0]) == w {
                     Some(2)
                 } else if va[2] == 0 && vb[2] == 0 {
                     Some(3)

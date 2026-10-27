@@ -1188,6 +1188,7 @@ impl GroundPatch {
     /// to the grid's triangles ([`TerrainSource::patch`]), and for physics,
     /// which cooks them beside its height field -- so the two never disagree
     /// about a triangle at the region's edge.
+    #[allow(unknown_lints, reason = "the next lint exists only in newer clippy")]
     #[allow(clippy::chunks_exact_to_as_chunks, reason = "public signature yields slices, not arrays")]
     pub fn triangles_in(&self, region: Aabb) -> impl Iterator<Item = &[u32]> + '_ {
         self.indices.chunks_exact(3).filter(move |tri| {

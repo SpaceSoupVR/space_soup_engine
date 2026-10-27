@@ -93,7 +93,7 @@ pub struct GoldenContour {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoldenPoly {
-    /// Vertex indices; Recast's RC_MESH_NULL_IDX padding removed.
+    /// Vertex indices; Recast's `RC_MESH_NULL_IDX` padding removed.
     pub verts: Vec<u16>,
     /// Per edge: Recast's neighbour word (0x8000 bit = border/portal flag, low bits = polygon or direction).
     pub neis: Vec<u16>,
@@ -154,7 +154,7 @@ pub struct RaycastQuery {
     pub start: [f32; 3],
     pub end: [f32; 3],
     pub start_poly: i32,
-    /// Fraction of the way the ray got; Detour returns f32::MAX when it reached the end.
+    /// Fraction of the way the ray got; Detour returns `f32::MAX` when it reached the end.
     pub t: f32,
     pub hit_normal: [f32; 3],
     pub path: Vec<i32>,
@@ -225,9 +225,13 @@ pub fn load_all(payload: &Path) -> Result<Vec<(String, Golden)>, String> {
     let dir = payload.join("golden");
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".json"))
+        .filter(|n| {
+            #[expect(clippy::case_sensitive_file_extension_comparisons, reason = "the golden tool writes these names in lower case")]
+            let is_json = n.ends_with(".json");
+            is_json
+        })
         .collect();
     names.sort();
     names

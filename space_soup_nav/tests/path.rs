@@ -20,7 +20,7 @@ struct Lcg(u32);
 impl Lcg {
     fn next(&mut self) -> f64 {
         self.0 = self.0.wrapping_mul(1664525).wrapping_add(1013904223);
-        (self.0 >> 8) as f64 / 16777216.0
+        f64::from(self.0 >> 8) / 16777216.0
     }
 }
 
@@ -69,7 +69,7 @@ fn in_welded_gap(w: &NavWorld, p: DVec3) -> bool {
         let axis = if matches!(s.outward, space_soup_nav::asset::Dir::PosX | space_soup_nav::asset::Dir::NegX) { 0 } else { 2 };
         let lat = 2 - axis;
         let m = c.midpoint.as_dvec3();
-        (p[axis] - m[axis]).abs() <= c.gap_mm.abs() as f64 && (p[lat] - m[lat]).abs() <= 2000.0
+        (p[axis] - m[axis]).abs() <= f64::from(c.gap_mm.abs()) && (p[lat] - m[lat]).abs() <= 2000.0
     })
 }
 
@@ -216,7 +216,7 @@ fn paths_are_walkable_and_near_the_true_shortest() {
 fn synthetic(name: &str) -> Arc<NavPieceAsset> {
     use space_soup_nav::bake::export::{bake_piece, ExportOptions, PieceInput};
     let mesh = space_soup_nav::obj::TriMesh::load(&space_soup_nav::golden::test_data_dir().join(format!("meshes/synthetic/{name}.obj"))).unwrap();
-    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.to_array()).collect();
+    let verts: Vec<[f32; 3]> = mesh.vertices.iter().map(glam::Vec3::to_array).collect();
     let input = PieceInput { name, vertices: &verts, triangles: &mesh.triangles, sockets: &[], links: Vec::new() };
     Arc::new(bake_piece(&input, &common::settings(&common::config("human_cs10_monotone")), [1.0; 3], &ExportOptions::default()).unwrap().0)
 }
@@ -252,12 +252,12 @@ fn across_a_whole_level_through_doorways_and_doors() {
         }
         lengths.push(p.length());
     }
-    expanded.sort();
+    expanded.sort_unstable();
     let n = lengths.len() as f64;
     println!(
         "{} paths across seed {}: locate {:.3} ms + search {:.3} ms each (Mac, release), median {} / max {} polygons expanded, longest {:.0} m",
         lengths.len(), layout.seed, locate.as_secs_f64() * 1000.0 / n, search.as_secs_f64() * 1000.0 / n, expanded[expanded.len() / 2], expanded.last().unwrap(),
-        lengths.iter().cloned().fold(0.0, f64::max) / 1000.0
+        lengths.iter().copied().fold(0.0, f64::max) / 1000.0
     );
 
     let (a, b) = (random_point(&w, &mut rng), random_point(&w, &mut rng));
@@ -381,7 +381,7 @@ fn guided_search_against_plain_search_across_levels() {
     }
     println!(
         "{n} paths in 5 levels: guided shorter in {shorter} (by up to {:.1}%), longer in {longer} (by up to {:.2}%); {:.3} ms plain vs {:.3} ms guided each",
-        best_gain * 100.0, worst_loss * 100.0, t_plain.as_secs_f64() * 1000.0 / n as f64, t_guided.as_secs_f64() * 1000.0 / n as f64
+        best_gain * 100.0, worst_loss * 100.0, t_plain.as_secs_f64() * 1000.0 / f64::from(n), t_guided.as_secs_f64() * 1000.0 / f64::from(n)
     );
     assert!(worst_loss < 0.01, "guided search lost {:.2}% somewhere", worst_loss * 100.0);
 }

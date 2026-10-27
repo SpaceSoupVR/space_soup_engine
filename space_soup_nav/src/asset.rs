@@ -87,6 +87,7 @@ impl Dir {
         }
     }
 
+    #[must_use]
     pub fn opposite(self) -> Dir {
         match self {
             Dir::PosX => Dir::NegX,
@@ -222,7 +223,7 @@ impl std::error::Error for AssetError {}
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
-        hash ^= b as u64;
+        hash ^= u64::from(b);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
@@ -357,9 +358,9 @@ impl NavPieceAsset {
             for p in l.start.iter().chain(l.end.iter()) {
                 w.ivec3(*p);
             }
-            w.u8(l.bidirectional as u8);
+            w.u8(u8::from(l.bidirectional));
             w.u32(l.cost_mm);
-            w.u8(l.enabled as u8);
+            w.u8(u8::from(l.enabled));
         }
     }
 
@@ -512,8 +513,8 @@ impl NavPieceAsset {
                         Some(s) if !*s => *s = true,
                         _ => return Err(format!("lookup tree node {i} names polygon {} twice or out of range", n.index)),
                     }
-                } else if i as u64 + n.index.unsigned_abs() as u64 > self.bvh.len() as u64 {
-                    return Err(format!("lookup tree node {i} escapes to {} of {}", i as i64 - n.index as i64, self.bvh.len()));
+                } else if i as u64 + u64::from(n.index.unsigned_abs()) > self.bvh.len() as u64 {
+                    return Err(format!("lookup tree node {i} escapes to {} of {}", i as i64 - i64::from(n.index), self.bvh.len()));
                 }
             }
         }
@@ -522,7 +523,7 @@ impl NavPieceAsset {
             return Err(format!("{} detail ranges for {np} polygons", d.ranges.len()));
         }
         for (pi, &(vb, vc, tb, tc)) in d.ranges.iter().enumerate() {
-            if vb as u64 + vc as u64 > d.vertices.len() as u64 || tb as u64 + tc as u64 > d.triangles.len() as u64 {
+            if u64::from(vb) + u64::from(vc) > d.vertices.len() as u64 || u64::from(tb) + u64::from(tc) > d.triangles.len() as u64 {
                 return Err(format!("polygon {pi}'s detail range is outside the detail mesh"));
             }
             let limit = self.polys[pi].verts.len() + vc as usize;
@@ -561,8 +562,8 @@ impl NavPieceAsset {
 /// in (right, up) = (x, -z) is therefore `abx * (-acz) - (-abz) * acx`. That is the y component of
 /// (ab x ac), which is positive exactly when the turn is counter-clockwise from above.
 pub fn ccw_from_above(a: IVec3, b: IVec3, c: IVec3) -> i64 {
-    let (abx, abz) = (b.x as i64 - a.x as i64, b.z as i64 - a.z as i64);
-    let (acx, acz) = (c.x as i64 - a.x as i64, c.z as i64 - a.z as i64);
+    let (abx, abz) = (i64::from(b.x) - i64::from(a.x), i64::from(b.z) - i64::from(a.z));
+    let (acx, acz) = (i64::from(c.x) - i64::from(a.x), i64::from(c.z) - i64::from(a.z));
     abz * acx - abx * acz
 }
 
@@ -592,8 +593,8 @@ fn subdivide(items: &mut [(usize, IVec3, IVec3)], nodes: &mut Vec<BvNode>) {
     let extent = max - min;
     let axis = if extent.x >= extent.y && extent.x >= extent.z { 0 } else if extent.y >= extent.z { 1 } else { 2 };
     items.sort_by(|a, b| {
-        let ca = a.1[axis] as i64 + a.2[axis] as i64;
-        let cb = b.1[axis] as i64 + b.2[axis] as i64;
+        let ca = i64::from(a.1[axis]) + i64::from(a.2[axis]);
+        let cb = i64::from(b.1[axis]) + i64::from(b.2[axis]);
         ca.cmp(&cb).then(a.0.cmp(&b.0))
     });
     let mid = items.len() / 2;
@@ -824,7 +825,7 @@ mod tests {
     fn quarter_turns_are_exact_and_match_glam() {
         let p = IVec3::new(1234, 56, -789);
         for k in 0..4u8 {
-            let q = glam::Quat::from_rotation_y(k as f32 * std::f32::consts::FRAC_PI_2) * p.as_vec3();
+            let q = glam::Quat::from_rotation_y(f32::from(k) * std::f32::consts::FRAC_PI_2) * p.as_vec3();
             let r = Turn(k).apply(p);
             assert!((q - r.as_vec3()).abs().max_element() < 0.01, "turn {k}: glam {q}, integer {r}");
         }
