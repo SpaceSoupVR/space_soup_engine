@@ -96,6 +96,142 @@ pub struct DoorDef {
     /// switch thrown). Pushing does nothing; an automatic door stays shut.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<DoorLock>,
+    /// AN ELEVATOR'S CAB: this door is the cab's floor, a slider whose rail runs UP (the
+    /// object is turned a quarter about z so its local +x is the world's +y). Its `slide_m` is
+    /// the cab's whole travel. See [`ElevatorDef`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elevator: Option<ElevatorDef>,
+}
+
+/// THE CALL BUTTONS AND THE STOPS of an elevator, on its cab's slider door. The elevator waits
+/// at a floor with that floor's landing doors open; a button pressed shuts them, runs the cab
+/// to the floor asked for, and opens that floor's doors.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ElevatorDef {
+    /// How far up the rail each stop is, metres, lowest first; the first is 0 (where the cab
+    /// stands at the start).
+    pub floors: Vec<f32>,
+    /// Other sliders that ride with the cab (its walls): driven in step with it.
+    pub follow: Vec<String>,
+    /// For each floor, the landing door leaves that open there. Sliders with no `auto`.
+    pub doors: Vec<Vec<String>>,
+    pub buttons: Vec<ElevatorButton>,
+    /// Cab speed, metres a second.
+    pub speed_m_s: f32,
+    /// Landing doors' speed, metres a second.
+    pub door_speed_m_s: f32,
+    /// How close a hand must come to a button to press it, metres.
+    pub press_m: f32,
+}
+
+impl Default for ElevatorDef {
+    fn default() -> Self {
+        Self { floors: vec![0.0], follow: Vec::new(), doors: Vec::new(), buttons: Vec::new(), speed_m_s: 1.4, door_speed_m_s: 1.1, press_m: 0.14 }
+    }
+}
+
+/// A button: an object (its position is the button), what pressing it asks, and whether it
+/// rides up and down with the cab (the buttons inside).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ElevatorButton {
+    pub object: String,
+    /// Call the cab to this floor (a landing button)...
+    #[serde(default)]
+    pub floor: Option<usize>,
+    /// ...or send it this many floors on from where it is (a cab button: +1 up, -1 down).
+    #[serde(default)]
+    pub step: Option<i32>,
+    #[serde(default)]
+    pub rides: bool,
+}
+
+/// WHERE AN ELEVATOR IS IN ITS ROUND, and what to do next. Pure: the game feeds it what it
+/// sees (the cab's height, whether the leaves are shut or open) and reads what to drive.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ElevatorRun {
+    /// The floor the cab is at, or last left.
+    pub at: usize,
+    pub phase: ElevatorPhase,
+    /// A call that came in while busy: taken up when the doors have opened.
+    queued: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ElevatorPhase {
+    /// Waiting with the doors open.
+    Idle,
+    /// Shutting the doors at `at`, then off to the floor.
+    Closing(usize),
+    /// Running to the floor.
+    Moving(usize),
+    /// Arrived; the doors opening.
+    Opening,
+}
+
+/// What the elevator asks of its parts this step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ElevatorAsk {
+    /// The floor whose landing doors are open (none while shut or moving).
+    pub open_doors: Option<usize>,
+    /// The height the cab runs to, if it should be moving.
+    pub cab_to: Option<f32>,
+}
+
+impl ElevatorRun {
+    #[must_use]
+    pub fn new(start: usize) -> Self {
+        Self { at: start, phase: ElevatorPhase::Opening, queued: None }
+    }
+
+    /// A button asked for `floor`.
+    pub fn call(&mut self, floor: usize) {
+        match self.phase {
+            ElevatorPhase::Idle if floor != self.at => self.phase = ElevatorPhase::Closing(floor),
+            ElevatorPhase::Idle => {}
+            ElevatorPhase::Closing(t) | ElevatorPhase::Moving(t) if t == floor => {}
+            _ => self.queued = Some(floor),
+        }
+    }
+
+    /// One step. `cab` is the cab's height now; `shut` whether every leaf at the floor it is at
+    /// is shut; `open` whether they are all fully open.
+    pub fn step(&mut self, floors: &[f32], cab: f32, shut: bool, open: bool) -> ElevatorAsk {
+        match self.phase {
+            ElevatorPhase::Idle => {}
+            ElevatorPhase::Closing(t) => {
+                if shut {
+                    self.phase = ElevatorPhase::Moving(t);
+                }
+            }
+            ElevatorPhase::Moving(t) => {
+                if (cab - floors[t]).abs() < 0.005 {
+                    self.at = t;
+                    self.phase = ElevatorPhase::Opening;
+                }
+            }
+            ElevatorPhase::Opening => {
+                if open {
+                    self.phase = ElevatorPhase::Idle;
+                    if let Some(q) = self.queued.take() {
+                        self.call(q);
+                    }
+                }
+            }
+        }
+        match self.phase {
+            ElevatorPhase::Idle | ElevatorPhase::Opening => ElevatorAsk { open_doors: Some(self.at), cab_to: None },
+            ElevatorPhase::Closing(_) => ElevatorAsk { open_doors: None, cab_to: None },
+            ElevatorPhase::Moving(t) => ElevatorAsk { open_doors: None, cab_to: Some(floors[t]) },
+        }
+    }
+
+    /// The floor a cab button's `step` asks for, from where the cab is, if there is one.
+    #[must_use]
+    pub fn floor_from(&self, step: i32, floors: usize) -> Option<usize> {
+        let to = self.at as i32 + step;
+        (0..floors as i32).contains(&to).then_some(to as usize)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -162,6 +298,7 @@ impl Default for DoorDef {
             slide_m: 0.0,
             auto: None,
             locked: None,
+            elevator: None,
         }
     }
 }
@@ -617,6 +754,35 @@ impl DoorGeom {
 
 #[cfg(test)]
 mod tests {
+    /// THE ELEVATOR'S ROUND: waits with its doors open, a call shuts them, the car runs, the
+    /// doors open at the far stop; a call that comes in meanwhile is taken up after, not lost.
+    #[test]
+    fn an_elevator_shuts_its_doors_runs_and_opens_them_at_the_other_stop() {
+        let floors = [0.0, 3.6, 7.2];
+        let mut e = ElevatorRun::new(0);
+        let a = e.step(&floors, 0.0, true, false);
+        assert_eq!((a.open_doors, a.cab_to), (Some(0), None), "starts opening its doors at floor 0");
+        e.step(&floors, 0.0, false, true);
+        assert_eq!(e.phase, ElevatorPhase::Idle);
+        e.call(1);
+        let a = e.step(&floors, 0.0, false, false);
+        assert_eq!((a.open_doors, a.cab_to), (None, None), "the doors are shutting, the car waits");
+        let a = e.step(&floors, 0.0, true, false);
+        assert_eq!(a.cab_to, Some(3.6), "shut: off it goes");
+        e.call(2);
+        let a = e.step(&floors, 1.8, false, false);
+        assert_eq!((a.open_doors, a.cab_to), (None, Some(3.6)), "mid-run, the doors stay shut");
+        let a = e.step(&floors, 3.6, false, false);
+        assert_eq!((e.at, a.open_doors), (1, Some(1)), "arrived: floor 1's doors open");
+        e.step(&floors, 3.6, false, true);
+        assert_eq!(e.phase, ElevatorPhase::Closing(2), "the call that came in meanwhile is taken up");
+        assert_eq!(e.floor_from(1, 3), Some(2));
+        assert_eq!(e.floor_from(-1, 3), Some(0));
+        assert_eq!(e.floor_from(1, 2), None, "no floor above the top one");
+        e.call(2);
+        assert_eq!(e.phase, ElevatorPhase::Closing(2), "asking again for where it is going changes nothing");
+    }
+
     use super::*;
     use std::f32::consts::FRAC_PI_2;
 

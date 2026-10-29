@@ -389,6 +389,7 @@ fn door_fields() -> Vec<FieldDescriptor> {
             slide_m,
             auto,
             locked,
+            elevator,
         } = d;
     }
     vec![
@@ -581,7 +582,7 @@ mod tests {
         assert_eq!(effect.fields[0].variants, &["fire", "smoke", "embers", "dust", "coals"]);
 
         let door = by("door");
-        assert_eq!(door.fields.len(), 13, "DoorDef has 13 fields");
+        assert_eq!(door.fields.len(), 14, "DoorDef has 14 fields");
         assert_eq!(door.fields[0].variants, &["Left", "Right"]);
 
         let teleportal = by("teleportal");

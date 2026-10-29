@@ -102,6 +102,8 @@ pub struct Gameplay {
     started: bool,
     doors_held_open: HashSet<String>,
     doors_locked: HashMap<String, bool>,
+    elevators: HashMap<String, crate::door::ElevatorRun>,
+    buttons_down: HashSet<String>,
     rng: u32,
     report_in: f32,
 }
@@ -178,6 +180,76 @@ fn ray_column(origin: Vec3, dir: Vec3, base: Vec3, height: f32, radius: f32) -> 
 }
 
 impl GameRuntime {
+    /// THE ELEVATORS: a pressed button, the doors shut or open, the cab's height, and from them
+    /// what each part of every elevator is asked to do this step (`door::ElevatorRun`).
+    fn run_elevators(&self, gp: &mut Gameplay) -> HashMap<String, DoorDrive> {
+        use crate::door::ElevatorDef;
+        let mut drives = HashMap::new();
+        let cabs: Vec<(String, ElevatorDef)> =
+            self.scene.objects.iter().filter_map(|o| o.door.as_ref().and_then(|d| d.elevator.clone()).map(|e| (o.id.clone(), e))).collect();
+        let open_end = |id: &str| self.rigid_physics.doors().find(|(i, _)| *i == id).map(|(_, g)| if g.slide > 0.0 { g.hi } else { g.lo });
+        for (cab, def) in cabs {
+            if def.floors.len() < 2 {
+                continue;
+            }
+            let cab_at = self.rigid_physics.door_angle(&cab).unwrap_or(0.0);
+            let run = gp.elevators.entry(cab.clone()).or_insert_with(|| crate::door::ElevatorRun::new(0));
+            for b in &def.buttons {
+                let Some(object) = self.scene.find_object(&b.object) else { continue };
+                let mut at = object.cuboid.position;
+                if b.rides {
+                    at.y += cab_at;
+                }
+                let pressed = self.pressed_at(at, def.press_m);
+                let was = gp.buttons_down.contains(&b.object);
+                if pressed && !was {
+                    gp.buttons_down.insert(b.object.clone());
+                    if let Some(floor) = b.floor.or_else(|| b.step.and_then(|s| run.floor_from(s, def.floors.len()))) {
+                        run.call(floor);
+                    }
+                } else if !pressed && was {
+                    gp.buttons_down.remove(&b.object);
+                }
+            }
+            let leaves = def.doors.get(run.at).map(Vec::as_slice).unwrap_or_default();
+            let angle = |id: &String| self.rigid_physics.door_angle(id).unwrap_or(0.0);
+            let shut = leaves.iter().all(|l| angle(l).abs() < 0.01);
+            let open = leaves.iter().all(|l| open_end(l).is_none_or(|e| (angle(l) - e).abs() < 0.01));
+            let ask = run.step(&def.floors, cab_at, shut, open);
+            let hold = def.floors[run.at];
+            for id in std::iter::once(&cab).chain(def.follow.iter()) {
+                drives.insert(id.clone(), DoorDrive { open_to: Some(ask.cab_to.unwrap_or(hold)), speed_rad_s: def.speed_m_s, locked: false });
+            }
+            for (floor, leaves) in def.doors.iter().enumerate() {
+                for leaf in leaves {
+                    if ask.open_doors == Some(floor) {
+                        if let Some(end) = open_end(leaf) {
+                            drives.insert(leaf.clone(), DoorDrive { open_to: Some(end), speed_rad_s: def.door_speed_m_s, locked: false });
+                        }
+                    }
+                }
+            }
+        }
+        drives
+    }
+
+    /// Is something pressing at `at`: a hand within `reach` of it, or, for a player with no hands
+    /// tracked (the desktop), their eye within a metre and a half with the point dead ahead.
+    fn pressed_at(&self, at: Vec3, reach: f32) -> bool {
+        use crate::events::Hand;
+        use crate::rig::JointId;
+        self.rigs.values().any(|rig| {
+            let hands: Vec<Vec3> = [Hand::Left, Hand::Right].into_iter().filter_map(|h| rig.get(JointId::HandGrip(h))).map(|t| t.position).collect();
+            if hands.is_empty() {
+                let head = rig.head();
+                let to = at - head.position;
+                let d = to.length();
+                return d > 0.2 && d <= 1.5 && (head.rotation * Vec3::NEG_Z).dot(to / d) > 0.994;
+            }
+            hands.iter().any(|p| p.distance(at) <= reach)
+        })
+    }
+
     /// Reads the scene's logic file and brings it to life: the swarms placed, the menus up,
     /// every player at `player_start` with full health.
     pub(crate) fn start_gameplay(&mut self) {
@@ -487,6 +559,7 @@ impl GameRuntime {
         // The doors: automatic ones open for whoever is near, locked ones stay shut.
         let npc_spots: Vec<Vec3> = gp.npcs.iter().filter(|n| n.alive()).map(|n| n.rt.pos + Vec3::Y * NPC_WAIST_M).collect();
         let mut drives: HashMap<String, DoorDrive> = HashMap::new();
+        let elevator_drives = self.run_elevators(&mut gp);
         for (id, geom) in self.rigid_physics.doors() {
             let Some(def) = self.scene.find_object(id).and_then(|o| o.door.as_ref()) else { continue };
             let mut drive = DoorDrive::default();
@@ -522,6 +595,9 @@ impl GameRuntime {
             if gp.doors_held_open.contains(id) && !locked {
                 drive.open_to = Some(if geom.hi.abs() >= geom.lo.abs() { geom.hi } else { geom.lo });
                 drive.speed_rad_s = drive.speed_rad_s.max(2.0);
+            }
+            if let Some(d) = elevator_drives.get(id) {
+                drive = *d;
             }
             if drive.locked || drive.open_to.is_some() {
                 drives.insert(id.to_string(), drive);
