@@ -148,6 +148,11 @@
           "name": "pin_offset",
           "kind": "number",
           "optional": false
+        },
+        {
+          "name": "slide_m",
+          "kind": "number",
+          "optional": false
         }
       ]
     },

@@ -25,6 +25,67 @@ pub enum Action {
     PlaySound { object: String },
 
     SwitchTeam,
+
+    /// Loads another scene of the game, every player placed at its start.
+    ChangeScene { scene: String },
+    /// Loads this scene again from its file: the round over, everything as it was.
+    Restart,
+    /// Sets a script variable (the same ones `trigger_volume` and scripts read).
+    SetVar { name: String, value: String },
+    /// Shows an object hidden earlier (or authored hidden).
+    ShowObject { object: String },
+    /// A line for the players to read (the host shows it for `seconds`).
+    Message { text: String, #[serde(default = "default_message_seconds")] seconds: f32 },
+    /// Swings a door open and holds it there until `lock_door` or a `close_door`.
+    OpenDoor { object: String },
+    CloseDoor { object: String },
+    /// Bolts a door shut (or frees it), whatever its own `locked` says.
+    LockDoor { object: String, #[serde(default = "default_true")] locked: bool },
+    /// Gives every player back `amount` health, up to their full health.
+    Heal { amount: f32 },
+}
+
+fn default_message_seconds() -> f32 {
+    6.0
+}
+
+/// WHAT A RULE WAITS FOR. `event` names it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Trigger {
+    /// The scene has just started.
+    Start,
+    /// `s` seconds into the scene.
+    After { s: f32 },
+    /// A player steps into the object's box.
+    Enter { object: String },
+    /// A player steps out of the object's box.
+    Exit { object: String },
+    /// A script variable takes the value `is` (set by a `trigger_volume`, a script or `set_var`).
+    Var { name: String, #[serde(default = "default_var_is")] is: String },
+    /// A player's health reaches zero.
+    PlayerDead,
+    /// Every swarm member is dead (and there was at least one).
+    AllDead,
+    /// Any swarm member dies.
+    NpcDead,
+}
+
+fn default_var_is() -> String {
+    "1".into()
+}
+
+/// A RULE: when `on` happens, `then` follows, `delay_s` later. `once` (the default) retires the
+/// rule after its first firing; false fires it every time.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rule {
+    pub on: Trigger,
+    #[serde(default)]
+    pub then: Vec<Action>,
+    #[serde(default = "default_true")]
+    pub once: bool,
+    #[serde(default)]
+    pub delay_s: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -171,6 +232,18 @@ pub struct LogicDef {
     pub npcs: Vec<NpcRule>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub swarms: Vec<Swarm>,
+
+    /// The game's rules: what happens on what (`Rule`). This is where a round, a win and a
+    /// loss are written, so none of it lives in code.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<Rule>,
+    /// Each player's health at the start. Absent: the first swarm's `player_health`, else 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_health: Option<f32>,
+    /// A prop every player starts holding, by its `.prop.json` path from the game folder. Its
+    /// name is the weapon the swarms' `hits` are counted in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loadout: Option<String>,
 }
 
 #[must_use]
@@ -303,7 +376,29 @@ mod tests {
                 on_death: vec![Action::HideObject { object: "soldier".into() }],
             }],
             swarms: Vec::new(),
+            rules: Vec::new(),
+            player_health: None,
+            loadout: None,
         }
+    }
+
+    #[test]
+    fn rules_and_their_triggers_read_from_json() {
+        let text = r#"{"scene":"x","rules":[
+            {"on":{"event":"enter","object":"exit_zone"},"then":[{"do":"message","text":"You escaped"},{"do":"change_scene","scene":"next"}]},
+            {"on":{"event":"player_dead"},"then":[{"do":"restart"}],"delay_s":2.5},
+            {"on":{"event":"var","name":"keycard"},"then":[{"do":"lock_door","object":"exit_door","locked":false}]},
+            {"on":{"event":"all_dead"},"once":false,"then":[{"do":"heal","amount":50}]}
+        ]}"#;
+        let l: LogicDef = serde_json::from_str(text).unwrap();
+        assert_eq!(l.rules.len(), 4);
+        assert_eq!(l.rules[0].on, Trigger::Enter { object: "exit_zone".into() });
+        assert_eq!(l.rules[0].then[0], Action::Message { text: "You escaped".into(), seconds: 6.0 });
+        assert!(l.rules[0].once && l.rules[1].delay_s == 2.5 && !l.rules[3].once);
+        assert_eq!(l.rules[2].on, Trigger::Var { name: "keycard".into(), is: "1".into() });
+        assert_eq!(l.rules[2].then[0], Action::LockDoor { object: "exit_door".into(), locked: false });
+        let back: LogicDef = serde_json::from_str(&serde_json::to_string(&l).unwrap()).unwrap();
+        assert_eq!(back, l);
     }
 
     #[test]

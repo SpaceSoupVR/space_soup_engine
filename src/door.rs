@@ -79,6 +79,60 @@ pub struct DoorDef {
     pub pin_inset: f32,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub pin_offset: f32,
+    /// A SLIDING DOOR: not zero, the leaf does not swing at all. It runs in its own plane along
+    /// its local x, this many metres (signed: positive toward +x) from shut to open, on a rail
+    /// inside the wall, and passes through the wall's solid to get there (it is driven, so it
+    /// collides with nothing static). Every "angle" the door API reports for it is this
+    /// travel in metres, and `open_min_deg`, `open_max_deg`, the hinge, the closer, the latch
+    /// and the handle are not read. What a steel factory door is.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub slide_m: f32,
+    /// AN AUTOMATIC DOOR: swings open on its own when someone comes within reach, and the
+    /// closer (or its own spring) shuts it after. What a facility door does, and what lets a
+    /// creature through a door it cannot push.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<AutoDoor>,
+    /// A LOCK: bolted shut until the named variable has the value `is` (a keycard picked up, a
+    /// switch thrown). Pushing does nothing; an automatic door stays shut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<DoorLock>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoDoor {
+    /// How near a player or a creature must come, metres from the leaf's middle.
+    pub range_m: f32,
+    /// How fast it swings, degrees a second.
+    pub speed_deg_s: f32,
+    /// How fast a SLIDING door runs, metres a second.
+    pub speed_m_s: f32,
+    /// The angle it opens to, degrees; absent, as far as its stop.
+    pub open_deg: Option<f32>,
+    /// Whether players open it.
+    pub players: bool,
+    /// Whether creatures (the swarms' NPCs) open it.
+    pub npcs: bool,
+}
+
+impl Default for AutoDoor {
+    fn default() -> Self {
+        Self { range_m: 1.8, speed_deg_s: 120.0, speed_m_s: 1.6, open_deg: None, players: true, npcs: true }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DoorLock {
+    pub var: String,
+    #[serde(default = "default_lock_is")]
+    pub is: String,
+    /// What the players are told when they try it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+fn default_lock_is() -> String {
+    "1".into()
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -105,6 +159,9 @@ impl Default for DoorDef {
             lever: None,
             pin_inset: 0.0,
             pin_offset: 0.0,
+            slide_m: 0.0,
+            auto: None,
+            locked: None,
         }
     }
 }
@@ -249,17 +306,40 @@ pub struct DoorGeom {
 
     pub lo: f32,
     pub hi: f32,
+    /// A sliding door's travel (`DoorDef::slide_m`); zero for a swinging one.
+    pub slide: f32,
 }
 
 impl DoorGeom {
     #[must_use]
     pub fn new(closed_pos: Vec3, closed_rot: Quat, half: Vec3, def: &DoorDef) -> Self {
+        if def.slide_m != 0.0 {
+            let (lo, hi) = (def.slide_m.min(0.0), def.slide_m.max(0.0));
+            return Self { closed_pos, closed_rot, half, hinge_local: Vec3::ZERO, lo, hi, slide: def.slide_m };
+        }
         let x = match def.hinge {
             HingeSide::Left => -half.x + def.pin_inset,
             HingeSide::Right => half.x - def.pin_inset,
         };
         let (lo, hi) = def.range();
-        Self { closed_pos, closed_rot, half, hinge_local: Vec3::new(x, 0.0, def.pin_offset), lo, hi }
+        Self { closed_pos, closed_rot, half, hinge_local: Vec3::new(x, 0.0, def.pin_offset), lo, hi, slide: 0.0 }
+    }
+
+    /// Whether this leaf slides (`DoorDef::slide_m`) instead of swinging.
+    #[must_use]
+    pub fn slides(&self) -> bool {
+        self.slide != 0.0
+    }
+
+    /// Where a leaf is in its travel -- radians for a swinging one, metres for a sliding one --
+    /// from the pose it is at.
+    #[must_use]
+    pub fn coord_of(&self, position: Vec3, rot: Quat) -> f32 {
+        if self.slides() {
+            (self.closed_rot.inverse() * (position - self.closed_pos)).x.clamp(self.lo, self.hi)
+        } else {
+            self.angle_of(rot)
+        }
     }
 
     #[must_use]
@@ -280,6 +360,9 @@ impl DoorGeom {
 
     #[must_use]
     pub fn pose_at(&self, angle: f32) -> (Vec3, Quat) {
+        if self.slides() {
+            return (self.closed_pos + self.closed_rot * (Vec3::X * angle), self.closed_rot);
+        }
         let rot = self.closed_rot * Quat::from_rotation_y(angle);
         (self.hinge() - rot * self.hinge_local, rot)
     }
@@ -332,6 +415,9 @@ impl DoorGeom {
 
     #[must_use]
     pub fn clear_spheres(&self, angle: f32, spheres: &[(Vec3, f32)]) -> f32 {
+        if self.slides() {
+            return angle;
+        }
         let along = Vec3::new(-self.hinge_local.x, 0.0, 0.0);
         let width = self.half.x + along.x.abs();
         let base = along.normalize_or_zero();
@@ -366,6 +452,9 @@ impl DoorGeom {
 
     #[must_use]
     pub fn body_contact(&self, angle: f32, body: Vec3, y_range: (f32, f32), radius: f32) -> Option<(Vec3, Vec3, f32)> {
+        if self.slides() {
+            return None;
+        }
         let (centre, rot) = self.pose_at(angle);
         let (lo, hi) = (centre.y - self.half.y, centre.y + self.half.y);
         if y_range.1 < lo || y_range.0 > hi {

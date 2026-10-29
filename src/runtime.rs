@@ -208,6 +208,8 @@ pub struct GameRuntime {
     pub(crate) ground_hits: Vec<crate::ground_hits::RecentGroundHit>,
     pub(crate) next_ground_hit: u64,
     pub(crate) told_ground_hits: Vec<crate::ground_hits::GroundHit>,
+    /// The game the scene's logic file describes: swarms, rules, menus, health (`gameplay`).
+    pub(crate) gameplay: crate::gameplay::Gameplay,
 }
 
 impl GameRuntime {
@@ -254,6 +256,7 @@ impl GameRuntime {
             ground_hits: Vec::new(),
             next_ground_hit: 0,
             told_ground_hits: Vec::new(),
+            gameplay: crate::gameplay::Gameplay::default(),
         };
 
         rt.compile_scripts();
@@ -263,6 +266,7 @@ impl GameRuntime {
         rt.rigid_physics.rebuild(&rt.scene, &rt.game_dir);
         let entry = rt.manifest.entry_scene.clone();
         rt.nav = rt.load_nav(&entry);
+        rt.start_gameplay();
         info!(
             "GameRuntime: loaded scene '{}' with {} objects",
             rt.scene.name,
@@ -380,6 +384,7 @@ impl GameRuntime {
                 locomotion.player_yaw = yaw;
             }
         }
+        self.start_gameplay();
 
         info!("GameRuntime: switched to scene '{scene_name}'");
         Ok(())
@@ -463,7 +468,7 @@ impl GameRuntime {
 
             let li = &frame.locomotion_input;
             if li.move_stick.0.abs() > 0.1 || li.move_stick.1.abs() > 0.1 || li.turn_stick_x.abs() > 0.1 {
-                log::info!(
+                log::debug!(
                     "SRV LOCO: recv move=({:.2},{:.2}) turn={:.2} dt={:.4} -> raw off=({:.2},{:.2},{:.2}) yaw={:.1}",
                     li.move_stick.0, li.move_stick.1, li.turn_stick_x, dt,
                     locomotion.player_offset.x, locomotion.player_offset.y, locomotion.player_offset.z,
@@ -490,8 +495,15 @@ impl GameRuntime {
 
         self.dispatch_update_hook(dt);
         self.apply_script_commands();
+        self.step_gameplay(dt);
 
         self.rigid_physics.step(dt, &mut self.scene, &self.rigs);
+        if std::mem::take(&mut self.gameplay.restart) {
+            let name = self.scene.name.clone();
+            if let Err(e) = self.load_scene(&name) {
+                log::warn!("gameplay: restart of '{name}' failed: {e}");
+            }
+        }
         self.note_water_entries(dt);
         self.note_ground_hits(dt);
 

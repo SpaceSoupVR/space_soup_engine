@@ -7,6 +7,7 @@ pub mod grab_index;
 pub mod grab_target;
 pub mod locomotion;
 pub mod logic;
+pub mod gameplay;
 pub mod netrules;
 pub mod manifest;
 pub mod optic;
@@ -78,6 +79,7 @@ pub use locomotion::{
 pub use manifest::Manifest;
 pub use rig::{FingerJoint, JointId, PlayerRig, Transform};
 pub use rigid_physics_query::{SurfaceContact, SweepHit};
+pub use rigid_physics_door::DoorDrive;
 pub use rig_profile::{
     BoneAssignment, DeviceOffsetDef, HeightCalibrationDef, JointConstraintDef, RigProfileDef,
 };

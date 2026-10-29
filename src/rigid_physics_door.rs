@@ -15,7 +15,27 @@ pub const HINGE_DRY_FRICTION: f32 = 1.0;
 
 pub const CLOSER_PRELOAD: f32 = 2.0;
 
+/// How fast a bolted door that was ajar is drawn shut, radians a second.
+const LOCK_SHUT_RAD_S: f32 = 1.5;
+/// An automatic door's drive: the angular speed it asks for is this many times the angle
+/// still to swing, a second.
+const AUTO_GAIN: f32 = 4.0;
+
+/// WHAT THE GAME ASKS OF A DOOR for one step: swung to `open_to` (radians) at up to
+/// `speed_rad_s`, or `locked` shut. Nothing asked: the door is pushed and closes by itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DoorDrive {
+    pub open_to: Option<f32>,
+    pub speed_rad_s: f32,
+    pub locked: bool,
+}
+
 const DOOR_TICK: f32 = 1.0 / 60.0;
+
+/// How fast a sliding door left to itself runs shut, metres a second; and how fast a bolted
+/// one is drawn shut.
+const SLIDE_SHUT_M_S: f32 = 1.2;
+const SLIDE_LOCK_M_S: f32 = 2.5;
 
 /// A latching door's handle and bolt in the physics world: whether the bolt
 /// is home, and the hinge whose limits it narrows while it is.
@@ -111,7 +131,13 @@ impl PhysicsWorld {
                     false,
                 );
             }
-            actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
+            if geom.slides() {
+                // A sliding leaf is DRIVEN along its rail (`push_doors`), through the wall it
+                // runs into: kinematic, so it collides with no static, yet blocks what it meets.
+                actor.set_rigid_body_flag(RigidBodyFlag::Kinematic, true);
+            } else {
+                actor.set_rigid_body_flag(RigidBodyFlag::EnableCcd, true);
+            }
             actor.set_solver_iteration_counts(16, 4);
             let ptr: *mut crate::rigid_physics::PxRigidDynamic = &raw mut *actor;
             unsafe {
@@ -128,6 +154,10 @@ impl PhysicsWorld {
             self.note_floor(pos.y - crate::water::world_half_extents(h, rot).y);
         }
         let Some(child) = self.dynamic.get(&entity.id) else { return };
+        if geom.slides() {
+            self.doors.insert(entity.id.clone(), geom);
+            return;
+        }
 
         let frame = hinge_frame();
         let world_frame = raw(geom.hinge(), geom.closed_rot * frame);
@@ -178,12 +208,47 @@ impl PhysicsWorld {
         Some(self.is_held(id) || latch.latch.worked(pose, geom.half.z, hands_of(rigs)))
     }
 
+    /// WHAT THE GAME ASKS OF THE DOORS this step (`gameplay`): each entry lasts one step.
+    pub fn set_door_drives(&mut self, drives: HashMap<String, DoorDrive>) {
+        self.door_drives = drives;
+    }
+
     pub(crate) fn push_doors(&mut self, rigs: &HashMap<PlayerId, PlayerRig>) {
         for (id, geom) in &self.doors {
             let Some(state) = self.dynamic.get(id) else { continue };
             let body = state.ptr.cast::<physx_sys::PxRigidBody>();
             let (pos, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
-            let angle = geom.angle_of(rot);
+            let angle = geom.coord_of(pos, rot);
+            let drive = self.door_drives.get(id).copied().unwrap_or_default();
+            if geom.slides() {
+                // On its rail: to the open mark the game asked for, at the speed it asked,
+                // else (and locked) back to shut. No hand, body or closer is involved.
+                let (target, speed) = match (drive.locked, drive.open_to) {
+                    (true, _) => (0.0, SLIDE_LOCK_M_S),
+                    (false, Some(t)) => (t.clamp(geom.lo, geom.hi), drive.speed_rad_s.max(0.1)),
+                    (false, None) => (0.0, SLIDE_SHUT_M_S),
+                };
+                let next = angle + (target - angle).clamp(-speed * DOOR_TICK, speed * DOOR_TICK);
+                if next != angle {
+                    let (p, r) = geom.pose_at(next);
+                    let t = raw(p, r);
+                    unsafe { physx_sys::PxRigidDynamic_setKinematicTarget_mut(state.ptr.cast::<physx_sys::PxRigidDynamic>(), &raw const t) };
+                }
+                continue;
+            }
+            if drive.locked {
+                // Bolted: it neither swings nor is pushed. Shut it the rest of the way if it
+                // was ajar, then hold it still.
+                let dynamic = state.ptr.cast::<physx_sys::PxRigidDynamic>();
+                let toward_shut = (-angle).clamp(-LOCK_SHUT_RAD_S * DOOR_TICK, LOCK_SHUT_RAD_S * DOOR_TICK) / DOOR_TICK;
+                let turning = geom.axis() * toward_shut;
+                let moving = turning.cross(pos - geom.hinge());
+                unsafe {
+                    physx_sys::PxRigidDynamic_setAngularVelocity_mut(dynamic, &px(turning), true);
+                    physx_sys::PxRigidDynamic_setLinearVelocity_mut(dynamic, &px(moving), true);
+                }
+                continue;
+            }
             let mut bolted = false;
             if let Some(latch) = self.door_latches.get_mut(id) {
                 let held = self.grabs.keys().any(|(_, held, _)| held == id);
@@ -262,7 +327,14 @@ impl PhysicsWorld {
             let left = inertia * spin / DOOR_TICK - viscous;
             torque -= left.clamp(-HINGE_DRY_FRICTION, HINGE_DRY_FRICTION);
 
-            if closer > 0.0 {
+            if let Some(target) = drive.open_to {
+                // An automatic door swinging to its mark: a damped drive toward `target`, no
+                // faster than its speed, instead of the closer.
+                let target = target.clamp(geom.lo, geom.hi);
+                let want = ((target - angle) * AUTO_GAIN).clamp(-drive.speed_rad_s, drive.speed_rad_s);
+                torque += (inertia * (want - spin) / DOOR_TICK).clamp(-inertia * drive.speed_rad_s / DOOR_TICK, inertia * drive.speed_rad_s / DOOR_TICK);
+                unsafe { physx_sys::PxRigidDynamic_wakeUp_mut(state.ptr.cast::<physx_sys::PxRigidDynamic>()) };
+            } else if closer > 0.0 {
                 torque -= closer * angle + CLOSER_PRELOAD * (angle / 2f32.to_radians()).clamp(-1.0, 1.0);
             }
 
@@ -298,8 +370,8 @@ impl PhysicsWorld {
             return Some(geom.lo);
         }
         let state = self.dynamic.get(id)?;
-        let (_, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
-        Some(geom.angle_of(rot))
+        let (pos, rot) = from_px_transform(&unsafe { (*state.ptr).get_global_pose() });
+        Some(geom.coord_of(pos, rot))
     }
 }
 
@@ -354,6 +426,33 @@ mod tests {
             angles.push(physics.door_angle("door").unwrap());
         }
         angles
+    }
+
+    #[test]
+    fn a_sliding_door_runs_along_its_rail_into_the_wall_and_back_and_never_swings() {
+        let _guard = lock();
+        let (mut physics, mut scene) = door(DoorDef { slide_m: -0.9, ..Default::default() });
+        let rigs = HashMap::new();
+        let shut = run(&mut physics, &mut scene, &rigs, 1.0);
+        assert!(shut.iter().all(|a| a.abs() < 1e-3), "a shut slider moved: {:?}", &shut[..3]);
+
+        physics.set_door_drives(HashMap::from([("door".to_string(), DoorDrive { open_to: Some(-0.9), speed_rad_s: 1.8, locked: false })]));
+        let mut open = Vec::new();
+        for _ in 0..(1.0 / DT) as usize {
+            physics.set_door_drives(HashMap::from([("door".to_string(), DoorDrive { open_to: Some(-0.9), speed_rad_s: 1.8, locked: false })]));
+            physics.step(DT, &mut scene, &rigs);
+            open.push(physics.door_angle("door").unwrap());
+        }
+        let end = *open.last().unwrap();
+        assert!((end + 0.9).abs() < 0.02, "the slider stopped at {end} m, not its 0.9 m");
+        assert!(open.iter().all(|a| (-0.9 - 1e-3..=1e-3).contains(a)), "it left its rail: {open:?}");
+        let o = scene.find_object("door").unwrap();
+        assert!((o.cuboid.position.x + 0.9).abs() < 0.02 && (o.cuboid.position.y - 1.1).abs() < 1e-3 && o.cuboid.position.z.abs() < 1e-3, "{:?}", o.cuboid.position);
+        assert!(o.cuboid.rotation.angle_between(Quat::IDENTITY) < 1e-3, "a slider turned");
+
+        physics.set_door_drives(HashMap::new());
+        let back = run(&mut physics, &mut scene, &rigs, 2.0);
+        assert!(back.last().unwrap().abs() < 0.02, "it did not run shut by itself: {}", back.last().unwrap());
     }
 
     #[test]

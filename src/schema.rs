@@ -386,6 +386,9 @@ fn door_fields() -> Vec<FieldDescriptor> {
             lever,
             pin_inset,
             pin_offset,
+            slide_m,
+            auto,
+            locked,
         } = d;
     }
     vec![
@@ -402,6 +405,7 @@ fn door_fields() -> Vec<FieldDescriptor> {
         field!(lever, Text, opt),
         field!(pin_inset, Number),
         field!(pin_offset, Number),
+        field!(slide_m, Number),
     ]
 }
 

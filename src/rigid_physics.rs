@@ -277,6 +277,8 @@ pub struct PhysicsWorld {
     /// Each latching door's latch and handle (`door::DoorLatch`), and whether
     /// its bolt is home.
     pub(crate) door_latches: HashMap<String, crate::rigid_physics_door::LatchState>,
+    /// What the game asks of each door this step: swung open, or bolted (`set_door_drives`).
+    pub(crate) door_drives: HashMap<String, crate::rigid_physics_door::DoorDrive>,
 
     /// Seconds this world has been stepped for.
     pub(crate) clock: f64,
@@ -410,6 +412,7 @@ impl PhysicsWorld {
             doors: HashMap::new(),
             door_hinges: HashMap::new(),
             door_latches: HashMap::new(),
+            door_drives: HashMap::new(),
             clock: 0.0,
             respawn_cursor: 0,
             respawn_all: false,
