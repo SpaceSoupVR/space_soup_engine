@@ -1,6 +1,7 @@
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::arm_locomotion::{ArmLocomotion, ArmSettings, ArmStep};
 use crate::events::Hand;
 use crate::rig::PlayerRig;
 use crate::rigid_physics::PhysicsWorld;
@@ -11,6 +12,23 @@ pub enum LocomotionMode {
     #[default]
     Smooth,
     Disabled,
+    /// No stick: the hands push the body off the world (`arm_locomotion`).
+    /// The stick still turns.
+    Arms,
+}
+
+impl LocomotionMode {
+    /// A mode by its manifest name: `smooth`, `teleport`, `arms` or `disabled`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "smooth" => Some(Self::Smooth),
+            "teleport" => Some(Self::Teleport),
+            "arms" => Some(Self::Arms),
+            "disabled" => Some(Self::Disabled),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -62,6 +80,10 @@ pub struct Locomotion {
     /// The speed the walk is at now, eased toward the walk's or the run's
     /// (`SPEED_EASE_SECONDS`), so starting to run is not a jolt.
     speed_now: f32,
+    arms: ArmLocomotion,
+    /// The offset and yaw the last arm step left: anything else moved the
+    /// player since, and the hands' anchors no longer mean anything.
+    arms_left: Option<(Vec3, f32)>,
 }
 
 /// How long the speed takes to close most of its gap to the walk's or the
@@ -82,11 +104,15 @@ pub struct LocomotionSettings {
     pub walk_speed: f32,
     /// Metres a second while running (the left stick's click).
     pub run_speed: f32,
+    /// `"mode": "smooth" | "teleport" | "arms"`; absent, the player's own.
+    pub mode: Option<LocomotionMode>,
+    /// `"arms": {...}`: how arm movement feels (`ArmSettings`).
+    pub arms: ArmSettings,
 }
 
 impl Default for LocomotionSettings {
     fn default() -> Self {
-        Self { walk_speed: 1.6, run_speed: 3.0 }
+        Self { walk_speed: 1.6, run_speed: 3.0, mode: None, arms: ArmSettings::default() }
     }
 }
 
@@ -113,6 +139,12 @@ impl LocomotionSettings {
             if let Some(v) = speed("run_speed") {
                 out.run_speed = v;
             }
+            if let Some(mode) = layer.get("mode").and_then(serde_json::Value::as_str).and_then(LocomotionMode::from_name) {
+                out.mode = Some(mode);
+            }
+            if let Some(arms) = layer.get("arms").and_then(|a| serde_json::from_value(a.clone()).ok()) {
+                out.arms = arms;
+            }
         }
         out
     }
@@ -137,6 +169,8 @@ impl Default for Locomotion {
             teleported: false,
             running: false,
             speed_now: 0.0,
+            arms: ArmLocomotion::default(),
+            arms_left: None,
         }
     }
 }
@@ -154,6 +188,30 @@ impl Locomotion {
     pub fn apply_settings(&mut self, settings: &LocomotionSettings) {
         self.move_speed = settings.walk_speed;
         self.run_speed = settings.run_speed;
+        if let Some(mode) = settings.mode {
+            self.set_mode(mode);
+        }
+        self.arms.settings = settings.arms;
+    }
+
+    /// ONE STEP OF ARM MOVEMENT (`LocomotionMode::Arms`), after `update` has
+    /// turned the player: the rig's hands push the body, which moves the
+    /// offset. `rig` is in the world, placed with the offset as it is now.
+    pub fn update_arms(&mut self, dt: f32, physics: &PhysicsWorld, rig: &PlayerRig) -> ArmStep {
+        if self.arms_left != Some((self.player_offset, self.player_yaw)) {
+            self.arms.release_hands();
+        }
+        let hands = [Hand::Left, Hand::Right].map(|h| rig.get(crate::rig::JointId::HandGrip(h)).map(|t| t.position));
+        let step = self.arms.step(physics, dt, rig.head().position, hands);
+        self.player_offset += step.moved;
+        self.arms_left = Some((self.player_offset, self.player_yaw));
+        step
+    }
+
+    /// The body's speed under arm movement, metres a second, world.
+    #[must_use]
+    pub fn arm_velocity(&self) -> Vec3 {
+        self.arms.velocity
     }
 
     /// RUN, or walk again: a click of the stick. A run lasts until the stick
@@ -196,7 +254,7 @@ impl Locomotion {
         match self.mode {
             LocomotionMode::Smooth => self.update_smooth(dt, input, rig),
             LocomotionMode::Teleport => self.update_teleport(input, teleport_target),
-            LocomotionMode::Disabled => {}
+            LocomotionMode::Disabled | LocomotionMode::Arms => {}
         }
     }
 
@@ -426,9 +484,9 @@ mod turn_test {
             r#"{"locomotion": {"walk_speed": 1.8, "run_speed": 3.2}, "locomotion_scenes": {"cave": {"run_speed": 2.2}, "bad": {"walk_speed": -1, "run_speed": "fast"}}}"#,
         )
         .unwrap();
-        assert_eq!(LocomotionSettings::from_manifest(&manifest, "test_room"), LocomotionSettings { walk_speed: 1.8, run_speed: 3.2 });
-        assert_eq!(LocomotionSettings::from_manifest(&manifest, "cave"), LocomotionSettings { walk_speed: 1.8, run_speed: 2.2 });
-        assert_eq!(LocomotionSettings::from_manifest(&manifest, "bad"), LocomotionSettings { walk_speed: 1.8, run_speed: 3.2 });
+        assert_eq!(LocomotionSettings::from_manifest(&manifest, "test_room"), LocomotionSettings { walk_speed: 1.8, run_speed: 3.2, ..Default::default() });
+        assert_eq!(LocomotionSettings::from_manifest(&manifest, "cave"), LocomotionSettings { walk_speed: 1.8, run_speed: 2.2, ..Default::default() });
+        assert_eq!(LocomotionSettings::from_manifest(&manifest, "bad"), LocomotionSettings { walk_speed: 1.8, run_speed: 3.2, ..Default::default() });
         assert_eq!(LocomotionSettings::from_manifest(&serde_json::json!({}), "x"), LocomotionSettings::default());
     }
 

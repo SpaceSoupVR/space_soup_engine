@@ -5,6 +5,7 @@ pub mod debug_protocol;
 pub mod events;
 pub mod grab_index;
 pub mod grab_target;
+pub mod arm_locomotion;
 pub mod locomotion;
 pub mod logic;
 pub mod gameplay;
